@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+images:
+  - name: ghcr.io/{{REPO_OWNER}}/{{APP_NAME}}
+    newTag: latest
+
+replicas:
+  - name: {{APP_NAME}}
+    count: 1
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env
+        value: []                # TODO: add {{ENV}}-specific env vars here
+    target:
+      kind: Deployment
+      name: {{APP_NAME}}
