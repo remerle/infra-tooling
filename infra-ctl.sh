@@ -193,6 +193,107 @@ cmd_add_app() {
     print_summary "${created_files[@]}"
 }
 
+cmd_add_env() {
+    require_gum
+
+    if [[ $# -eq 0 ]]; then
+        print_error "Usage: infra-ctl.sh add-env <env-name>"
+        exit 1
+    fi
+
+    local env_name="$1"
+    load_conf
+
+    # Guard: env already exists
+    local ns_file="${TARGET_DIR}/k8s/namespaces/${env_name}.yaml"
+    if [[ -f "$ns_file" ]]; then
+        print_error "Environment '${env_name}' already exists at ${ns_file}"
+        exit 1
+    fi
+
+    # Detect apps
+    local apps=()
+    while IFS= read -r app; do
+        apps+=("$app")
+    done < <(detect_apps)
+
+    # For each app, detect its project assignment
+    declare -A app_projects
+    if [[ ${#apps[@]} -gt 0 ]]; then
+        local app
+        for app in "${apps[@]}"; do
+            app_projects["$app"]="$(detect_app_project "$app")"
+        done
+    fi
+
+    # Preview
+    print_header "Add Environment: ${env_name}"
+    echo ""
+    print_info "Namespace: k8s/namespaces/${env_name}.yaml"
+    if [[ ${#apps[@]} -gt 0 ]]; then
+        local app
+        for app in "${apps[@]}"; do
+            print_info "Overlay: k8s/apps/${app}/overlays/${env_name}/kustomization.yaml"
+            print_info "ArgoCD:  argocd/apps/${app}-${env_name}.yaml (project: ${app_projects[$app]})"
+        done
+    else
+        print_warning "No applications found. Only the namespace will be created."
+        print_info "Run 'infra-ctl.sh add-app <app>' to create overlays later."
+    fi
+    echo ""
+
+    if ! gum confirm "Create these files?"; then
+        print_warning "Aborted."
+        exit 0
+    fi
+
+    local created_files=()
+
+    # Create namespace
+    if safe_render_template \
+        "${TEMPLATE_DIR}/k8s/namespace.yaml" \
+        "$ns_file" \
+        "ENV=${env_name}"; then
+        created_files+=("$ns_file")
+    fi
+
+    # Remove .gitkeep from namespaces dir if it exists (no longer empty)
+    rm -f "${TARGET_DIR}/k8s/namespaces/.gitkeep"
+
+    # Create overlays and ArgoCD apps per app
+    if [[ ${#apps[@]} -gt 0 ]]; then
+        local app
+        for app in "${apps[@]}"; do
+            local project="${app_projects[$app]}"
+
+            # Overlay kustomization
+            local overlay="${TARGET_DIR}/k8s/apps/${app}/overlays/${env_name}/kustomization.yaml"
+            if safe_render_template \
+                "${TEMPLATE_DIR}/k8s/overlay-kustomization.yaml" \
+                "$overlay" \
+                "APP_NAME=${app}" \
+                "ENV=${env_name}" \
+                "REPO_OWNER=${REPO_OWNER}"; then
+                created_files+=("$overlay")
+            fi
+
+            # ArgoCD Application manifest
+            local argo_app="${TARGET_DIR}/argocd/apps/${app}-${env_name}.yaml"
+            if safe_render_template \
+                "${TEMPLATE_DIR}/argocd/app-env.yaml" \
+                "$argo_app" \
+                "APP_NAME=${app}" \
+                "ENV=${env_name}" \
+                "PROJECT=${project}" \
+                "REPO_URL=${REPO_URL}"; then
+                created_files+=("$argo_app")
+            fi
+        done
+    fi
+
+    print_summary "${created_files[@]}"
+}
+
 # --- Usage ---
 
 usage() {
