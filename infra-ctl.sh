@@ -294,6 +294,207 @@ cmd_add_env() {
     print_summary "${created_files[@]}"
 }
 
+cmd_add_project() {
+    require_gum
+
+    if [[ $# -eq 0 ]]; then
+        print_error "Usage: infra-ctl.sh add-project <project-name>"
+        exit 1
+    fi
+
+    local project_name="$1"
+    load_conf
+
+    # Guard: project already exists
+    local project_file="${TARGET_DIR}/argocd/projects/${project_name}.yaml"
+    if [[ -f "$project_file" ]]; then
+        print_error "Project '${project_name}' already exists at ${project_file}"
+        print_info "Use 'infra-ctl.sh edit-project ${project_name}' to modify it."
+        exit 1
+    fi
+
+    print_header "Add Project: ${project_name}"
+    echo ""
+
+    # Prompt for description
+    local description
+    description="$(gum input --placeholder "What does this project scope?" --prompt "Description: ")"
+
+    # Prompt for source repo restrictions
+    local source_repos_block
+    if gum confirm "Restrict source repositories?"; then
+        local repos_input
+        repos_input="$(gum input --value "${REPO_URL}" --prompt "Allowed repos (comma-separated): ")"
+        source_repos_block=""
+        IFS=',' read -ra repos <<< "$repos_input"
+        local repo
+        for repo in "${repos[@]}"; do
+            repo="$(echo "$repo" | xargs)"  # trim whitespace
+            source_repos_block+="    - ${repo}"$'\n'
+        done
+        # Remove trailing newline
+        source_repos_block="${source_repos_block%$'\n'}"
+    else
+        source_repos_block="    - '*'"
+    fi
+
+    # Prompt for destination namespace restrictions
+    local destinations_block
+    if gum confirm "Restrict destination namespaces?"; then
+        local envs=()
+        while IFS= read -r env; do
+            envs+=("$env")
+        done < <(detect_envs)
+
+        local selected_namespaces
+        if [[ ${#envs[@]} -gt 0 ]]; then
+            selected_namespaces="$(printf "%s\n" "${envs[@]}" | gum choose --no-limit)"
+        else
+            selected_namespaces="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
+            # Convert comma-separated to newline-separated
+            selected_namespaces="$(echo "$selected_namespaces" | tr ',' '\n' | xargs -I{} echo {})"
+        fi
+
+        destinations_block=""
+        while IFS= read -r ns; do
+            ns="$(echo "$ns" | xargs)"
+            [[ -z "$ns" ]] && continue
+            destinations_block+="    - namespace: ${ns}"$'\n'
+            destinations_block+="      server: https://kubernetes.default.svc"$'\n'
+        done <<< "$selected_namespaces"
+        destinations_block="${destinations_block%$'\n'}"
+    else
+        destinations_block="    - namespace: '*'"$'\n'
+        destinations_block+="      server: https://kubernetes.default.svc"
+    fi
+
+    # Render template
+    render_template \
+        "${TEMPLATE_DIR}/argocd/appproject.yaml" \
+        "$project_file" \
+        "PROJECT_NAME=${project_name}" \
+        "PROJECT_DESCRIPTION=${description}" \
+        "SOURCE_REPOS=${source_repos_block}" \
+        "DESTINATIONS=${destinations_block}"
+
+    # Remove .gitkeep from projects dir if it exists
+    rm -f "${TARGET_DIR}/argocd/projects/.gitkeep"
+
+    print_summary "$project_file"
+}
+
+cmd_edit_project() {
+    require_gum
+
+    if [[ $# -eq 0 ]]; then
+        print_error "Usage: infra-ctl.sh edit-project <project-name>"
+        exit 1
+    fi
+
+    local project_name="$1"
+    load_conf
+
+    local project_file="${TARGET_DIR}/argocd/projects/${project_name}.yaml"
+    if [[ ! -f "$project_file" ]]; then
+        print_error "Project '${project_name}' not found at ${project_file}"
+        exit 1
+    fi
+
+    print_header "Edit Project: ${project_name}"
+    echo ""
+
+    # Parse current values from the existing file
+    local current_description
+    current_description="$(grep '^\s*description:' "$project_file" | sed 's/.*description:\s*"\?\([^"]*\)"\?/\1/')"
+
+    # Check if currently restricted
+    local current_repos_restricted=false
+    if ! grep -q "sourceRepos:" "$project_file" || ! grep -A1 "sourceRepos:" "$project_file" | grep -q "'\*'"; then
+        current_repos_restricted=true
+    fi
+
+    local current_ns_restricted=false
+    if ! grep -q "destinations:" "$project_file" || ! grep -A1 "destinations:" "$project_file" | grep -q "namespace: '\*'"; then
+        current_ns_restricted=true
+    fi
+
+    # Prompt for description
+    local description
+    description="$(gum input --value "$current_description" --prompt "Description: ")"
+
+    # Prompt for source repo restrictions
+    local source_repos_block
+    local confirm_msg="Restrict source repositories?"
+    if [[ "$current_repos_restricted" == true ]]; then
+        confirm_msg="Restrict source repositories? (currently restricted)"
+    fi
+    if gum confirm "$confirm_msg"; then
+        local current_repos=""
+        if [[ "$current_repos_restricted" == true ]]; then
+            current_repos="$(awk '/sourceRepos:/,/destinations:/{if(/- / && !/sourceRepos:/ && !/destinations:/) print}' "$project_file" | sed 's/.*- //' | tr '\n' ',' | sed 's/,$//')"
+        else
+            current_repos="${REPO_URL}"
+        fi
+        local repos_input
+        repos_input="$(gum input --value "$current_repos" --prompt "Allowed repos (comma-separated): ")"
+        source_repos_block=""
+        IFS=',' read -ra repos <<< "$repos_input"
+        local repo
+        for repo in "${repos[@]}"; do
+            repo="$(echo "$repo" | xargs)"
+            source_repos_block+="    - ${repo}"$'\n'
+        done
+        source_repos_block="${source_repos_block%$'\n'}"
+    else
+        source_repos_block="    - '*'"
+    fi
+
+    # Prompt for destination namespace restrictions
+    local destinations_block
+    confirm_msg="Restrict destination namespaces?"
+    if [[ "$current_ns_restricted" == true ]]; then
+        confirm_msg="Restrict destination namespaces? (currently restricted)"
+    fi
+    if gum confirm "$confirm_msg"; then
+        local envs=()
+        while IFS= read -r env; do
+            envs+=("$env")
+        done < <(detect_envs)
+
+        local selected_namespaces
+        if [[ ${#envs[@]} -gt 0 ]]; then
+            selected_namespaces="$(printf "%s\n" "${envs[@]}" | gum choose --no-limit)"
+        else
+            selected_namespaces="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
+            selected_namespaces="$(echo "$selected_namespaces" | tr ',' '\n' | xargs -I{} echo {})"
+        fi
+
+        destinations_block=""
+        while IFS= read -r ns; do
+            ns="$(echo "$ns" | xargs)"
+            [[ -z "$ns" ]] && continue
+            destinations_block+="    - namespace: ${ns}"$'\n'
+            destinations_block+="      server: https://kubernetes.default.svc"$'\n'
+        done <<< "$selected_namespaces"
+        destinations_block="${destinations_block%$'\n'}"
+    else
+        destinations_block="    - namespace: '*'"$'\n'
+        destinations_block+="      server: https://kubernetes.default.svc"
+    fi
+
+    # Regenerate from template
+    render_template \
+        "${TEMPLATE_DIR}/argocd/appproject.yaml" \
+        "$project_file" \
+        "PROJECT_NAME=${project_name}" \
+        "PROJECT_DESCRIPTION=${description}" \
+        "SOURCE_REPOS=${source_repos_block}" \
+        "DESTINATIONS=${destinations_block}"
+
+    print_success "Project '${project_name}' updated."
+    echo ""
+}
+
 # --- Usage ---
 
 usage() {
