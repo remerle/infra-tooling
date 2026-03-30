@@ -93,6 +93,106 @@ cmd_init() {
     print_info "  3. Add an application:         infra-ctl.sh add-app <app-name>"
 }
 
+cmd_add_app() {
+    require_gum
+
+    if [[ $# -eq 0 ]]; then
+        print_error "Usage: infra-ctl.sh add-app <app-name>"
+        exit 1
+    fi
+
+    local app_name="$1"
+    load_conf
+
+    # Guard: app already exists
+    local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
+    if [[ -d "$app_dir" ]]; then
+        print_error "Application '${app_name}' already exists at ${app_dir}"
+        exit 1
+    fi
+
+    # Detect envs and projects
+    local envs=()
+    while IFS= read -r env; do
+        envs+=("$env")
+    done < <(detect_envs)
+
+    local projects=()
+    while IFS= read -r proj; do
+        projects+=("$proj")
+    done < <(detect_projects)
+
+    # Project selection
+    local project="default"
+    if [[ ${#projects[@]} -gt 0 ]]; then
+        print_header "Select project for '${app_name}'"
+        project="$(printf "%s\n" "default" "${projects[@]}" | gum choose)"
+    fi
+
+    # Preview what will be created
+    print_header "Add Application: ${app_name}"
+    echo ""
+    print_info "Project: ${project}"
+    print_info "Base: k8s/apps/${app_name}/base/kustomization.yaml"
+    if [[ ${#envs[@]} -gt 0 ]]; then
+        local env
+        for env in "${envs[@]}"; do
+            print_info "Overlay: k8s/apps/${app_name}/overlays/${env}/kustomization.yaml"
+            print_info "ArgoCD:  argocd/apps/${app_name}-${env}.yaml"
+        done
+    else
+        print_warning "No environments found. Only base/ will be created."
+        print_info "Run 'infra-ctl.sh add-env <env>' to create overlays later."
+    fi
+    echo ""
+
+    if ! gum confirm "Create these files?"; then
+        print_warning "Aborted."
+        exit 0
+    fi
+
+    local created_files=()
+
+    # Create base
+    local base_kustomization="${app_dir}/base/kustomization.yaml"
+    if safe_render_template \
+        "${TEMPLATE_DIR}/k8s/base-kustomization.yaml" \
+        "$base_kustomization"; then
+        created_files+=("$base_kustomization")
+    fi
+
+    # Create overlays and ArgoCD apps per env
+    if [[ ${#envs[@]} -gt 0 ]]; then
+        local env
+        for env in "${envs[@]}"; do
+            # Overlay kustomization
+            local overlay="${app_dir}/overlays/${env}/kustomization.yaml"
+            if safe_render_template \
+                "${TEMPLATE_DIR}/k8s/overlay-kustomization.yaml" \
+                "$overlay" \
+                "APP_NAME=${app_name}" \
+                "ENV=${env}" \
+                "REPO_OWNER=${REPO_OWNER}"; then
+                created_files+=("$overlay")
+            fi
+
+            # ArgoCD Application manifest
+            local argo_app="${TARGET_DIR}/argocd/apps/${app_name}-${env}.yaml"
+            if safe_render_template \
+                "${TEMPLATE_DIR}/argocd/app-env.yaml" \
+                "$argo_app" \
+                "APP_NAME=${app_name}" \
+                "ENV=${env}" \
+                "PROJECT=${project}" \
+                "REPO_URL=${REPO_URL}"; then
+                created_files+=("$argo_app")
+            fi
+        done
+    fi
+
+    print_summary "${created_files[@]}"
+}
+
 # --- Usage ---
 
 usage() {
