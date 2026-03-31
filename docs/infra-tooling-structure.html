@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: transparent;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #c9d1d9;
+    padding: 0;
+  }
+
+  .root {
+    width: 1100px;
+    padding: 24px;
+    background: rgba(10, 14, 20, 0.97);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  /* ── Top row: k8s + argocd ── */
+  .top-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  /* ── Bottom row: tooling + kargo + config ── */
+  .bottom-row {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr 1fr;
+    gap: 16px;
+  }
+
+  /* ── Section cards ── */
+  .section {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid rgba(48, 54, 61, 0.6);
+    background: rgba(13, 17, 23, 0.95);
+  }
+
+  .section-header {
+    padding: 9px 14px;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-header .path {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    opacity: 0.85;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  .header-k8s {
+    background: linear-gradient(135deg, #1158c7 0%, #1a6eff 100%);
+    box-shadow: 0 1px 8px rgba(31, 111, 235, 0.3);
+  }
+  .header-argocd {
+    background: linear-gradient(135deg, #6d3bbf 0%, #9b6dff 100%);
+    box-shadow: 0 1px 8px rgba(137, 87, 229, 0.3);
+  }
+  .header-tooling {
+    background: linear-gradient(135deg, #1a7f37 0%, #2ea043 100%);
+    box-shadow: 0 1px 8px rgba(46, 160, 67, 0.3);
+  }
+  .header-kargo {
+    background: linear-gradient(135deg, #b35c15 0%, #da6d28 100%);
+    box-shadow: 0 1px 8px rgba(218, 109, 40, 0.25);
+  }
+  .header-config {
+    background: linear-gradient(135deg, #3d444d 0%, #565e68 100%);
+    box-shadow: 0 1px 8px rgba(86, 94, 104, 0.2);
+  }
+
+  .section-body {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  /* ── Items inside sections ── */
+  .item {
+    background: rgba(22, 27, 34, 0.95);
+    border: 1px solid rgba(33, 38, 45, 0.9);
+    border-radius: 8px;
+    padding: 10px 12px;
+    transition: border-color 0.15s;
+  }
+
+  .item-name {
+    font-family: 'JetBrains Mono', 'SF Mono', monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #e6edf3;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+    line-height: 1.6;
+  }
+
+  .item-desc {
+    font-size: 11.5px;
+    color: #7d8590;
+    line-height: 1.45;
+  }
+
+  /* ── Tags (pill badges) ── */
+  .tag {
+    font-family: 'Inter', sans-serif;
+    font-size: 9.5px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }
+
+  .tag-init     { background: rgba(46, 160, 67, 0.15); color: #3fb950; border: 1px solid rgba(35, 134, 54, 0.5); }
+  .tag-add-env  { background: rgba(188, 140, 255, 0.12); color: #d2a8ff; border: 1px solid rgba(137, 87, 229, 0.4); }
+  .tag-add-app  { background: rgba(88, 166, 255, 0.12); color: #79c0ff; border: 1px solid rgba(31, 111, 235, 0.4); }
+  .tag-add-proj { background: rgba(240, 136, 62, 0.12); color: #ffa657; border: 1px solid rgba(218, 109, 40, 0.4); }
+
+  .tag-kind {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    background: rgba(139, 148, 158, 0.1);
+    color: #8b949e;
+    border: 1px solid rgba(139, 148, 158, 0.25);
+  }
+
+  /* ── Relationships ── */
+  .relationships {
+    border: 1px solid rgba(48, 54, 61, 0.6);
+    border-radius: 10px;
+    background: rgba(13, 17, 23, 0.95);
+    padding: 14px 16px;
+  }
+
+  .rel-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #e6edf3;
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+  }
+
+  .rel-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 11.5px;
+  }
+  .rel-row:last-child { margin-bottom: 0; }
+
+  .rel-box {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    font-weight: 500;
+    padding: 3px 10px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+
+  .rel-arrow {
+    color: #484f58;
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  .rel-desc {
+    color: #7d8590;
+    font-size: 11px;
+  }
+
+  .rel-k8s    { background: rgba(31, 111, 235, 0.12); color: #58a6ff; border: 1px solid rgba(31, 111, 235, 0.35); }
+  .rel-argocd { background: rgba(137, 87, 229, 0.12); color: #d2a8ff; border: 1px solid rgba(137, 87, 229, 0.35); }
+  .rel-conf   { background: rgba(110, 118, 129, 0.12); color: #8b949e; border: 1px solid rgba(110, 118, 129, 0.35); }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    padding: 6px 0 2px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #7d8590;
+  }
+
+  .legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .config-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11.5px;
+    color: #d2a8ff;
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+<div class="root">
+
+  <!-- Top row: k8s/ and argocd/ -->
+  <div class="top-row">
+    <div class="section">
+      <div class="section-header header-k8s">What Gets Deployed <span class="path">&mdash; k8s/</span></div>
+      <div class="section-body">
+        <div class="item">
+          <div class="item-name">namespaces/ <span class="tag tag-kind">Namespace</span> <span class="tag tag-add-env">add-env</span></div>
+          <div class="item-desc">One YAML per environment (dev.yaml, staging.yaml, prod.yaml). Defines the Kubernetes namespace resource.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">apps/&lt;app&gt;/base/ <span class="tag tag-kind">Kustomization</span> <span class="tag tag-add-app">add-app</span></div>
+          <div class="item-desc">Kustomize base shared across all environments. References deployment.yaml and service.yaml.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">apps/&lt;app&gt;/overlays/&lt;env&gt;/ <span class="tag tag-kind">Kustomization</span> <span class="tag tag-add-env">add-env</span> <span class="tag tag-add-app">add-app</span></div>
+          <div class="item-desc">Environment-specific Kustomize overlay. Sets image tags, replicas, and env vars. References ../base.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header header-argocd">How It Gets Deployed <span class="path">&mdash; argocd/</span></div>
+      <div class="section-body">
+        <div class="item">
+          <div class="item-name">parent-app.yaml <span class="tag tag-kind">Application</span> <span class="tag tag-init">init</span></div>
+          <div class="item-desc">App-of-apps root Application. Watches argocd/apps/ and auto-syncs all Application manifests found there.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">apps/projects.yaml <span class="tag tag-kind">Application</span> <span class="tag tag-init">init</span></div>
+          <div class="item-desc">Dedicated Application that watches argocd/projects/ and syncs AppProject CRDs.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">apps/&lt;app&gt;-&lt;env&gt;.yaml <span class="tag tag-kind">Application</span> <span class="tag tag-add-env">add-env</span> <span class="tag tag-add-app">add-app</span></div>
+          <div class="item-desc">One ArgoCD Application per app+env combo. Points to the matching Kustomize overlay. Deploys to the env namespace.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">projects/&lt;name&gt;.yaml <span class="tag tag-kind">AppProject</span> <span class="tag tag-add-proj">add-project</span></div>
+          <div class="item-desc">AppProject resources for RBAC. Controls which repos and namespaces apps can access.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom row: tooling, kargo, config -->
+  <div class="bottom-row">
+    <div class="section">
+      <div class="section-header header-tooling">Generators</div>
+      <div class="section-body">
+        <div class="item">
+          <div class="item-name">infra-ctl.sh</div>
+          <div class="item-desc">Manages repo structure. Commands: init, add-app, add-env, add-project, edit-project.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">cluster-ctl.sh</div>
+          <div class="item-desc">Manages local k3d cluster. Commands: init-cluster, delete-cluster, status.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">templates/</div>
+          <div class="item-desc">{{PLACEHOLDER}} templates rendered by bash parameter expansion. Mirrors the output directory structure.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header header-kargo">Progressive Delivery <span class="path">&mdash; kargo/</span></div>
+      <div class="section-body">
+        <div class="item">
+          <div class="item-name">Reserved</div>
+          <div class="item-desc">Placeholder for future Kargo integration. Currently empty; will contain promotion policies and stages.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header header-config">Config</div>
+      <div class="section-body">
+        <div class="item">
+          <div class="item-name">.infra-ctl.conf <span class="tag tag-init">init</span></div>
+          <div class="item-desc">
+            <span class="config-val">REPO_URL</span> / <span class="config-val">REPO_OWNER</span><br>
+            Stored at repo root. Sourced by bash for template rendering. Tracked in git.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Relationships -->
+  <div class="relationships">
+    <div class="rel-title">Relationships</div>
+    <div class="rel-row">
+      <span class="rel-box rel-argocd">parent-app.yaml</span>
+      <span class="rel-arrow">&rarr;</span>
+      <span class="rel-box rel-argocd">argocd/apps/*</span>
+      <span class="rel-desc">watches directory, auto-syncs all Applications</span>
+    </div>
+    <div class="rel-row">
+      <span class="rel-box rel-argocd">apps/projects.yaml</span>
+      <span class="rel-arrow">&rarr;</span>
+      <span class="rel-box rel-argocd">argocd/projects/*</span>
+      <span class="rel-desc">watches directory, syncs AppProject CRDs</span>
+    </div>
+    <div class="rel-row">
+      <span class="rel-box rel-argocd">&lt;app&gt;-&lt;env&gt;.yaml</span>
+      <span class="rel-arrow">&rarr;</span>
+      <span class="rel-box rel-k8s">k8s/apps/&lt;app&gt;/overlays/&lt;env&gt;/</span>
+      <span class="rel-desc">source path for Kustomize build</span>
+    </div>
+    <div class="rel-row">
+      <span class="rel-box rel-k8s">overlays/&lt;env&gt;/kustomization.yaml</span>
+      <span class="rel-arrow">&rarr;</span>
+      <span class="rel-box rel-k8s">../../base/</span>
+      <span class="rel-desc">inherits and patches the base resources</span>
+    </div>
+    <div class="rel-row">
+      <span class="rel-box rel-argocd">&lt;app&gt;-&lt;env&gt;.yaml</span>
+      <span class="rel-arrow">&rarr;</span>
+      <span class="rel-box rel-argocd">projects/&lt;name&gt;.yaml</span>
+      <span class="rel-desc">spec.project references an AppProject for RBAC</span>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div> Created by init</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#d2a8ff"></div> Created by add-env</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#79c0ff"></div> Created by add-app</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ffa657"></div> Created by add-project</div>
+  </div>
+
+</div>
+</body>
+</html>

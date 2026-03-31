@@ -25,25 +25,25 @@ The typical workflow is:
 
 1. **Set up a cluster** (optional, if you want a local environment):
    ```bash
-   ./tooling/cluster-ctl.sh init-cluster
+   ./cluster-ctl.sh init-cluster
    ```
 
 2. **Initialize the repo structure**:
    ```bash
-   ./tooling/infra-ctl.sh init
+   ./infra-ctl.sh init
    ```
 
 3. **Add a project** (optional, can be done anytime):
    ```bash
-   ./tooling/infra-ctl.sh add-project my-team
+   ./infra-ctl.sh add-project my-team
    ```
 
 4. **Add environments and apps** (any order):
    ```bash
-   ./tooling/infra-ctl.sh add-env dev
-   ./tooling/infra-ctl.sh add-env staging
-   ./tooling/infra-ctl.sh add-app postgres
-   ./tooling/infra-ctl.sh add-app redis
+   ./infra-ctl.sh add-env dev
+   ./infra-ctl.sh add-env staging
+   ./infra-ctl.sh add-app postgres
+   ./infra-ctl.sh add-app redis
    ```
 
 Steps 3 and 4 can happen in any order. If you add apps before creating a project, they use ArgoCD's built-in `default` project (which allows everything). You can create a project later and reassign apps to it.
@@ -67,9 +67,9 @@ Bootstraps the repository skeleton. Prompts for the Git repository URL (used in 
 - `.infra-ctl.conf` -- stores configuration for use by other commands (see below)
 
 ```bash
-./tooling/infra-ctl.sh init
+./infra-ctl.sh init
 # Or specify a target directory:
-./tooling/infra-ctl.sh init --target-dir /path/to/repo
+./infra-ctl.sh init --target-dir /path/to/repo
 ```
 
 #### Configuration file (`.infra-ctl.conf`)
@@ -99,7 +99,7 @@ Scaffolds a new application across all existing environments. Creates:
 If ArgoCD projects exist, you'll be prompted to choose which project this app belongs to.
 
 ```bash
-./tooling/infra-ctl.sh add-app postgres
+./infra-ctl.sh add-app postgres
 ```
 
 #### `add-env <name>`
@@ -113,7 +113,7 @@ Scaffolds a new environment across all existing applications. Creates:
 The script detects which project each app belongs to by reading its existing ArgoCD Application manifests, so project assignments carry over to the new environment automatically.
 
 ```bash
-./tooling/infra-ctl.sh add-env dev
+./infra-ctl.sh add-env dev
 ```
 
 #### `add-project <name>`
@@ -123,7 +123,7 @@ Creates an ArgoCD AppProject resource. Projects let you control which Git repos 
 This is for organizational and access-control purposes. You don't need a project to get started -- the built-in `default` project works fine until you want to restrict access.
 
 ```bash
-./tooling/infra-ctl.sh add-project backend-team
+./infra-ctl.sh add-project backend-team
 ```
 
 #### `edit-project <name>`
@@ -131,7 +131,7 @@ This is for organizational and access-control purposes. You don't need a project
 Modifies an existing AppProject. Re-prompts for all fields with current values pre-filled.
 
 ```bash
-./tooling/infra-ctl.sh edit-project backend-team
+./infra-ctl.sh edit-project backend-team
 ```
 
 ### Global options
@@ -166,7 +166,7 @@ Manages the local k3d Kubernetes cluster lifecycle. Independent from `infra-ctl.
 Creates a local Kubernetes cluster using k3d (which runs Kubernetes inside Docker containers). Prompts for cluster name, number of agent nodes, and whether to expose ports for ingress. Optionally installs ArgoCD into the cluster.
 
 ```bash
-./tooling/cluster-ctl.sh init-cluster
+./cluster-ctl.sh init-cluster
 ```
 
 #### `delete-cluster`
@@ -174,7 +174,7 @@ Creates a local Kubernetes cluster using k3d (which runs Kubernetes inside Docke
 Tears down a k3d cluster. Lists existing clusters and prompts for which one to delete.
 
 ```bash
-./tooling/cluster-ctl.sh delete-cluster
+./cluster-ctl.sh delete-cluster
 ```
 
 #### `status`
@@ -182,12 +182,12 @@ Tears down a k3d cluster. Lists existing clusters and prompts for which one to d
 Shows current cluster status: k3d clusters, kubectl context, and ArgoCD pod health.
 
 ```bash
-./tooling/cluster-ctl.sh status
+./cluster-ctl.sh status
 ```
 
 ## Templates
 
-Templates live in `tooling/templates/` and use `{{PLACEHOLDER}}` markers that get replaced when generating files. They're organized by where their output ends up:
+Templates live in `templates/` and use `{{PLACEHOLDER}}` markers that get replaced when generating files. They're organized by where their output ends up:
 
 - `templates/argocd/` -- ArgoCD Application and AppProject manifests
 - `templates/k8s/` -- Kubernetes resources (namespaces, Kustomize configurations)
@@ -217,3 +217,23 @@ Common restrictions:
 - **Resource types**: limit what Kubernetes resource types can be created
 
 Kubernetes-level RBAC (restricting what humans can do with `kubectl`) is a separate concern not yet covered by these tools.
+
+## Example: What You Get
+
+After running these commands:
+
+```bash
+./infra-ctl.sh init
+./infra-ctl.sh add-project platform-team
+./infra-ctl.sh add-env dev
+./infra-ctl.sh add-env staging
+./infra-ctl.sh add-app frontend
+./infra-ctl.sh add-app backend
+./infra-ctl.sh add-app database
+```
+
+Your cluster ends up looking like this:
+
+![Cluster View](docs/cluster-view.png)
+
+Every resource in the cluster traces back to a file in the repo. ArgoCD watches Git and keeps the cluster in sync automatically: push a change, and the cluster converges to match.
