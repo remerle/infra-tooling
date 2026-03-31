@@ -129,11 +129,17 @@ cmd_add_app() {
         project="$(printf "%s\n" "default" "${projects[@]}" | gum choose)"
     fi
 
+    # Workload type selection (Deployment is default, listed first)
+    local workload_type
+    workload_type="$(printf "Deployment\nStatefulSet" | gum choose)"
+
     # Preview what will be created
     print_header "Add Application: ${app_name}"
     echo ""
     print_info "Project: ${project}"
+    print_info "Workload: ${workload_type}"
     print_info "Base: k8s/apps/${app_name}/base/kustomization.yaml"
+    print_info "Base: k8s/apps/${app_name}/base/service.yaml"
     print_info "Base: k8s/apps/${app_name}/base/configmap.yaml"
     if [[ ${#envs[@]} -gt 0 ]]; then
         local env
@@ -154,12 +160,29 @@ cmd_add_app() {
 
     local created_files=()
 
-    # Create base
+    # Create base kustomization (workload-type-specific)
     local base_kustomization="${app_dir}/base/kustomization.yaml"
-    if safe_render_template \
-        "${TEMPLATE_DIR}/k8s/base-kustomization.yaml" \
-        "$base_kustomization"; then
+    local kustomization_template
+    if [[ "$workload_type" == "StatefulSet" ]]; then
+        kustomization_template="${TEMPLATE_DIR}/k8s/base-kustomization-statefulset.yaml"
+    else
+        kustomization_template="${TEMPLATE_DIR}/k8s/base-kustomization-deployment.yaml"
+    fi
+    if safe_render_template "$kustomization_template" "$base_kustomization"; then
         created_files+=("$base_kustomization")
+    fi
+
+    # Create base service (headless for StatefulSet)
+    local base_service="${app_dir}/base/service.yaml"
+    local service_template
+    if [[ "$workload_type" == "StatefulSet" ]]; then
+        service_template="${TEMPLATE_DIR}/k8s/service-headless.yaml"
+    else
+        service_template="${TEMPLATE_DIR}/k8s/service.yaml"
+    fi
+    if safe_render_template "$service_template" "$base_service" \
+        "APP_NAME=${app_name}"; then
+        created_files+=("$base_service")
     fi
 
     local base_configmap="${app_dir}/base/configmap.yaml"

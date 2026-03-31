@@ -44,7 +44,7 @@ Templates are in `templates/`, organized to mirror the output directory structur
 |-------------|--------|---------|
 | `{{REPO_URL}}` | `.infra-ctl.conf` | `app-env.yaml`, `parent-app.yaml`, `projects-app.yaml` |
 | `{{REPO_OWNER}}` | `.infra-ctl.conf` | `overlay-kustomization.yaml` |
-| `{{APP_NAME}}` | User input (`add-app`) | `app-env.yaml`, `base-kustomization.yaml`, `overlay-kustomization.yaml`, `configmap.yaml` |
+| `{{APP_NAME}}` | User input (`add-app`) | `app-env.yaml`, `overlay-kustomization.yaml`, `configmap.yaml`, `service.yaml`, `service-headless.yaml` |
 | `{{ENV}}` | User input (`add-env`) or detection | `app-env.yaml`, `namespace.yaml`, `overlay-kustomization.yaml` |
 | `{{PROJECT}}` | User input or detection (`detect_app_project`) | `app-env.yaml` |
 | `{{PROJECT_NAME}}` | User input (`add-project`) | `appproject.yaml` |
