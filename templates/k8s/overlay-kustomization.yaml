@@ -14,9 +14,12 @@ replicas:
 
 patches:
   - patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/env
-        value: []                # TODO: add {{ENV}}-specific env vars here
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: {{APP_NAME}}
+      data:
+        EXAMPLE_KEY: "example-value"  # TODO: replace with {{ENV}}-specific config
     target:
-      kind: Deployment
+      kind: ConfigMap
       name: {{APP_NAME}}
