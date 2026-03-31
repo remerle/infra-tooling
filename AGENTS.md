@@ -8,6 +8,7 @@ Two independent bash scripts at the repository root:
 
 - **`infra-ctl.sh`** -- manages the GitOps repository structure (directories, templates, manifests). Git-only; does not interact with any cluster.
 - **`cluster-ctl.sh`** -- manages the local k3d cluster lifecycle (creation, ArgoCD installation, teardown). Interacts with Docker and Kubernetes.
+- **`secret-ctl.sh`** -- manages per-environment secrets using Bitnami Sealed Secrets. Interacts with the cluster (for controller install and key management) and writes encrypted SealedSecret files to the repo.
 
 Both scripts share common functions via `lib/common.sh`.
 
@@ -28,6 +29,8 @@ kargo/                  # Placeholder for Kargo progressive delivery (future)
 ```
 
 `k8s/` contains what gets deployed. `argocd/` contains how it gets deployed. They are separate concerns.
+
+Sealed secrets live in overlay directories (`k8s/apps/<app>/overlays/<env>/sealed-secret.yaml`). The public cert (`.sealed-secrets-cert.pem`) is committed to the repo root. The private key backup (`.sealed-secrets-key.json`) is gitignored.
 
 ## Template substitution
 
@@ -95,6 +98,8 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 2. `infra-ctl.sh init` -- bootstrap the repo skeleton
 3. `infra-ctl.sh add-project <name>` -- (optional) create access control boundaries
 4. `infra-ctl.sh add-env <name>` / `infra-ctl.sh add-app <name>` -- in any order
+5. `secret-ctl.sh init` -- install Sealed Secrets controller (requires running cluster)
+6. `secret-ctl.sh add <app> <env>` -- encrypt and store per-environment secrets
 
 ## When modifying these scripts
 
