@@ -52,6 +52,24 @@ cmd_init_cluster() {
     print_success "Cluster '${cluster_name}' created."
     echo ""
 
+    # Install Metrics Server (required for kubectl top)
+    gum spin --title "Installing Metrics Server..." -- \
+        kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+    # Metrics Server needs --kubelet-insecure-tls in k3d (self-signed kubelet certs)
+    gum spin --title "Patching Metrics Server for k3d..." -- \
+        kubectl patch deployment metrics-server -n kube-system \
+            --type=json \
+            -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+
+    if gum spin --title "Waiting for Metrics Server to be ready..." -- \
+        kubectl wait --for=condition=available deployment/metrics-server -n kube-system --timeout=60s; then
+        print_success "Metrics Server is ready (kubectl top enabled)."
+    else
+        print_warning "Metrics Server not ready yet. It may need a moment to stabilize."
+    fi
+    echo ""
+
     # Prompt for ArgoCD installation
     if gum confirm "Install ArgoCD?"; then
         echo ""
