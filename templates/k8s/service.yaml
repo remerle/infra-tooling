@@ -6,5 +6,5 @@ spec:
   selector:
     app: {{APP_NAME}}
   ports:
-    - port: 80
-      targetPort: 8080
+    - port: {{PORT}}
+      targetPort: {{PORT}}

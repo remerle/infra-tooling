@@ -133,11 +133,16 @@ cmd_add_app() {
     local workload_type
     workload_type="$(printf "Deployment\nStatefulSet" | gum choose)"
 
+    # Container port
+    local port
+    port="$(gum input --value "8080" --prompt "Container port: ")"
+
     # Preview what will be created
     print_header "Add Application: ${app_name}"
     echo ""
     print_info "Project: ${project}"
     print_info "Workload: ${workload_type}"
+    print_info "Port: ${port}"
     print_info "Base: k8s/apps/${app_name}/base/kustomization.yaml"
     print_info "Base: k8s/apps/${app_name}/base/service.yaml"
     print_info "Base: k8s/apps/${app_name}/base/configmap.yaml"
@@ -181,7 +186,8 @@ cmd_add_app() {
         service_template="${TEMPLATE_DIR}/k8s/service.yaml"
     fi
     if safe_render_template "$service_template" "$base_service" \
-        "APP_NAME=${app_name}"; then
+        "APP_NAME=${app_name}" \
+        "PORT=${port}"; then
         created_files+=("$base_service")
     fi
 

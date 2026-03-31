@@ -51,6 +51,7 @@ Templates are in `templates/`, organized to mirror the output directory structur
 | `{{PROJECT_DESCRIPTION}}` | User input (`add-project`) | `appproject.yaml` |
 | `{{SOURCE_REPOS}}` | Generated YAML list (`add-project`) | `appproject.yaml` |
 | `{{DESTINATIONS}}` | Generated YAML list (`add-project`) | `appproject.yaml` |
+| `{{PORT}}` | User input (`add-app`, default `8080`) | `service.yaml`, `service-headless.yaml` |
 
 ## Detection logic
 
