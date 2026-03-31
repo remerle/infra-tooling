@@ -4,12 +4,12 @@ Design decisions and conventions for AI agents working in this repository.
 
 ## Architecture
 
-Two independent bash scripts in `tooling/`:
+Two independent bash scripts at the repository root:
 
 - **`infra-ctl.sh`** -- manages the GitOps repository structure (directories, templates, manifests). Git-only; does not interact with any cluster.
 - **`cluster-ctl.sh`** -- manages the local k3d cluster lifecycle (creation, ArgoCD installation, teardown). Interacts with Docker and Kubernetes.
 
-Both scripts share common functions via `tooling/lib/common.sh`.
+Both scripts share common functions via `lib/common.sh`.
 
 ## Directory structure rationale
 
@@ -31,9 +31,23 @@ kargo/                  # Placeholder for Kargo progressive delivery (future)
 
 ## Template substitution
 
-Templates use `{{PLACEHOLDER}}` markers replaced by `sed` at generation time. No templating engine or runtime dependency beyond bash and sed.
+Templates use `{{PLACEHOLDER}}` markers replaced by bash parameter expansion at generation time. No templating engine or runtime dependency beyond bash.
 
-Templates are in `tooling/templates/`, organized to mirror the output directory structure (`templates/argocd/` outputs to `argocd/`, `templates/k8s/` outputs to `k8s/`).
+Templates are in `templates/`, organized to mirror the output directory structure (`templates/argocd/` outputs to `argocd/`, `templates/k8s/` outputs to `k8s/`).
+
+### Template placeholders
+
+| Placeholder | Source | Used in |
+|-------------|--------|---------|
+| `{{REPO_URL}}` | `.infra-ctl.conf` | `app-env.yaml`, `parent-app.yaml`, `projects-app.yaml` |
+| `{{REPO_OWNER}}` | `.infra-ctl.conf` | `overlay-kustomization.yaml` |
+| `{{APP_NAME}}` | User input (`add-app`) | `app-env.yaml`, `base-kustomization.yaml`, `overlay-kustomization.yaml` |
+| `{{ENV}}` | User input (`add-env`) or detection | `app-env.yaml`, `namespace.yaml`, `overlay-kustomization.yaml` |
+| `{{PROJECT}}` | User input or detection (`detect_app_project`) | `app-env.yaml` |
+| `{{PROJECT_NAME}}` | User input (`add-project`) | `appproject.yaml` |
+| `{{PROJECT_DESCRIPTION}}` | User input (`add-project`) | `appproject.yaml` |
+| `{{SOURCE_REPOS}}` | Generated YAML list (`add-project`) | `appproject.yaml` |
+| `{{DESTINATIONS}}` | Generated YAML list (`add-project`) | `appproject.yaml` |
 
 ## Detection logic
 
@@ -42,7 +56,7 @@ The scripts detect existing state by scanning the filesystem:
 - **Environments**: `k8s/namespaces/*.yaml` (strip .yaml extension)
 - **Applications**: directories under `k8s/apps/`
 - **Projects**: `argocd/projects/*.yaml` (strip .yaml extension)
-- **App-to-project mapping**: parsed from existing `argocd/apps/<app>-<env>.yaml` manifests (grep for `spec.project`)
+- **App-to-project mapping**: parsed from existing `argocd/apps/<app>-<env>.yaml` manifests (grep for `project:` key)
 
 No external state store. The filesystem is the source of truth.
 
@@ -84,8 +98,34 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 
 ## When modifying these scripts
 
-- All template rendering goes through `render_template()` or `safe_render_template()` in `lib/common.sh`
-- Detection functions (`detect_envs`, `detect_apps`, `detect_projects`) are in `lib/common.sh`
 - Adding a new command: add a `cmd_<name>` function and a case in the `main()` dispatcher
 - Adding a new template: place it in the appropriate `templates/` subdirectory
-- Adding a new placeholder: document it in the design spec
+- Adding a new placeholder: add it to the "Template placeholders" table above
+
+### `lib/common.sh` function inventory
+
+**Dependency checking:**
+- `require_cmd(cmd, install_hint)` -- exits with an error if `cmd` is not on PATH
+- `require_gum()` -- exits with an error and install instructions if `gum` is not on PATH
+
+**Configuration:**
+- `load_conf()` -- sources `.infra-ctl.conf` from `TARGET_DIR`; fails if missing
+- `save_conf()` -- writes `REPO_URL` and `REPO_OWNER` to `.infra-ctl.conf`
+
+**Template rendering:**
+- `render_template(template, output, KEY=value...)` -- renders a template to an output path, replacing `{{KEY}}` placeholders via bash parameter expansion
+- `safe_render_template(template, output, KEY=value...)` -- same as `render_template` but skips if the output file already exists
+- `safe_write(output, content)` -- writes content to a file only if it does not already exist
+
+**Detection (filesystem scanning):**
+- `detect_envs()` -- lists environments from `k8s/namespaces/*.yaml`
+- `detect_apps()` -- lists applications from directories under `k8s/apps/`
+- `detect_projects()` -- lists projects from `argocd/projects/*.yaml`
+- `detect_app_project(app_name)` -- finds which project an app belongs to by grepping existing manifests
+
+**Repo URL parsing:**
+- `extract_repo_owner(url)` -- extracts the GitHub owner from an HTTPS or SSH repo URL
+
+**Styled output (gum wrappers):**
+- `print_header(msg)`, `print_success(msg)`, `print_warning(msg)`, `print_error(msg)`, `print_info(msg)` -- colored terminal output
+- `print_summary(files...)` -- prints a summary of created files

@@ -2,6 +2,10 @@
 
 CLI tools for managing an ArgoCD GitOps infrastructure repository and local Kubernetes clusters.
 
+## Structure Overview
+
+![Infrastructure Tooling Structure](docs/infra-tooling-structure.png)
+
 ## Prerequisites
 
 Install the following tools before using these scripts:
@@ -60,13 +64,29 @@ Bootstraps the repository skeleton. Prompts for the Git repository URL (used in 
 - `argocd/apps/projects.yaml` -- tells ArgoCD to watch `argocd/projects/` for AppProject resources
 - `argocd/projects/` -- where AppProject resources live (for access control, added later)
 - `kargo/` -- placeholder for future Kargo progressive delivery configuration
-- `.infra-ctl.conf` -- stores the repo URL and owner for use by other commands
+- `.infra-ctl.conf` -- stores configuration for use by other commands (see below)
 
 ```bash
 ./tooling/infra-ctl.sh init
 # Or specify a target directory:
 ./tooling/infra-ctl.sh init --target-dir /path/to/repo
 ```
+
+#### Configuration file (`.infra-ctl.conf`)
+
+The `init` command creates `.infra-ctl.conf` in the target directory. This file is `source`d by bash, so it uses `KEY=value` format:
+
+```
+REPO_URL=https://github.com/your-org/your-repo.git
+REPO_OWNER=your-org
+```
+
+| Key | Description |
+|-----|-------------|
+| `REPO_URL` | Git repository URL used in ArgoCD Application manifests |
+| `REPO_OWNER` | Repository owner, used for project defaults |
+
+Other commands call `load_conf` to read this file. If it is missing, they exit with an error directing you to run `init` first.
 
 #### `add-app <name>`
 
@@ -129,7 +149,11 @@ All `infra-ctl.sh` commands accept:
 
 These are the correct GitOps behaviors, but they can surprise you if you're experimenting with `kubectl` directly.
 
-**No overwrites:** The script never overwrites existing files. If a file already exists, it prints a warning and skips it.
+**Target revision:** All generated ArgoCD Applications use `targetRevision: HEAD`, meaning ArgoCD always tracks the latest commit on the default branch. If you need branch-based or tag-based deployments, edit the generated Application manifests or modify `templates/argocd/app-env.yaml`.
+
+**Cluster resource access:** All generated AppProjects allow `clusterResourceWhitelist: group '*', kind '*'`, granting access to all cluster-scoped resources by default. This is intentionally permissive to avoid blocking initial setup. Restrict this per-project when you're ready to lock down access (see [Adding RBAC restrictions later](#adding-rbac-restrictions-later)).
+
+**No overwrites:** Creation commands (`init`, `add-app`, `add-env`, `add-project`) never overwrite existing files. If a file already exists, they print a warning and skip it. The `edit-project` command overwrites the project file by design.
 
 ## cluster-ctl.sh
 
@@ -167,6 +191,16 @@ Templates live in `tooling/templates/` and use `{{PLACEHOLDER}}` markers that ge
 
 - `templates/argocd/` -- ArgoCD Application and AppProject manifests
 - `templates/k8s/` -- Kubernetes resources (namespaces, Kustomize configurations)
+
+| Template file | Generates |
+|---------------|-----------|
+| `templates/argocd/parent-app.yaml` | The "app of apps" Application (`argocd/parent-app.yaml`) |
+| `templates/argocd/projects-app.yaml` | The Application that watches for AppProjects (`argocd/apps/projects.yaml`) |
+| `templates/argocd/app-env.yaml` | Per-app, per-environment Application manifests (`argocd/apps/<name>-<env>.yaml`) |
+| `templates/argocd/appproject.yaml` | AppProject resources (`argocd/projects/<name>.yaml`) |
+| `templates/k8s/base-kustomization.yaml` | Base Kustomize config for an app (`k8s/apps/<name>/base/kustomization.yaml`) |
+| `templates/k8s/overlay-kustomization.yaml` | Per-environment overlay (`k8s/apps/<name>/overlays/<env>/kustomization.yaml`) |
+| `templates/k8s/namespace.yaml` | Namespace resource (`k8s/namespaces/<name>.yaml`) |
 
 You don't need to edit templates for normal usage. They define the structure; the scripts fill in the values.
 
