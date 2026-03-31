@@ -1,0 +1,315 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+source "$(dirname "$0")/lib/common.sh"
+
+# --- Commands ---
+
+cmd_init() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    require_cmd "kubeseal" "brew install kubeseal"
+
+    print_header "Initialize Sealed Secrets"
+    echo ""
+
+    local key_backup="${TARGET_DIR}/.sealed-secrets-key.json"
+    local cert_file="${TARGET_DIR}/.sealed-secrets-cert.pem"
+
+    # If a key backup exists, offer to restore it
+    if [[ -f "$key_backup" ]]; then
+        print_info "Found existing key backup at .sealed-secrets-key.json"
+        if gum confirm "Restore this key into the cluster? (keeps existing SealedSecrets decryptable)"; then
+            gum spin --title "Restoring sealed-secrets key..." -- \
+                kubectl apply -f "$key_backup"
+
+            print_success "Key restored from backup."
+            echo ""
+        fi
+    fi
+
+    # Install the Sealed Secrets controller
+    local manifest_url="https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.3/controller.yaml"
+
+    gum spin --title "Installing Sealed Secrets controller..." -- \
+        kubectl apply -f "$manifest_url"
+
+    if gum spin --title "Waiting for Sealed Secrets controller to be ready..." -- \
+        kubectl wait --for=condition=available deployment/sealed-secrets-controller \
+            -n kube-system --timeout=90s; then
+        print_success "Sealed Secrets controller is ready."
+    else
+        print_warning "Controller not ready yet. It may need a moment to stabilize."
+        print_info "  kubectl get pods -n kube-system -l name=sealed-secrets-controller"
+    fi
+    echo ""
+
+    # Export the public cert for offline encryption
+    gum spin --title "Exporting public cert..." -- \
+        kubeseal --fetch-cert --controller-name=sealed-secrets-controller \
+            --controller-namespace=kube-system > "$cert_file"
+
+    print_success "Public cert saved to .sealed-secrets-cert.pem (commit this file)."
+
+    # Back up the private key
+    kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key \
+        -o json > "$key_backup"
+
+    print_success "Private key backed up to .sealed-secrets-key.json (gitignored)."
+
+    # Add key backup to .gitignore (idempotent)
+    local gitignore="${TARGET_DIR}/.gitignore"
+    if [[ ! -f "$gitignore" ]] || ! grep -qF '.sealed-secrets-key.json' "$gitignore"; then
+        echo '.sealed-secrets-key.json' >> "$gitignore"
+        print_success "Added .sealed-secrets-key.json to .gitignore"
+    fi
+
+    echo ""
+    print_header "Sealed Secrets Ready"
+    print_info "Encrypt secrets with: secret-ctl.sh add <app> <env>"
+    print_info "Public cert: .sealed-secrets-cert.pem (safe to commit)"
+    print_info "Key backup:  .sealed-secrets-key.json (gitignored)"
+    echo ""
+}
+
+cmd_add() {
+    require_gum
+    require_cmd "kubeseal" "brew install kubeseal"
+
+    if [[ $# -lt 2 ]]; then
+        print_error "Usage: secret-ctl.sh add <app> <env>"
+        exit 1
+    fi
+
+    local app_name="$1"
+    local env_name="$2"
+
+    # Validate app exists
+    local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
+    if [[ ! -d "$app_dir" ]]; then
+        print_error "Application '${app_name}' not found at ${app_dir}"
+        print_info "Run 'infra-ctl.sh add-app ${app_name}' to create it first."
+        exit 1
+    fi
+
+    # Validate env exists
+    local ns_file="${TARGET_DIR}/k8s/namespaces/${env_name}.yaml"
+    if [[ ! -f "$ns_file" ]]; then
+        print_error "Environment '${env_name}' not found at ${ns_file}"
+        print_info "Run 'infra-ctl.sh add-env ${env_name}' to create it first."
+        exit 1
+    fi
+
+    # Validate public cert exists
+    local cert_file="${TARGET_DIR}/.sealed-secrets-cert.pem"
+    if [[ ! -f "$cert_file" ]]; then
+        print_error "No public cert found at .sealed-secrets-cert.pem"
+        print_info "Run 'secret-ctl.sh init' to install Sealed Secrets first."
+        exit 1
+    fi
+
+    local overlay_dir="${app_dir}/overlays/${env_name}"
+    local sealed_file="${overlay_dir}/sealed-secret.yaml"
+
+    print_header "Add Secrets: ${app_name} / ${env_name}"
+    echo ""
+
+    # Show existing keys if sealed-secret.yaml already exists
+    if [[ -f "$sealed_file" ]]; then
+        print_info "Existing sealed secret found. New keys will be merged."
+        echo ""
+
+        # Extract existing encrypted keys (we can't decrypt, but we track names)
+        local existing_keys
+        existing_keys="$(grep '^\s\+[a-zA-Z_][a-zA-Z0-9_]*:' "$sealed_file" \
+            | sed 's/^\s*//' | cut -d: -f1 | sort -u)" || true
+
+        if [[ -n "$existing_keys" ]]; then
+            print_info "Existing keys: $(echo "$existing_keys" | tr '\n' ' ')"
+            echo ""
+        fi
+    fi
+
+    # Prompt for key/value pairs
+    local keys=()
+    local values=()
+    while true; do
+        local key
+        key="$(gum input --prompt "Secret key (empty to finish): " --placeholder "e.g. DATABASE_URL")"
+
+        if [[ -z "$key" ]]; then
+            break
+        fi
+
+        # Warn if key exists in current sealed secret
+        if [[ -f "$sealed_file" ]] && grep -q "^\s*${key}:" "$sealed_file"; then
+            if ! gum confirm "Key '${key}' already exists. Overwrite?"; then
+                continue
+            fi
+        fi
+
+        local value
+        value="$(gum input --prompt "Value for ${key}: " --password)"
+
+        keys+=("$key")
+        values+=("$value")
+        print_success "Added: ${key}"
+    done
+
+    if [[ ${#keys[@]} -eq 0 ]]; then
+        print_warning "No secrets entered. Aborted."
+        exit 0
+    fi
+
+    # Build the stringData JSON object
+    local data_json="{"
+    local i
+    for i in "${!keys[@]}"; do
+        if [[ $i -gt 0 ]]; then
+            data_json+=","
+        fi
+        # Escape the value for JSON (handle backslashes and double quotes)
+        local escaped_value
+        escaped_value="$(printf '%s' "${values[$i]}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+        data_json+="\"${keys[$i]}\":\"${escaped_value}\""
+    done
+    data_json+="}"
+
+    local secret_json
+    secret_json='{"apiVersion":"v1","kind":"Secret","metadata":{"name":"'"${app_name}"'","namespace":"'"${env_name}"'"},"type":"Opaque","stringData":'"${data_json}"'}'
+
+    if [[ -f "$sealed_file" ]]; then
+        print_info "Merging with existing sealed secret..."
+    fi
+
+    echo ""
+
+    # Attempt merge-into if the file already exists; fall back to fresh seal otherwise
+    if [[ -f "$sealed_file" ]]; then
+        printf '%s' "$secret_json" | kubeseal \
+            --cert "$cert_file" \
+            --format yaml \
+            --merge-into "$sealed_file"
+    else
+        mkdir -p "$overlay_dir"
+        printf '%s' "$secret_json" | kubeseal \
+            --cert "$cert_file" \
+            --format yaml > "$sealed_file"
+    fi
+
+    print_success "SealedSecret written to ${sealed_file}"
+
+    # Add sealed-secret.yaml to overlay kustomization.yaml if not already present
+    local kustomization="${overlay_dir}/kustomization.yaml"
+    if [[ -f "$kustomization" ]] && ! grep -qF 'sealed-secret.yaml' "$kustomization"; then
+        sed -i '' '/^resources:/a\
+  - sealed-secret.yaml' "$kustomization"
+        print_success "Added sealed-secret.yaml to overlay kustomization.yaml"
+    fi
+
+    echo ""
+    print_summary "$sealed_file"
+}
+
+cmd_list() {
+    require_gum
+
+    local filter_app="${1:-}"
+    local filter_env="${2:-}"
+
+    print_header "Sealed Secrets"
+    echo ""
+
+    local apps_dir="${TARGET_DIR}/k8s/apps"
+    if [[ ! -d "$apps_dir" ]]; then
+        print_warning "No applications found."
+        exit 0
+    fi
+
+    local found=false
+    local app_dir
+    for app_dir in "$apps_dir"/*/; do
+        [[ -d "$app_dir" ]] || continue
+        local app_name
+        app_name="$(basename "$app_dir")"
+
+        # Filter by app if specified
+        if [[ -n "$filter_app" && "$app_name" != "$filter_app" ]]; then
+            continue
+        fi
+
+        local overlays_dir="${app_dir}overlays"
+        [[ -d "$overlays_dir" ]] || continue
+
+        local env_dir
+        for env_dir in "$overlays_dir"/*/; do
+            [[ -d "$env_dir" ]] || continue
+            local env_name
+            env_name="$(basename "$env_dir")"
+
+            # Filter by env if specified
+            if [[ -n "$filter_env" && "$env_name" != "$filter_env" ]]; then
+                continue
+            fi
+
+            local sealed_file="${env_dir}sealed-secret.yaml"
+            if [[ -f "$sealed_file" ]]; then
+                found=true
+                # Count the encrypted keys
+                local key_count
+                key_count="$(grep -c '^\s\+[a-zA-Z_][a-zA-Z0-9_]*:' "$sealed_file" 2>/dev/null)" || key_count=0
+                print_info "${app_name} / ${env_name}  (${key_count} keys)"
+            fi
+        done
+    done
+
+    if [[ "$found" == false ]]; then
+        print_warning "No sealed secrets found."
+    fi
+    echo ""
+}
+
+# --- Usage ---
+
+usage() {
+    cat <<EOF
+Usage: secret-ctl.sh <command> [options]
+
+Commands:
+  init                Install Sealed Secrets controller and set up key material
+  add <app> <env>     Create or update a SealedSecret for an app/environment
+  list [app] [env]    List app/environment pairs that have sealed secrets
+
+Global options:
+  --target-dir <path>   Directory to operate on (default: current directory)
+EOF
+}
+
+# --- Main ---
+
+main() {
+    parse_global_args "$@"
+    set -- ${REMAINING_ARGS[@]+"${REMAINING_ARGS[@]}"}
+
+    if [[ $# -eq 0 ]]; then
+        usage
+        exit 1
+    fi
+
+    local command="$1"
+    shift
+
+    case "$command" in
+        init)       cmd_init "$@" ;;
+        add)        cmd_add "$@" ;;
+        list)       cmd_list "$@" ;;
+        -h|--help)  usage ;;
+        *)
+            print_error "Unknown command: $command"
+            usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
