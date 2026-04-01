@@ -266,6 +266,7 @@ users:
       client-certificate-data: $(base64 < "$cert_file" | tr -d '\n')
       client-key-data: $(base64 < "$key_file" | tr -d '\n')
 EOF
+    chmod 600 "$output_file"
 }
 
 # Generates a kubeconfig file for a service account with token auth.
@@ -299,6 +300,27 @@ users:
     user:
       token: ${token}
 EOF
+    chmod 600 "$output_file"
+}
+
+# --- Helm operations ---
+
+# Upgrades ArgoCD Helm release if it is currently installed.
+# No-op with a warning if ArgoCD is not installed.
+# Usage: upgrade_argocd_if_installed <values_file>
+upgrade_argocd_if_installed() {
+    local values_file="$1"
+
+    if helm status argocd -n argocd &>/dev/null; then
+        gum spin --title "Upgrading ArgoCD..." -- \
+            helm upgrade argocd argo/argo-cd \
+                --namespace argocd \
+                --values "$values_file" \
+                --wait --timeout 120s
+        print_success "ArgoCD upgraded."
+    else
+        print_warning "ArgoCD not installed. Changes saved to values file; will take effect on next install."
+    fi
 }
 
 # --- Values file manipulation ---
@@ -320,7 +342,7 @@ append_argocd_policy() {
 ${policy_lines}"
     fi
 
-    yq -i ".configs.rbac.\"policy.csv\" = \"${new_policy}\"" "$values_file"
+    new_policy="$new_policy" yq -i '.configs.rbac."policy.csv" = env(new_policy)' "$values_file"
 }
 
 # Adds an ArgoCD local account to the Helm values file.
@@ -329,7 +351,8 @@ add_argocd_account() {
     local values_file="$1"
     local username="$2"
 
-    yq -i ".configs.cm.\"accounts.${username}\" = \"apiKey, login\"" "$values_file"
+    local yq_path=".configs.cm.\"accounts.${username}\""
+    yq -i "${yq_path} = \"apiKey, login\"" "$values_file"
 }
 
 # Adds a user-to-group mapping in the ArgoCD policy.
@@ -356,11 +379,11 @@ remove_argocd_role_policy() {
         return
     fi
 
-    # Remove lines that reference role:<role_name> or the group mapping line
+    # Remove lines that reference this exact role (word-bounded) or the group mapping line
     local filtered
-    filtered="$(echo "$existing" | grep -v "role:${role_name}" | grep -v "^g, ${role_name}," || true)"
+    filtered="$(echo "$existing" | grep -v "role:${role_name}[, ]" | grep -v "role:${role_name}$" | grep -v "^g, ${role_name}," || true)"
 
-    yq -i ".configs.rbac.\"policy.csv\" = \"${filtered}\"" "$values_file"
+    filtered="$filtered" yq -i '.configs.rbac."policy.csv" = env(filtered)' "$values_file"
 }
 
 # Removes an ArgoCD account and its group mapping from the values file.
@@ -379,7 +402,7 @@ remove_argocd_account() {
     if [[ -n "$existing" ]]; then
         local filtered
         filtered="$(echo "$existing" | grep -v "^g, ${username}," || true)"
-        yq -i ".configs.rbac.\"policy.csv\" = \"${filtered}\"" "$values_file"
+        filtered="$filtered" yq -i '.configs.rbac."policy.csv" = env(filtered)' "$values_file"
     fi
 }
 
@@ -400,7 +423,7 @@ role_exists() {
     # Check ArgoCD policy
     local policy
     policy="$(yq '.configs.rbac."policy.csv" // ""' "$values_file")" || true
-    if echo "$policy" | grep -q "role:${role_name}"; then
+    if echo "$policy" | grep -qE "role:${role_name}([, ]|$)"; then
         return 0
     fi
 

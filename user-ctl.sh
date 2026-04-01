@@ -204,16 +204,7 @@ REOF
     append_argocd_policy "$VALUES_FILE" "$argocd_policy"
     print_success "ArgoCD policy updated in values file."
 
-    if helm status argocd -n argocd &>/dev/null; then
-        gum spin --title "Upgrading ArgoCD to apply RBAC changes..." -- \
-            helm upgrade argocd argo/argo-cd \
-                --namespace argocd \
-                --values "$VALUES_FILE" \
-                --wait --timeout 120s
-        print_success "ArgoCD upgraded."
-    else
-        print_warning "ArgoCD not installed. Policy saved to values file; will take effect on next install."
-    fi
+    upgrade_argocd_if_installed "$VALUES_FILE"
 
     echo ""
     print_summary "${created_files[@]}"
@@ -310,15 +301,7 @@ cmd_remove_role() {
     remove_argocd_role_policy "$VALUES_FILE" "$role_name"
     print_success "ArgoCD policy removed from values file."
 
-    # Upgrade ArgoCD if installed
-    if helm status argocd -n argocd &>/dev/null; then
-        gum spin --title "Upgrading ArgoCD to remove RBAC..." -- \
-            helm upgrade argocd argo/argo-cd \
-                --namespace argocd \
-                --values "$VALUES_FILE" \
-                --wait --timeout 120s
-        print_success "ArgoCD upgraded."
-    fi
+    upgrade_argocd_if_installed "$VALUES_FILE"
 
     echo ""
     print_success "Role '${role_name}' removed."
@@ -369,6 +352,7 @@ cmd_add() {
     # Generate key and CSR
     gum spin --title "Generating RSA key..." -- \
         openssl genrsa -out "$key_file" 4096
+    chmod 600 "$key_file"
 
     gum spin --title "Generating CSR..." -- \
         openssl req -new -key "$key_file" \
@@ -428,15 +412,7 @@ EOF
     add_argocd_user_group "$VALUES_FILE" "$username" "$group"
     print_success "ArgoCD account created."
 
-    # Upgrade ArgoCD if installed
-    if helm status argocd -n argocd &>/dev/null; then
-        gum spin --title "Upgrading ArgoCD to register account..." -- \
-            helm upgrade argocd argo/argo-cd \
-                --namespace argocd \
-                --values "$VALUES_FILE" \
-                --wait --timeout 120s
-        print_success "ArgoCD upgraded."
-    fi
+    upgrade_argocd_if_installed "$VALUES_FILE"
 
     # Clean up CSR file
     rm -f "$csr_file"
@@ -487,15 +463,7 @@ cmd_remove() {
     remove_argocd_account "$VALUES_FILE" "$username"
     print_success "ArgoCD account removed from values file."
 
-    # Upgrade ArgoCD if installed
-    if helm status argocd -n argocd &>/dev/null; then
-        gum spin --title "Upgrading ArgoCD..." -- \
-            helm upgrade argocd argo/argo-cd \
-                --namespace argocd \
-                --values "$VALUES_FILE" \
-                --wait --timeout 120s
-        print_success "ArgoCD upgraded."
-    fi
+    upgrade_argocd_if_installed "$VALUES_FILE"
 
     # Clean up local files
     local users_dir="${TARGET_DIR}/users"
@@ -745,15 +713,7 @@ EOF
     add_argocd_user_group "$VALUES_FILE" "$sa_name" "$group"
     print_success "ArgoCD account created."
 
-    # Upgrade ArgoCD if installed
-    if helm status argocd -n argocd &>/dev/null; then
-        gum spin --title "Upgrading ArgoCD..." -- \
-            helm upgrade argocd argo/argo-cd \
-                --namespace argocd \
-                --values "$VALUES_FILE" \
-                --wait --timeout 120s
-        print_success "ArgoCD upgraded."
-    fi
+    upgrade_argocd_if_installed "$VALUES_FILE"
 
     echo ""
     print_header "Service Account Created"
@@ -868,15 +828,7 @@ cmd_remove_sa() {
     if account_exists "$sa_name" "$VALUES_FILE"; then
         remove_argocd_account "$VALUES_FILE" "$sa_name"
         print_success "ArgoCD account removed."
-
-        if helm status argocd -n argocd &>/dev/null; then
-            gum spin --title "Upgrading ArgoCD..." -- \
-                helm upgrade argocd argo/argo-cd \
-                    --namespace argocd \
-                    --values "$VALUES_FILE" \
-                    --wait --timeout 120s
-            print_success "ArgoCD upgraded."
-        fi
+        upgrade_argocd_if_installed "$VALUES_FILE"
     fi
 
     # Clean up local files
