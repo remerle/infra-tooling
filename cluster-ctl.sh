@@ -106,6 +106,37 @@ cmd_init_cluster() {
         print_info "  Then open: https://localhost:8080 (username: admin)"
     fi
 
+    # Prompt for Kargo installation
+    if gum confirm "Install Kargo?"; then
+        echo ""
+
+        gum spin --title "Installing Kargo via Helm (this may take a minute)..." -- \
+            helm install kargo \
+                oci://ghcr.io/akuity/kargo-charts/kargo \
+                --namespace kargo --create-namespace \
+                --wait --timeout 120s
+
+        print_success "Kargo installed via Helm."
+
+        # Update .infra-ctl.conf if it exists
+        local conf_file="${SCRIPT_DIR}/.infra-ctl.conf"
+        if [[ -f "$conf_file" ]]; then
+            if grep -q '^KARGO_ENABLED=' "$conf_file"; then
+                local tmp
+                tmp="$(awk '/^KARGO_ENABLED=/{print "KARGO_ENABLED=true"; next}1' "$conf_file")"
+                printf '%s\n' "$tmp" > "$conf_file"
+            else
+                echo "KARGO_ENABLED=true" >> "$conf_file"
+            fi
+            print_info "Set KARGO_ENABLED=true in .infra-ctl.conf"
+        fi
+
+        echo ""
+        print_info "Kargo dashboard:"
+        print_info "  kubectl port-forward svc/kargo-api -n kargo 8443:443"
+        print_info "  Then open: https://localhost:8443"
+    fi
+
     # Summary
     echo ""
     print_header "Cluster Summary"
@@ -192,6 +223,25 @@ cmd_status() {
     else
         print_info "ArgoCD is not installed in the current cluster."
     fi
+
+    # Kargo status
+    if kubectl get namespace kargo &>/dev/null; then
+        print_header "Kargo Status"
+        kubectl get pods -n kargo --no-headers 2>/dev/null | while IFS= read -r line; do
+            print_info "$line"
+        done
+
+        echo ""
+        if helm status kargo -n kargo &>/dev/null; then
+            local kargo_helm_status
+            kargo_helm_status="$(helm status kargo -n kargo -o json 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)" || true
+            print_info "Helm release: ${kargo_helm_status}"
+        else
+            print_info "Kargo was not installed via Helm."
+        fi
+    else
+        print_info "Kargo is not installed in the current cluster."
+    fi
     echo ""
 }
 
@@ -226,6 +276,30 @@ cmd_upgrade_argocd() {
     echo ""
 }
 
+cmd_upgrade_kargo() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    require_helm
+
+    print_header "Upgrade Kargo"
+    echo ""
+
+    if ! helm status kargo -n kargo &>/dev/null; then
+        print_error "Kargo Helm release not found in namespace 'kargo'."
+        print_info "Run 'cluster-ctl.sh init-cluster' to install Kargo first."
+        exit 1
+    fi
+
+    gum spin --title "Upgrading Kargo..." -- \
+        helm upgrade kargo \
+            oci://ghcr.io/akuity/kargo-charts/kargo \
+            --namespace kargo \
+            --wait --timeout 120s
+
+    print_success "Kargo upgraded."
+    echo ""
+}
+
 # --- Usage ---
 
 usage() {
@@ -236,6 +310,7 @@ Commands:
   init-cluster      Create a local k3d cluster and optionally install ArgoCD
   delete-cluster    Tear down a k3d cluster
   upgrade-argocd    Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
+  upgrade-kargo     Re-apply Kargo Helm release
   status            Show cluster and ArgoCD health
 
 Global options:
@@ -261,6 +336,7 @@ main() {
         init-cluster)       cmd_init_cluster "$@" ;;
         delete-cluster)     cmd_delete_cluster "$@" ;;
         upgrade-argocd)     cmd_upgrade_argocd "$@" ;;
+        upgrade-kargo)      cmd_upgrade_kargo "$@" ;;
         status)             cmd_status "$@" ;;
         -h|--help)          usage ;;
         *)
