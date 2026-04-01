@@ -94,7 +94,7 @@ All subsequent environments. Sources freight from the previous stage (`stages: [
 
 **`init-cluster`**: After the ArgoCD install block, add:
 
-```
+```bash
 if gum confirm "Install Kargo?"; then
     helm install kargo oci://ghcr.io/akuity/kargo-charts/kargo \
         --namespace kargo --create-namespace \
