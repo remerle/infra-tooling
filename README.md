@@ -222,7 +222,7 @@ Kubernetes-level RBAC (restricting what humans can do with `kubectl`) is a separ
 
 This walkthrough deploys a two-service e-commerce app (SvelteKit frontend + Fastify backend) with PostgreSQL, from zero to a running local cluster.
 
-The application lives in a separate repo with CI workflows that push images to `ghcr.io/remerle/k8s-practice-frontend` and `ghcr.io/remerle/k8s-practice-backend`.
+The application lives at [github.com/remerle/k8s-practice-app](https://github.com/remerle/k8s-practice-app). CI workflows build and push images to `ghcr.io/remerle/k8s-practice-frontend` and `ghcr.io/remerle/k8s-practice-backend`, tagged by commit SHA.
 
 ### 1. Create the cluster and initialize the repo
 
@@ -287,7 +287,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/remerle/k8s-practice-backend:latest
+          image: ghcr.io/remerle/k8s-practice-backend:95b5f519b2a531c4f15cf7e37a5de7ca734b8196
           ports:
             - containerPort: 3000
           env:
@@ -306,7 +306,7 @@ spec:
               port: 3000
 ```
 
-`DATABASE_URL` contains credentials, so it goes in a Secret (see step 6). For admin features, you'd also add `FIREBASE_PROJECT_ID` and `CORS_ORIGIN` via a ConfigMap, but they're not needed to get the storefront running.
+`DATABASE_URL` contains credentials, so it goes in a Secret (see step 5). The image tag should match a commit SHA from the CI workflow. For admin features, you'd also add `FIREBASE_PROJECT_ID` and `CORS_ORIGIN` via a ConfigMap, but they're not needed to get the storefront running. Product image uploads require a PersistentVolumeClaim mounted at `/data/images`; without it, uploaded images are lost on pod restart.
 
 **`k8s/apps/frontend/base/deployment.yaml`:**
 
@@ -328,7 +328,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: ghcr.io/remerle/k8s-practice-frontend:latest
+          image: ghcr.io/remerle/k8s-practice-frontend:95b5f519b2a531c4f15cf7e37a5de7ca734b8196
           ports:
             - containerPort: 3000
           env:
@@ -336,7 +336,7 @@ spec:
               value: "http://backend:3000"
 ```
 
-`API_URL` tells the frontend's server-side proxy where to forward API requests. The `backend` hostname resolves via the Kubernetes Service created by `add-app`. Firebase config is only needed for admin auth.
+`API_URL` tells the frontend's server-side proxy where to forward API requests. The `backend` hostname resolves via the Kubernetes Service created by `add-app`. Firebase config is only needed for admin auth. The image tag in the base manifest is a starting point; per-environment overlays control which version actually runs (via the `images` field in `kustomization.yaml`).
 
 **`k8s/apps/postgres/base/statefulset.yaml`:**
 
