@@ -4,4 +4,7 @@ kind: Kustomization
 resources:
   - statefulset.yaml
   - service.yaml
-  - configmap.yaml
+
+configMapGenerator:
+  - name: {{APP_NAME}}
+    literals: []

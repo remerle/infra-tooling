@@ -102,6 +102,7 @@ cmd_add_app() {
     fi
 
     local app_name="$1"
+    validate_k8s_name "$app_name" "App name"
     load_conf
 
     # Guard: app already exists
@@ -145,7 +146,6 @@ cmd_add_app() {
     print_info "Port: ${port}"
     print_info "Base: k8s/apps/${app_name}/base/kustomization.yaml"
     print_info "Base: k8s/apps/${app_name}/base/service.yaml"
-    print_info "Base: k8s/apps/${app_name}/base/configmap.yaml"
     if [[ ${#envs[@]} -gt 0 ]]; then
         local env
         for env in "${envs[@]}"; do
@@ -173,7 +173,8 @@ cmd_add_app() {
     else
         kustomization_template="${TEMPLATE_DIR}/k8s/base-kustomization-deployment.yaml"
     fi
-    if safe_render_template "$kustomization_template" "$base_kustomization"; then
+    if safe_render_template "$kustomization_template" "$base_kustomization" \
+        "APP_NAME=${app_name}"; then
         created_files+=("$base_kustomization")
     fi
 
@@ -189,14 +190,6 @@ cmd_add_app() {
         "APP_NAME=${app_name}" \
         "PORT=${port}"; then
         created_files+=("$base_service")
-    fi
-
-    local base_configmap="${app_dir}/base/configmap.yaml"
-    if safe_render_template \
-        "${TEMPLATE_DIR}/k8s/configmap.yaml" \
-        "$base_configmap" \
-        "APP_NAME=${app_name}"; then
-        created_files+=("$base_configmap")
     fi
 
     # Create overlays and ArgoCD apps per env
@@ -240,6 +233,7 @@ cmd_add_env() {
     fi
 
     local env_name="$1"
+    validate_k8s_name "$env_name" "Environment name"
     load_conf
 
     # Guard: env already exists
@@ -341,6 +335,7 @@ cmd_add_project() {
     fi
 
     local project_name="$1"
+    validate_k8s_name "$project_name" "Project name"
     load_conf
 
     # Guard: project already exists

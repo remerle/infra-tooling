@@ -75,6 +75,7 @@ cmd_init() {
 cmd_add() {
     require_gum
     require_cmd "kubeseal" "brew install kubeseal"
+    require_cmd "jq" "brew install jq"
 
     if [[ $# -lt 2 ]]; then
         print_error "Usage: secret-ctl.sh add <app> <env>"
@@ -83,6 +84,8 @@ cmd_add() {
 
     local app_name="$1"
     local env_name="$2"
+    validate_k8s_name "$app_name" "App name"
+    validate_k8s_name "$env_name" "Environment name"
 
     # Validate app exists
     local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
@@ -119,9 +122,9 @@ cmd_add() {
         print_info "Existing sealed secret found. New keys will be merged."
         echo ""
 
-        # Extract existing encrypted keys (we can't decrypt, but we track names)
+        # Extract existing encrypted keys from the encryptedData section only
         local existing_keys
-        existing_keys="$(grep '^\s\+[a-zA-Z_][a-zA-Z0-9_]*:' "$sealed_file" \
+        existing_keys="$(awk '/^  encryptedData:/{found=1; next} found && /^  [a-zA-Z]/{found=0} found && /^    [a-zA-Z_]/{print}' "$sealed_file" \
             | sed 's/^\s*//' | cut -d: -f1 | sort -u)" || true
 
         if [[ -n "$existing_keys" ]]; then
@@ -161,22 +164,16 @@ cmd_add() {
         exit 0
     fi
 
-    # Build the stringData JSON object
-    local data_json="{"
+    # Build the secret JSON using jq for safe escaping of keys and values
+    local data_json="{}"
     local i
     for i in "${!keys[@]}"; do
-        if [[ $i -gt 0 ]]; then
-            data_json+=","
-        fi
-        # Escape the value for JSON (handle backslashes and double quotes)
-        local escaped_value
-        escaped_value="$(printf '%s' "${values[$i]}" | sed 's/\\/\\\\/g; s/"/\\"/g')"
-        data_json+="\"${keys[$i]}\":\"${escaped_value}\""
+        data_json="$(printf '%s' "$data_json" | jq --arg k "${keys[$i]}" --arg v "${values[$i]}" '. + {($k): $v}')"
     done
-    data_json+="}"
 
     local secret_json
-    secret_json='{"apiVersion":"v1","kind":"Secret","metadata":{"name":"'"${app_name}"'","namespace":"'"${env_name}"'"},"type":"Opaque","stringData":'"${data_json}"'}'
+    secret_json="$(jq -n --arg name "$app_name" --arg ns "$env_name" --argjson data "$data_json" \
+        '{"apiVersion":"v1","kind":"Secret","metadata":{"name":$name,"namespace":$ns},"type":"Opaque","stringData":$data}')"
 
     if [[ -f "$sealed_file" ]]; then
         print_info "Merging with existing sealed secret..."
@@ -202,8 +199,10 @@ cmd_add() {
     # Add sealed-secret.yaml to overlay kustomization.yaml if not already present
     local kustomization="${overlay_dir}/kustomization.yaml"
     if [[ -f "$kustomization" ]] && ! grep -qF 'sealed-secret.yaml' "$kustomization"; then
-        sed -i '' '/^resources:/a\
-  - sealed-secret.yaml' "$kustomization"
+        local tmp_kust
+        tmp_kust="$(mktemp)"
+        awk '/^resources:/{print; print "  - sealed-secret.yaml"; next} {print}' \
+            "$kustomization" > "$tmp_kust" && mv "$tmp_kust" "$kustomization"
         print_success "Added sealed-secret.yaml to overlay kustomization.yaml"
     fi
 
@@ -257,7 +256,7 @@ cmd_list() {
                 found=true
                 # Count the encrypted keys
                 local key_count
-                key_count="$(grep -c '^\s\+[a-zA-Z_][a-zA-Z0-9_]*:' "$sealed_file" 2>/dev/null)" || key_count=0
+                key_count="$(awk '/^  encryptedData:/{found=1; next} found && /^  [a-zA-Z]/{found=0} found && /^    [a-zA-Z_]/{c++} END{print c+0}' "$sealed_file" 2>/dev/null)" || key_count=0
                 print_info "${app_name} / ${env_name}  (${key_count} keys)"
             fi
         done
