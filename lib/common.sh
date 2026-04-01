@@ -42,6 +42,52 @@ require_gum() {
     fi
 }
 
+require_yq() {
+    if ! command -v yq &>/dev/null; then
+        echo "ERROR: 'yq' (Go version by mikefarah) is required but not installed." >&2
+        echo "  Install: brew install yq" >&2
+        echo "  Or visit: https://github.com/mikefarah/yq#install" >&2
+        exit 1
+    fi
+}
+
+require_helm() {
+    if ! command -v helm &>/dev/null; then
+        echo "ERROR: 'helm' is required but not installed." >&2
+        echo "  Install: brew install helm" >&2
+        echo "  Or visit: https://helm.sh/docs/intro/install/" >&2
+        exit 1
+    fi
+}
+
+# --- Input validation ---
+
+# Validates a name for use as a Kubernetes resource name and filesystem path.
+# Must match RFC 1123 subdomain: lowercase alphanumeric, hyphens, dots; max 253 chars.
+# Usage: validate_k8s_name <name> <label>
+#   label: human-readable label for error messages (e.g. "app name", "environment")
+validate_k8s_name() {
+    local name="$1"
+    local label="${2:-name}"
+
+    if [[ -z "$name" ]]; then
+        print_error "${label} cannot be empty."
+        exit 1
+    fi
+
+    if [[ ${#name} -gt 253 ]]; then
+        print_error "${label} '${name}' exceeds 253 characters."
+        exit 1
+    fi
+
+    if ! [[ "$name" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ ]] && ! [[ "$name" =~ ^[a-z0-9]$ ]]; then
+        print_error "${label} '${name}' is not a valid Kubernetes resource name."
+        echo "  Must match RFC 1123: lowercase alphanumeric, hyphens, or dots." >&2
+        echo "  Must start and end with an alphanumeric character." >&2
+        exit 1
+    fi
+}
+
 # --- Argument parsing ---
 
 # Extracts --target-dir from arguments. Sets TARGET_DIR.
@@ -80,8 +126,22 @@ load_conf() {
         echo "  Run 'infra-ctl.sh init' first to initialize the repository." >&2
         exit 1
     fi
-    # shellcheck source=/dev/null
-    source "$conf_file"
+
+    # Parse KEY=value lines safely instead of sourcing as executable bash
+    local line key value
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        # Only accept lines matching KEY=value (no spaces in key, no shell metacharacters)
+        if [[ "$line" =~ ^([A-Z_][A-Z0-9_]*)=(.*)$ ]]; then
+            key="${BASH_REMATCH[1]}"
+            value="${BASH_REMATCH[2]}"
+            declare -g "$key=$value"
+        else
+            print_error "Malformed line in ${conf_file}: ${line}"
+            exit 1
+        fi
+    done < "$conf_file"
 }
 
 save_conf() {
