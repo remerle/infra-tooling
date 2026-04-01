@@ -292,6 +292,43 @@ detect_app_project() {
     echo "default"
 }
 
+# --- Kargo support ---
+
+# Checks if Kargo is enabled in the project configuration.
+# Returns 0 if KARGO_ENABLED=true in .infra-ctl.conf, 1 otherwise.
+is_kargo_enabled() {
+    local conf_file="${TARGET_DIR}/.infra-ctl.conf"
+    [[ -f "$conf_file" ]] || return 1
+    grep -q '^KARGO_ENABLED=true$' "$conf_file"
+}
+
+# Reads the Kargo promotion order into the PROMOTION_ORDER array.
+# Fails if kargo/promotion-order.txt is missing.
+# Usage: read_promotion_order
+#   Sets global array: PROMOTION_ORDER
+read_promotion_order() {
+    local order_file="${TARGET_DIR}/kargo/promotion-order.txt"
+    if [[ ! -f "$order_file" ]]; then
+        print_error "kargo/promotion-order.txt not found."
+        echo "  Run 'infra-ctl.sh init' or create the file manually." >&2
+        exit 1
+    fi
+
+    PROMOTION_ORDER=()
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        line="$(echo "$line" | xargs)"  # trim whitespace
+        PROMOTION_ORDER+=("$line")
+    done < "$order_file"
+
+    if [[ ${#PROMOTION_ORDER[@]} -eq 0 ]]; then
+        print_error "kargo/promotion-order.txt is empty."
+        exit 1
+    fi
+}
+
 # --- Repo URL parsing ---
 
 # Extracts the owner from a GitHub repo URL.
