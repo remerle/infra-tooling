@@ -180,6 +180,12 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 - `generate_k8s_viewer_binding(role_name)` -- ClusterRoleBinding for the viewer ClusterRole
 - `generate_k8s_developer_role(role_name, namespace)` -- namespaced Role with full access
 - `generate_k8s_developer_rolebinding(role_name, namespace)` -- RoleBinding for the developer Role
+- `generate_k8s_custom_clusterrole(role_name, verbs_csv)` -- ClusterRole for custom preset with user-selected verbs
+- `generate_k8s_custom_role(role_name, namespace, verbs_csv)` -- namespaced Role for custom preset with user-selected verbs
+- `format_verbs_yaml(verbs_csv)` -- formats comma-separated verbs into YAML array syntax
+
+**Duration utilities:**
+- `calculate_expiry_date(duration)` -- calculates expiry date from kubectl-style duration (e.g., "2160h", "30m", "3600s")
 
 **Kubeconfig generation:**
 - `generate_cert_kubeconfig(username, cert_file, key_file, output_file)` -- kubeconfig with x509 client cert auth

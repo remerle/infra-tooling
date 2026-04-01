@@ -77,6 +77,76 @@ generate_argocd_policy_custom() {
     echo "g, ${role_name}, role:${role_name}"
 }
 
+# --- K8s RBAC manifest generation (custom preset) ---
+
+# Generates a ClusterRole YAML for the custom preset with user-selected verbs.
+# Usage: generate_k8s_custom_clusterrole <role_name> <verbs_csv>
+#   verbs_csv: comma-separated list (e.g., "get,list,watch")
+generate_k8s_custom_clusterrole() {
+    local role_name="$1"
+    local verbs_csv="$2"
+
+    local verbs_yaml
+    verbs_yaml="$(format_verbs_yaml "$verbs_csv")"
+
+    cat <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ${role_name}
+  labels:
+    app.kubernetes.io/managed-by: user-ctl
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: [${verbs_yaml}]
+  - nonResourceURLs: ["*"]
+    verbs: ["get"]
+EOF
+}
+
+# Generates a Role YAML for the custom preset with user-selected verbs (one namespace).
+# Usage: generate_k8s_custom_role <role_name> <namespace> <verbs_csv>
+generate_k8s_custom_role() {
+    local role_name="$1"
+    local namespace="$2"
+    local verbs_csv="$3"
+
+    local verbs_yaml
+    verbs_yaml="$(format_verbs_yaml "$verbs_csv")"
+
+    cat <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ${role_name}
+  namespace: ${namespace}
+  labels:
+    app.kubernetes.io/managed-by: user-ctl
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: [${verbs_yaml}]
+EOF
+}
+
+# Formats a comma-separated verb list into YAML array syntax.
+# Usage: format_verbs_yaml <verbs_csv>
+# Example: "get,list,watch" -> '"get", "list", "watch"'
+format_verbs_yaml() {
+    local verbs_csv="$1"
+    local IFS=','
+    local verbs=()
+    read -ra verbs <<< "$verbs_csv"
+    local quoted=()
+    local v
+    for v in "${verbs[@]}"; do
+        quoted+=("\"${v}\"")
+    done
+    local IFS=', '
+    echo "${quoted[*]}"
+}
+
 # --- K8s RBAC manifest generation ---
 
 # Generates a ClusterRole YAML for the admin-readonly-settings preset.
@@ -301,6 +371,51 @@ users:
       token: ${token}
 EOF
     chmod 600 "$output_file"
+}
+
+# --- Duration utilities ---
+
+# Calculates a human-readable expiry date from a kubectl-style duration string.
+# Supports hours (h) and minutes (m) suffixes.
+# Usage: calculate_expiry_date <duration>
+# Example: calculate_expiry_date "2160h" -> "2026-07-01 13:00"
+calculate_expiry_date() {
+    local duration="$1"
+
+    local amount="${duration%%[!0-9]*}"
+    local unit="${duration##*[0-9]}"
+
+    if [[ -z "$amount" || -z "$unit" ]]; then
+        echo "(unknown expiry)"
+        return
+    fi
+
+    case "$unit" in
+        h)
+            if date -v+"${amount}"H "+%Y-%m-%d %H:%M" &>/dev/null; then
+                date -v+"${amount}"H "+%Y-%m-%d %H:%M"
+            else
+                date -d "+${amount} hours" "+%Y-%m-%d %H:%M"
+            fi
+            ;;
+        m)
+            if date -v+"${amount}"M "+%Y-%m-%d %H:%M" &>/dev/null; then
+                date -v+"${amount}"M "+%Y-%m-%d %H:%M"
+            else
+                date -d "+${amount} minutes" "+%Y-%m-%d %H:%M"
+            fi
+            ;;
+        s)
+            if date -v+"${amount}"S "+%Y-%m-%d %H:%M" &>/dev/null; then
+                date -v+"${amount}"S "+%Y-%m-%d %H:%M"
+            else
+                date -d "+${amount} seconds" "+%Y-%m-%d %H:%M"
+            fi
+            ;;
+        *)
+            echo "(unknown expiry: unsupported unit '${unit}')"
+            ;;
+    esac
 }
 
 # --- Helm operations ---

@@ -133,21 +133,7 @@ cmd_add_role() {
                 local cr_file="${platform_dir}/${role_name}-clusterrole.yaml"
                 local crb_file="${platform_dir}/${role_name}-clusterrolebinding.yaml"
 
-                cat > "$cr_file" <<CREOF
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: ${role_name}
-  labels:
-    app.kubernetes.io/managed-by: user-ctl
-rules:
-  - apiGroups: ["*"]
-    resources: ["*"]
-    verbs: [$(echo "$k8s_verbs" | sed 's/,/", "/g; s/^/"/; s/$/"/' )]
-  - nonResourceURLs: ["*"]
-    verbs: ["get"]
-CREOF
-
+                generate_k8s_custom_clusterrole "$role_name" "$k8s_verbs" > "$cr_file"
                 generate_k8s_viewer_binding "$role_name" > "$crb_file"
                 created_files+=("$cr_file" "$crb_file")
             else
@@ -170,20 +156,7 @@ CREOF
                     local role_file="${platform_dir}/${role_name}-role-${ns}.yaml"
                     local rb_file="${platform_dir}/${role_name}-rolebinding-${ns}.yaml"
 
-                    cat > "$role_file" <<REOF
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: ${role_name}
-  namespace: ${ns}
-  labels:
-    app.kubernetes.io/managed-by: user-ctl
-rules:
-  - apiGroups: ["*"]
-    resources: ["*"]
-    verbs: [$(echo "$k8s_verbs" | sed 's/,/", "/g; s/^/"/; s/$/"/' )]
-REOF
-
+                    generate_k8s_custom_role "$role_name" "$ns" "$k8s_verbs" > "$role_file"
                     generate_k8s_developer_rolebinding "$role_name" "$ns" > "$rb_file"
                     created_files+=("$role_file" "$rb_file")
                 done <<< "$selected_ns"
@@ -349,10 +322,9 @@ cmd_add() {
     local crt_file="${users_dir}/${username}.crt"
     local kubeconfig_file="${users_dir}/${username}.kubeconfig"
 
-    # Generate key and CSR
+    # Generate key and CSR (umask ensures key is created with 600 permissions)
     gum spin --title "Generating RSA key..." -- \
-        openssl genrsa -out "$key_file" 4096
-    chmod 600 "$key_file"
+        bash -c "umask 077 && openssl genrsa -out '$key_file' 4096"
 
     gum spin --title "Generating CSR..." -- \
         openssl req -new -key "$key_file" \
@@ -459,6 +431,16 @@ cmd_remove() {
     kubectl delete csr "$username" --ignore-not-found 2>/dev/null || true
     print_success "K8s CSR removed."
 
+    # Warn about x509 certificate limitation
+    # Kubernetes has no certificate revocation. The issued cert remains valid until it
+    # expires. RBAC bindings are group-based (shared with other users in the same group),
+    # so they cannot be removed per-user. The effective mitigation is:
+    # 1. ArgoCD access is revoked immediately (account removed below)
+    # 2. kubectl access persists until the cert expires (typically 1 year for kube-apiserver-client)
+    # 3. For immediate kubectl revocation, rotate the CA or remove the group's RBAC role
+    print_warning "x509 certs cannot be revoked. kubectl access persists until cert expiry."
+    print_info "To revoke immediately: run 'user-ctl.sh remove-role <group>' (affects ALL users in that group)."
+
     # Remove ArgoCD account
     remove_argocd_account "$VALUES_FILE" "$username"
     print_success "ArgoCD account removed from values file."
@@ -556,6 +538,10 @@ cmd_add_sa() {
         case "$1" in
             --duration)
                 duration="$2"
+                if [[ ! "$duration" =~ ^[0-9]+[hms]$ ]]; then
+                    print_error "Invalid duration format: '${duration}'. Use <number><unit> where unit is h (hours), m (minutes), or s (seconds). Example: 2160h"
+                    exit 1
+                fi
                 shift 2
                 ;;
             *)
@@ -691,16 +677,8 @@ EOF
     print_success "Token generated (duration: ${duration})."
 
     # Calculate expiry for display
-    local duration_hours
-    duration_hours="$(echo "$duration" | sed 's/h$//')"
     local expiry_date
-    if date -v+${duration_hours}H "+%Y-%m-%d %H:%M" &>/dev/null; then
-        # macOS date
-        expiry_date="$(date -v+${duration_hours}H "+%Y-%m-%d %H:%M")"
-    else
-        # GNU date
-        expiry_date="$(date -d "+${duration_hours} hours" "+%Y-%m-%d %H:%M")"
-    fi
+    expiry_date="$(calculate_expiry_date "$duration")"
 
     # Generate kubeconfig
     local kubeconfig_file="${users_dir}/${sa_name}.kubeconfig"
@@ -745,6 +723,10 @@ cmd_refresh_sa() {
         case "$1" in
             --duration)
                 duration="$2"
+                if [[ ! "$duration" =~ ^[0-9]+[hms]$ ]]; then
+                    print_error "Invalid duration format: '${duration}'. Use <number><unit> where unit is h (hours), m (minutes), or s (seconds). Example: 2160h"
+                    exit 1
+                fi
                 shift 2
                 ;;
             *)
@@ -771,14 +753,8 @@ cmd_refresh_sa() {
 
     generate_token_kubeconfig "$sa_name" "$token" "$kubeconfig_file"
 
-    local duration_hours
-    duration_hours="$(echo "$duration" | sed 's/h$//')"
     local expiry_date
-    if date -v+${duration_hours}H "+%Y-%m-%d %H:%M" &>/dev/null; then
-        expiry_date="$(date -v+${duration_hours}H "+%Y-%m-%d %H:%M")"
-    else
-        expiry_date="$(date -d "+${duration_hours} hours" "+%Y-%m-%d %H:%M")"
-    fi
+    expiry_date="$(calculate_expiry_date "$duration")"
 
     echo "$expiry_date" > "${users_dir}/${sa_name}.expiry"
     print_success "Token refreshed."
