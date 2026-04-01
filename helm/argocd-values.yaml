@@ -1,0 +1,11 @@
+# ArgoCD Helm chart values
+# Managed by user-ctl.sh -- safe to edit manually; yq modifications target specific paths.
+#
+# Apply changes with: cluster-ctl.sh upgrade-argocd
+# Or directly: helm upgrade argocd argo/argo-cd -n argocd --values helm/argocd-values.yaml
+
+configs:
+  cm: {}
+  rbac:
+    policy.default: role:readonly
+    policy.csv: ""
