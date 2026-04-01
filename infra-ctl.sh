@@ -369,6 +369,16 @@ cmd_add_env() {
         print_warning "No applications found. Only the namespace will be created."
         print_info "Run 'infra-ctl.sh add-app <app>' to create overlays later."
     fi
+    if is_kargo_enabled; then
+        if [[ ${#apps[@]} -gt 0 ]]; then
+            local app
+            for app in "${apps[@]}"; do
+                if [[ -d "${TARGET_DIR}/kargo/${app}" ]]; then
+                    print_info "Kargo:   kargo/${app}/${env_name}-stage.yaml"
+                fi
+            done
+        fi
+    fi
     echo ""
 
     if ! gum confirm "Create these files?"; then
@@ -418,6 +428,56 @@ cmd_add_env() {
                 created_files+=("$argo_app")
             fi
         done
+    fi
+
+    # Generate Kargo Stages for the new environment
+    if is_kargo_enabled; then
+        read_promotion_order
+
+        # Show current order and inform about append
+        echo ""
+        print_info "Current promotion order:"
+        local i
+        for i in "${!PROMOTION_ORDER[@]}"; do
+            print_info "  $((i + 1)). ${PROMOTION_ORDER[$i]}"
+        done
+        print_info "Environment '${env_name}' will be appended to the promotion chain."
+        print_info "To insert elsewhere, edit kargo/promotion-order.txt first, then re-run."
+        echo ""
+
+        # Append to promotion-order.txt
+        echo "$env_name" >> "${TARGET_DIR}/kargo/promotion-order.txt"
+
+        # Determine the upstream stage (last env before the new one)
+        local upstream_env="${PROMOTION_ORDER[${#PROMOTION_ORDER[@]}-1]}"
+
+        # Generate stages for each existing app
+        if [[ ${#apps[@]} -gt 0 ]]; then
+            local app
+            for app in "${apps[@]}"; do
+                local kargo_app_dir="${TARGET_DIR}/kargo/${app}"
+
+                # Only generate if the app has Kargo resources
+                [[ -d "$kargo_app_dir" ]] || continue
+
+                # Read image repo from existing warehouse
+                local image_repo
+                image_repo="$(grep 'repoURL:' "${kargo_app_dir}/warehouse.yaml" 2>/dev/null \
+                    | head -1 | sed 's/.*repoURL:\s*//' | xargs)" || image_repo="ghcr.io/${REPO_OWNER}/${app}"
+
+                local stage_file="${kargo_app_dir}/${env_name}-stage.yaml"
+                if safe_render_template \
+                    "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
+                    "$stage_file" \
+                    "APP_NAME=${app}" \
+                    "ENV=${env_name}" \
+                    "IMAGE_REPO=${image_repo}" \
+                    "UPSTREAM_STAGE=${app}-${upstream_env}" \
+                    "REPO_URL=${REPO_URL}"; then
+                    created_files+=("$stage_file")
+                fi
+            done
+        fi
     fi
 
     print_summary "${created_files[@]}"
@@ -625,6 +685,145 @@ cmd_edit_project() {
     echo ""
 }
 
+cmd_enable_kargo() {
+    require_gum
+    load_conf
+
+    if is_kargo_enabled; then
+        print_warning "Kargo is already enabled in .infra-ctl.conf"
+        exit 0
+    fi
+
+    print_header "Enable Kargo"
+    echo ""
+
+    # Set KARGO_ENABLED in conf
+    local conf_file="${TARGET_DIR}/.infra-ctl.conf"
+    if grep -q '^KARGO_ENABLED=' "$conf_file"; then
+        local tmp
+        tmp="$(awk '/^KARGO_ENABLED=/{print "KARGO_ENABLED=true"; next}1' "$conf_file")"
+        printf '%s\n' "$tmp" > "$conf_file"
+    else
+        echo "KARGO_ENABLED=true" >> "$conf_file"
+    fi
+    print_success "Set KARGO_ENABLED=true in .infra-ctl.conf"
+
+    # Create promotion-order.txt
+    local promo_file="${TARGET_DIR}/kargo/promotion-order.txt"
+    mkdir -p "${TARGET_DIR}/kargo"
+
+    local envs=()
+    while IFS= read -r env; do
+        envs+=("$env")
+    done < <(detect_envs)
+
+    if [[ ${#envs[@]} -gt 0 ]]; then
+        print_info "Detected environments: ${envs[*]}"
+        print_info "These will be used as the promotion order."
+        echo ""
+
+        if ! gum confirm "Use this order? (Edit kargo/promotion-order.txt after to change)"; then
+            print_warning "Aborted. Set KARGO_ENABLED=false in .infra-ctl.conf to disable."
+            exit 0
+        fi
+
+        printf '%s\n' "${envs[@]}" > "$promo_file"
+    else
+        cat > "$promo_file" <<'PROMOEOF'
+dev
+staging
+production
+PROMOEOF
+        print_info "No environments detected. Using defaults: dev, staging, production"
+    fi
+    rm -f "${TARGET_DIR}/kargo/.gitkeep"
+    print_success "Created kargo/promotion-order.txt"
+
+    local created_files=("$promo_file")
+
+    # Generate Kargo resources for existing apps
+    local apps=()
+    while IFS= read -r app; do
+        apps+=("$app")
+    done < <(detect_apps)
+
+    if [[ ${#apps[@]} -gt 0 ]]; then
+        read_promotion_order
+
+        local app
+        for app in "${apps[@]}"; do
+            local kargo_app_dir="${TARGET_DIR}/kargo/${app}"
+            mkdir -p "$kargo_app_dir"
+
+            # Prompt for image repo per app
+            local image_repo
+            image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app}" --header "Container image for ${app}:")"
+
+            # Project
+            if safe_render_template \
+                "${TEMPLATE_DIR}/kargo/project.yaml" \
+                "${kargo_app_dir}/project.yaml" \
+                "APP_NAME=${app}"; then
+                created_files+=("${kargo_app_dir}/project.yaml")
+            fi
+
+            # Warehouse
+            if safe_render_template \
+                "${TEMPLATE_DIR}/kargo/warehouse.yaml" \
+                "${kargo_app_dir}/warehouse.yaml" \
+                "APP_NAME=${app}" \
+                "IMAGE_REPO=${image_repo}"; then
+                created_files+=("${kargo_app_dir}/warehouse.yaml")
+            fi
+
+            # Stages
+            local prev_stage=""
+            local promo_env
+            for promo_env in "${PROMOTION_ORDER[@]}"; do
+                # Only generate for environments that exist
+                local env_exists=false
+                local e
+                for e in "${envs[@]}"; do
+                    if [[ "$e" == "$promo_env" ]]; then
+                        env_exists=true
+                        break
+                    fi
+                done
+                [[ "$env_exists" == true ]] || continue
+
+                local stage_file="${kargo_app_dir}/${promo_env}-stage.yaml"
+                if [[ -z "$prev_stage" ]]; then
+                    if safe_render_template \
+                        "${TEMPLATE_DIR}/kargo/stage-direct.yaml" \
+                        "$stage_file" \
+                        "APP_NAME=${app}" \
+                        "ENV=${promo_env}" \
+                        "IMAGE_REPO=${image_repo}" \
+                        "REPO_URL=${REPO_URL}"; then
+                        created_files+=("$stage_file")
+                    fi
+                else
+                    if safe_render_template \
+                        "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
+                        "$stage_file" \
+                        "APP_NAME=${app}" \
+                        "ENV=${promo_env}" \
+                        "IMAGE_REPO=${image_repo}" \
+                        "UPSTREAM_STAGE=${app}-${prev_stage}" \
+                        "REPO_URL=${REPO_URL}"; then
+                        created_files+=("$stage_file")
+                    fi
+                fi
+                prev_stage="$promo_env"
+            done
+        done
+    else
+        print_info "No apps found. Kargo resources will be generated when you run 'add-app'."
+    fi
+
+    print_summary "${created_files[@]}"
+}
+
 # --- Usage ---
 
 usage() {
@@ -637,6 +836,7 @@ Commands:
   add-env <name>        Scaffold a new environment across all applications
   add-project <name>    Create an ArgoCD AppProject
   edit-project <name>   Modify an existing ArgoCD AppProject
+  enable-kargo          Enable Kargo and generate resources for existing apps
 
 Global options:
   --target-dir <path>   Directory to operate on (default: current directory)
@@ -663,6 +863,7 @@ main() {
         add-env)    cmd_add_env "$@" ;;
         add-project)    cmd_add_project "$@" ;;
         edit-project)   cmd_edit_project "$@" ;;
+        enable-kargo)   cmd_enable_kargo "$@" ;;
         -h|--help)  usage ;;
         *)
             print_error "Unknown command: $command"
