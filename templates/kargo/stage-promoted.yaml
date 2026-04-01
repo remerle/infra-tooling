@@ -1,0 +1,30 @@
+apiVersion: kargo.akuity.io/v1alpha1
+kind: Stage
+metadata:
+  name: {{APP_NAME}}-{{ENV}}
+  namespace: {{APP_NAME}}
+spec:
+  requestedFreight:
+    - origin:
+        kind: Warehouse
+        name: {{APP_NAME}}
+      sources:
+        stages:
+          - {{UPSTREAM_STAGE}}
+  promotionTemplate:
+    spec:
+      steps:
+        - uses: git-clear
+        - uses: kustomize-set-image
+          config:
+            path: k8s/apps/{{APP_NAME}}/overlays/{{ENV}}
+            images:
+              - image: {{IMAGE_REPO}}
+        - uses: git-commit
+          config:
+            message: "chore: promote {{APP_NAME}} to {{ENV}}"
+        - uses: git-push
+        - uses: argocd-update
+          config:
+            apps:
+              - name: {{APP_NAME}}-{{ENV}}
