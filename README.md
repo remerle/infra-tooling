@@ -296,16 +296,6 @@ spec:
                 secretKeyRef:
                   name: backend-secrets
                   key: database-url
-            - name: FIREBASE_PROJECT_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: backend-config
-                  key: firebase-project-id
-            - name: CORS_ORIGIN
-              valueFrom:
-                configMapKeyRef:
-                  name: backend-config
-                  key: cors-origin
           livenessProbe:
             httpGet:
               path: /api/health
@@ -314,14 +304,9 @@ spec:
             httpGet:
               path: /api/health
               port: 3000
-          volumeMounts:
-            - name: image-storage
-              mountPath: /data/images
-      volumes:
-        - name: image-storage
-          persistentVolumeClaim:
-            claimName: backend-images
 ```
+
+`DATABASE_URL` contains credentials, so it goes in a Secret (see step 6). For admin features, you'd also add `FIREBASE_PROJECT_ID` and `CORS_ORIGIN` via a ConfigMap, but they're not needed to get the storefront running.
 
 **`k8s/apps/frontend/base/deployment.yaml`:**
 
@@ -347,19 +332,11 @@ spec:
           ports:
             - containerPort: 3000
           env:
-            - name: BACKEND_URL
+            - name: API_URL
               value: "http://backend:3000"
-            - name: PUBLIC_FIREBASE_API_KEY
-              valueFrom:
-                configMapKeyRef:
-                  name: frontend-config
-                  key: firebase-api-key
-            - name: PUBLIC_FIREBASE_PROJECT_ID
-              valueFrom:
-                configMapKeyRef:
-                  name: frontend-config
-                  key: firebase-project-id
 ```
+
+`API_URL` tells the frontend's server-side proxy where to forward API requests. The `backend` hostname resolves via the Kubernetes Service created by `add-app`. Firebase config is only needed for admin auth.
 
 **`k8s/apps/postgres/base/statefulset.yaml`:**
 
@@ -412,31 +389,30 @@ spec:
             storage: 1Gi
 ```
 
-### 5. Customize per-environment overlays
+### 5. Create secrets
 
-The generated overlays already set the image tag. Edit them to add environment-specific config. For example, in `k8s/apps/backend/overlays/dev/kustomization.yaml`, add a ConfigMap:
-
-```yaml
-# ... existing content ...
-configMapGenerator:
-  - name: backend-config
-    literals:
-      - firebase-project-id=your-project-id
-      - cors-origin=http://localhost:3000
-```
-
-### 6. Seal secrets (if Sealed Secrets is installed)
+The backend and postgres manifests reference Secrets for credentials. Use Sealed Secrets to create encrypted secrets that are safe to commit:
 
 ```bash
 # Install the Sealed Secrets controller
 ./secret-ctl.sh init
 
-# Create encrypted secrets for each app/env
+# PostgreSQL credentials
 ./secret-ctl.sh add postgres dev
 # Enter: username=appuser, password=devpassword
 
+# Backend database connection string (must match the postgres credentials above)
 ./secret-ctl.sh add backend dev
 # Enter: database-url=postgresql://appuser:devpassword@postgres:5432/app
+```
+
+For a quick local dev setup without Sealed Secrets, you can create plain Secrets directly:
+
+```bash
+kubectl create secret generic postgres-secrets -n dev \
+  --from-literal=username=appuser --from-literal=password=devpassword
+kubectl create secret generic backend-secrets -n dev \
+  --from-literal=database-url=postgresql://appuser:devpassword@postgres:5432/app
 ```
 
 ### 7. Commit and push
