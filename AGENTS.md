@@ -26,7 +26,12 @@ argocd/                 # ArgoCD configuration (how things get deployed)
   parent-app.yaml       # App-of-apps root, watches argocd/apps/
   apps/                 # One Application manifest per app-env combination
   projects/             # AppProject resources (access control)
-kargo/                  # Placeholder for Kargo progressive delivery (future)
+kargo/                  # Kargo progressive delivery (optional)
+  promotion-order.txt   # Linear promotion pipeline (one env per line)
+  <app>/                # One directory per application
+    project.yaml        # Kargo Project resource
+    warehouse.yaml      # Watches container registry for new tags
+    <env>-stage.yaml    # One Stage per environment in the pipeline
 helm/                   # Helm chart values
   argocd-values.yaml    # ArgoCD configuration (RBAC, accounts)
 k8s/
@@ -58,6 +63,8 @@ Templates are in `templates/`, organized to mirror the output directory structur
 | `{{SOURCE_REPOS}}` | Generated YAML list (`add-project`) | `appproject.yaml` |
 | `{{DESTINATIONS}}` | Generated YAML list (`add-project`) | `appproject.yaml` |
 | `{{PORT}}` | User input (`add-app`, default `8080`) | `service.yaml`, `service-headless.yaml` |
+| `{{IMAGE_REPO}}` | User input or default (`ghcr.io/REPO_OWNER/APP_NAME`) | `warehouse.yaml`, `stage-direct.yaml`, `stage-promoted.yaml` |
+| `{{UPSTREAM_STAGE}}` | Derived from promotion order (`<app>-<prev-env>`) | `stage-promoted.yaml` |
 
 ## Detection logic
 
@@ -104,6 +111,16 @@ Permission presets (selected during `add-role`):
 - `viewer` -- read-only everything.
 - `custom` -- interactive resource/action selection.
 
+### Kargo integration (optional)
+
+Kargo progressive delivery is optional, gated behind `KARGO_ENABLED=true` in `.infra-ctl.conf`. When enabled, `infra-ctl.sh add-app` and `add-env` generate Kargo resources alongside ArgoCD + Kustomize files.
+
+The promotion pipeline is defined in `kargo/promotion-order.txt` (one env per line, default: dev, staging, production). The first environment sources images directly from a Warehouse (container registry watcher). Each subsequent environment promotes only images verified in the previous stage.
+
+Kargo resources live under `kargo/<app>/` (one directory per application), mirroring `k8s/apps/<app>/`. Each app gets its own Kargo Project (isolation boundary), Warehouse, and one Stage per environment.
+
+To enable Kargo on an existing repo: `infra-ctl.sh enable-kargo`.
+
 ### Convention: app manifests named `<app>-<env>.yaml`
 
 ArgoCD Application manifests in `argocd/apps/` follow the pattern `<app-name>-<env-name>.yaml`. This makes it easy to find all environments for an app or all apps in an environment via glob patterns.
@@ -118,10 +135,11 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 
 ## Workflow sequence
 
-1. `cluster-ctl.sh init-cluster` -- create a local cluster and install ArgoCD via Helm
+1. `cluster-ctl.sh init-cluster` -- create a local cluster and install ArgoCD (optional) and Kargo (optional) via Helm
 2. `infra-ctl.sh init` -- bootstrap the repo skeleton
 3. `infra-ctl.sh add-project <name>` -- (optional) create access control boundaries
 4. `infra-ctl.sh add-env <name>` / `infra-ctl.sh add-app <name>` -- in any order
+   (If Kargo enabled, Kargo Warehouse and Stage resources are generated alongside ArgoCD Applications)
 5. `secret-ctl.sh init` -- install Sealed Secrets controller (requires running cluster)
 6. `secret-ctl.sh add <app> <env>` -- encrypt and store per-environment secrets
 7. `user-ctl.sh add-role <name>` -- create an RBAC role with a permission preset
@@ -159,6 +177,8 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 - `detect_apps()` -- lists applications from directories under `k8s/apps/`
 - `detect_projects()` -- lists projects from `argocd/projects/*.yaml`
 - `detect_app_project(app_name)` -- finds which project an app belongs to by grepping existing manifests
+- `is_kargo_enabled()` -- returns 0 if `KARGO_ENABLED=true` in `.infra-ctl.conf`
+- `read_promotion_order()` -- reads `kargo/promotion-order.txt` into the `PROMOTION_ORDER` array
 
 **Repo URL parsing:**
 - `extract_repo_owner(url)` -- extracts the GitHub owner from an HTTPS or SSH repo URL
