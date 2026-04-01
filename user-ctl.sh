@@ -453,6 +453,112 @@ EOF
     echo ""
 }
 
+cmd_remove() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    require_yq
+    require_helm
+
+    if [[ $# -lt 1 ]]; then
+        print_error "Usage: user-ctl.sh remove <username>"
+        exit 1
+    fi
+
+    local username="$1"
+
+    if ! account_exists "$username" "$VALUES_FILE"; then
+        print_error "Account '${username}' not found."
+        exit 1
+    fi
+
+    print_header "Remove User: ${username}"
+    echo ""
+
+    if ! gum confirm --prompt.foreground 196 "Remove user '${username}'?"; then
+        print_warning "Aborted."
+        exit 0
+    fi
+
+    # Delete k8s CSR if it exists
+    kubectl delete csr "$username" --ignore-not-found 2>/dev/null || true
+    print_success "K8s CSR removed."
+
+    # Remove ArgoCD account
+    remove_argocd_account "$VALUES_FILE" "$username"
+    print_success "ArgoCD account removed from values file."
+
+    # Upgrade ArgoCD if installed
+    if helm status argocd -n argocd &>/dev/null; then
+        gum spin --title "Upgrading ArgoCD..." -- \
+            helm upgrade argocd argo/argo-cd \
+                --namespace argocd \
+                --values "$VALUES_FILE" \
+                --wait --timeout 120s
+        print_success "ArgoCD upgraded."
+    fi
+
+    # Clean up local files
+    local users_dir="${TARGET_DIR}/users"
+    rm -f "${users_dir}/${username}.key" "${users_dir}/${username}.crt" \
+          "${users_dir}/${username}.csr" "${users_dir}/${username}.kubeconfig"
+    print_success "Local files cleaned up."
+
+    echo ""
+    print_success "User '${username}' removed."
+    echo ""
+}
+
+cmd_list() {
+    require_gum
+    require_yq
+
+    print_header "Users and Service Accounts"
+    echo ""
+
+    local policy
+    policy="$(yq '.configs.rbac."policy.csv" // ""' "$VALUES_FILE")" || true
+
+    # Find all accounts from configs.cm
+    local accounts
+    accounts="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
+        | grep '^accounts\.' | sed 's/^accounts\.//')" || true
+
+    if [[ -z "$accounts" ]]; then
+        print_warning "No users or service accounts configured."
+        echo ""
+        return
+    fi
+
+    local users_dir="${TARGET_DIR}/users"
+
+    while IFS= read -r account; do
+        # Determine type by checking for cert vs kubeconfig-only
+        local type="unknown"
+        if [[ -f "${users_dir}/${account}.crt" ]]; then
+            type="cert"
+        elif [[ -f "${users_dir}/${account}.kubeconfig" ]]; then
+            type="token"
+        fi
+
+        # Find group from policy
+        local group
+        group="$(echo "$policy" | grep "^g, ${account}," | head -1 \
+            | sed 's/^g, [^,]*, role://')" || group="(none)"
+
+        local type_label
+        if [[ "$type" == "cert" ]]; then
+            type_label="user"
+        elif [[ "$type" == "token" ]]; then
+            type_label="service-account"
+        else
+            type_label="unknown"
+        fi
+
+        print_info "${account}  [${type_label}]  group: ${group}"
+    done <<< "$accounts"
+    echo ""
+}
+
 # --- Usage ---
 
 usage() {
