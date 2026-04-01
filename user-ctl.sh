@@ -325,6 +325,134 @@ cmd_remove_role() {
     echo ""
 }
 
+cmd_add() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    require_cmd "openssl" "Install openssl (usually pre-installed on macOS)"
+    require_yq
+    require_helm
+
+    if [[ $# -lt 2 ]]; then
+        print_error "Usage: user-ctl.sh add <username> <group>"
+        exit 1
+    fi
+
+    local username="$1"
+    local group="$2"
+    validate_k8s_name "$username" "Username"
+    validate_k8s_name "$group" "Group"
+
+    # Verify role exists for this group
+    if ! role_exists "$group" "$VALUES_FILE"; then
+        print_error "No role found for group '${group}'."
+        print_info "Run 'user-ctl.sh add-role ${group}' first."
+        exit 1
+    fi
+
+    # Verify account doesn't already exist
+    if account_exists "$username" "$VALUES_FILE"; then
+        print_error "Account '${username}' already exists."
+        exit 1
+    fi
+
+    print_header "Add User: ${username} (group: ${group})"
+    echo ""
+
+    local users_dir="${TARGET_DIR}/users"
+    mkdir -p "$users_dir"
+
+    local key_file="${users_dir}/${username}.key"
+    local csr_file="${users_dir}/${username}.csr"
+    local crt_file="${users_dir}/${username}.crt"
+    local kubeconfig_file="${users_dir}/${username}.kubeconfig"
+
+    # Generate key and CSR
+    gum spin --title "Generating RSA key..." -- \
+        openssl genrsa -out "$key_file" 4096
+
+    gum spin --title "Generating CSR..." -- \
+        openssl req -new -key "$key_file" \
+            -subj "/CN=${username}/O=${group}" \
+            -out "$csr_file"
+
+    print_success "Key and CSR generated."
+
+    # Submit CSR to Kubernetes
+    local csr_b64
+    csr_b64="$(base64 < "$csr_file" | tr -d '\n')"
+
+    kubectl apply -f - <<EOF
+apiVersion: certificates.k8s.io/v1
+kind: CertificateSigningRequest
+metadata:
+  name: ${username}
+spec:
+  request: ${csr_b64}
+  signerName: kubernetes.io/kube-apiserver-client
+  usages:
+    - client auth
+EOF
+
+    # Approve CSR
+    gum spin --title "Approving CSR..." -- \
+        kubectl certificate approve "$username"
+
+    # Wait for certificate to be issued
+    local retries=10
+    local cert_data=""
+    while [[ $retries -gt 0 ]]; do
+        cert_data="$(kubectl get csr "$username" -o jsonpath='{.status.certificate}')" || true
+        if [[ -n "$cert_data" ]]; then
+            break
+        fi
+        sleep 1
+        retries=$((retries - 1))
+    done
+
+    if [[ -z "$cert_data" ]]; then
+        print_error "Timed out waiting for certificate to be issued."
+        kubectl delete csr "$username" --ignore-not-found
+        rm -f "$key_file" "$csr_file"
+        exit 1
+    fi
+
+    echo "$cert_data" | base64 -d > "$crt_file"
+    print_success "Certificate issued and saved."
+
+    # Generate kubeconfig
+    generate_cert_kubeconfig "$username" "$crt_file" "$key_file" "$kubeconfig_file"
+    print_success "Kubeconfig written to ${kubeconfig_file}"
+
+    # Add ArgoCD account
+    add_argocd_account "$VALUES_FILE" "$username"
+    add_argocd_user_group "$VALUES_FILE" "$username" "$group"
+    print_success "ArgoCD account created."
+
+    # Upgrade ArgoCD if installed
+    if helm status argocd -n argocd &>/dev/null; then
+        gum spin --title "Upgrading ArgoCD to register account..." -- \
+            helm upgrade argocd argo/argo-cd \
+                --namespace argocd \
+                --values "$VALUES_FILE" \
+                --wait --timeout 120s
+        print_success "ArgoCD upgraded."
+    fi
+
+    # Clean up CSR file
+    rm -f "$csr_file"
+
+    echo ""
+    print_header "User Created"
+    print_info "Kubeconfig: ${kubeconfig_file}"
+    echo ""
+    print_info "To use kubectl:"
+    print_info "  export KUBECONFIG=${kubeconfig_file}"
+    echo ""
+    print_info "To set ArgoCD password (first login):"
+    print_info "  argocd account update-password --account ${username}"
+    echo ""
+}
+
 # --- Usage ---
 
 usage() {
