@@ -9,6 +9,7 @@ cmd_init_cluster() {
     require_gum
     require_cmd "k3d" "brew install k3d  (or visit https://k3d.io)"
     require_cmd "kubectl" "brew install kubectl"
+    require_helm
 
     print_header "Initialize k3d Cluster"
     echo ""
@@ -53,8 +54,9 @@ cmd_init_cluster() {
     echo ""
 
     # Install Metrics Server (required for kubectl top)
-    gum spin --title "Installing Metrics Server..." -- \
-        kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+    local metrics_server_version="v0.7.2"
+    gum spin --title "Installing Metrics Server ${metrics_server_version}..." -- \
+        kubectl apply -f "https://github.com/kubernetes-sigs/metrics-server/releases/download/${metrics_server_version}/components.yaml"
 
     # Metrics Server needs --kubelet-insecure-tls in k3d (self-signed kubelet certs)
     gum spin --title "Patching Metrics Server for k3d..." -- \
@@ -73,22 +75,27 @@ cmd_init_cluster() {
     # Prompt for ArgoCD installation
     if gum confirm "Install ArgoCD?"; then
         echo ""
-        gum spin --title "Creating argocd namespace..." -- \
-            kubectl create namespace argocd
 
-        gum spin --title "Installing ArgoCD (this may take a minute)..." -- \
-            kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-
-        print_info "Waiting for ArgoCD pods to be ready..."
-        if ! gum spin --title "Waiting for ArgoCD to be ready..." -- \
-            kubectl wait --for=condition=available deployment -n argocd --all --timeout=120s; then
-            print_warning "ArgoCD pods are not ready yet. Check with:"
-            print_info "  kubectl get pods -n argocd"
-            print_info "  kubectl describe pods -n argocd"
-            print_info "If pods are stuck, check Docker resource allocation."
-        else
-            print_success "ArgoCD is ready."
+        local values_file="${SCRIPT_DIR}/helm/argocd-values.yaml"
+        if [[ ! -f "$values_file" ]]; then
+            print_error "Helm values file not found: ${values_file}"
+            print_info "Expected at: helm/argocd-values.yaml relative to this script."
+            exit 1
         fi
+
+        gum spin --title "Adding ArgoCD Helm repo..." -- \
+            helm repo add argo https://argoproj.github.io/argo-helm
+
+        gum spin --title "Updating Helm repos..." -- \
+            helm repo update
+
+        gum spin --title "Installing ArgoCD via Helm (this may take a minute)..." -- \
+            helm install argocd argo/argo-cd \
+                --namespace argocd --create-namespace \
+                --values "$values_file" \
+                --wait --timeout 120s
+
+        print_success "ArgoCD installed via Helm."
 
         echo ""
         print_info "Get the admin password with:"
@@ -173,9 +180,49 @@ cmd_status() {
         kubectl get pods -n argocd --no-headers 2>/dev/null | while IFS= read -r line; do
             print_info "$line"
         done
+
+        echo ""
+        if helm status argocd -n argocd &>/dev/null; then
+            local helm_status
+            helm_status="$(helm status argocd -n argocd -o json 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)" || true
+            print_info "Helm release: ${helm_status}"
+        else
+            print_info "ArgoCD was not installed via Helm."
+        fi
     else
         print_info "ArgoCD is not installed in the current cluster."
     fi
+    echo ""
+}
+
+cmd_upgrade_argocd() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    require_helm
+
+    print_header "Upgrade ArgoCD"
+    echo ""
+
+    # Verify ArgoCD is installed
+    if ! helm status argocd -n argocd &>/dev/null; then
+        print_error "ArgoCD Helm release not found in namespace 'argocd'."
+        print_info "Run 'cluster-ctl.sh init-cluster' to install ArgoCD first."
+        exit 1
+    fi
+
+    local values_file="${SCRIPT_DIR}/helm/argocd-values.yaml"
+    if [[ ! -f "$values_file" ]]; then
+        print_error "Helm values file not found: ${values_file}"
+        exit 1
+    fi
+
+    gum spin --title "Upgrading ArgoCD..." -- \
+        helm upgrade argocd argo/argo-cd \
+            --namespace argocd \
+            --values "$values_file" \
+            --wait --timeout 120s
+
+    print_success "ArgoCD upgraded."
     echo ""
 }
 
@@ -188,6 +235,7 @@ Usage: cluster-ctl.sh <command> [options]
 Commands:
   init-cluster      Create a local k3d cluster and optionally install ArgoCD
   delete-cluster    Tear down a k3d cluster
+  upgrade-argocd    Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
   status            Show cluster and ArgoCD health
 
 Global options:
@@ -212,6 +260,7 @@ main() {
     case "$command" in
         init-cluster)       cmd_init_cluster "$@" ;;
         delete-cluster)     cmd_delete_cluster "$@" ;;
+        upgrade-argocd)     cmd_upgrade_argocd "$@" ;;
         status)             cmd_status "$@" ;;
         -h|--help)          usage ;;
         *)
