@@ -224,6 +224,107 @@ REOF
     echo ""
 }
 
+cmd_list_roles() {
+    require_gum
+    require_yq
+
+    print_header "Configured Roles"
+    echo ""
+
+    # Extract roles from ArgoCD policy
+    local policy
+    policy="$(yq '.configs.rbac."policy.csv" // ""' "$VALUES_FILE")" || true
+
+    if [[ -z "$policy" ]]; then
+        print_warning "No roles configured."
+        echo ""
+        return
+    fi
+
+    # Extract unique role names from "role:<name>" patterns
+    local roles
+    roles="$(echo "$policy" | grep -oE 'role:[^,[:space:]]+' | sed 's/^role://' | sort -u)" || true
+
+    if [[ -z "$roles" ]]; then
+        print_warning "No roles configured."
+        echo ""
+        return
+    fi
+
+    while IFS= read -r role; do
+        # Count policy lines for this role
+        local policy_count
+        policy_count="$(echo "$policy" | grep -c "role:${role}" || true)"
+
+        # Check for k8s manifests
+        local k8s_files
+        k8s_files="$(ls "${TARGET_DIR}/k8s/platform/${role}-"*.yaml 2>/dev/null | wc -l | xargs)" || k8s_files="0"
+
+        print_info "${role}  (${policy_count} ArgoCD policies, ${k8s_files} k8s manifests)"
+    done <<< "$roles"
+    echo ""
+}
+
+cmd_remove_role() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    require_yq
+    require_helm
+
+    if [[ $# -lt 1 ]]; then
+        print_error "Usage: user-ctl.sh remove-role <name>"
+        exit 1
+    fi
+
+    local role_name="$1"
+
+    if ! role_exists "$role_name" "$VALUES_FILE"; then
+        print_error "Role '${role_name}' not found."
+        exit 1
+    fi
+
+    print_header "Remove Role: ${role_name}"
+    echo ""
+
+    if ! gum confirm --prompt.foreground 196 "Remove role '${role_name}'? This removes ArgoCD policy and k8s RBAC."; then
+        print_warning "Aborted."
+        exit 0
+    fi
+
+    # Remove k8s manifests
+    local platform_dir="${TARGET_DIR}/k8s/platform"
+    local manifest_files
+    manifest_files="$(ls "${platform_dir}/${role_name}-"*.yaml 2>/dev/null)" || true
+
+    if [[ -n "$manifest_files" ]]; then
+        local f
+        while IFS= read -r f; do
+            gum spin --title "Removing $(basename "$f") from cluster..." -- \
+                kubectl delete -f "$f" --ignore-not-found
+            rm "$f"
+            print_success "Removed: $f"
+        done <<< "$manifest_files"
+    fi
+
+    # Remove ArgoCD policy
+    remove_argocd_role_policy "$VALUES_FILE" "$role_name"
+    print_success "ArgoCD policy removed from values file."
+
+    # Upgrade ArgoCD if installed
+    if helm status argocd -n argocd &>/dev/null; then
+        gum spin --title "Upgrading ArgoCD to remove RBAC..." -- \
+            helm upgrade argocd argo/argo-cd \
+                --namespace argocd \
+                --values "$VALUES_FILE" \
+                --wait --timeout 120s
+        print_success "ArgoCD upgraded."
+    fi
+
+    echo ""
+    print_success "Role '${role_name}' removed."
+    echo ""
+}
+
 # --- Usage ---
 
 usage() {
