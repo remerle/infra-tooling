@@ -554,7 +554,13 @@ cmd_list() {
             type_label="unknown"
         fi
 
-        print_info "${account}  [${type_label}]  group: ${group}"
+        # Show expiry for service accounts
+        local expiry_info=""
+        if [[ "$type" == "token" && -f "${users_dir}/${account}.expiry" ]]; then
+            expiry_info="  expires: $(cat "${users_dir}/${account}.expiry")"
+        fi
+
+        print_info "${account}  [${type_label}]  group: ${group}${expiry_info}"
     done <<< "$accounts"
     echo ""
 }
@@ -731,6 +737,7 @@ EOF
     # Generate kubeconfig
     local kubeconfig_file="${users_dir}/${sa_name}.kubeconfig"
     generate_token_kubeconfig "$sa_name" "$token" "$kubeconfig_file"
+    echo "$expiry_date" > "${users_dir}/${sa_name}.expiry"
     print_success "Kubeconfig written to ${kubeconfig_file}"
 
     # Add ArgoCD account
@@ -813,6 +820,7 @@ cmd_refresh_sa() {
         expiry_date="$(date -d "+${duration_hours} hours" "+%Y-%m-%d %H:%M")"
     fi
 
+    echo "$expiry_date" > "${users_dir}/${sa_name}.expiry"
     print_success "Token refreshed."
     print_info "Kubeconfig:   ${kubeconfig_file}"
     print_info "Token expiry: ${expiry_date}"
@@ -873,7 +881,7 @@ cmd_remove_sa() {
 
     # Clean up local files
     local users_dir="${TARGET_DIR}/users"
-    rm -f "${users_dir}/${sa_name}.kubeconfig"
+    rm -f "${users_dir}/${sa_name}.kubeconfig" "${users_dir}/${sa_name}.expiry"
     print_success "Local files cleaned up."
 
     echo ""
