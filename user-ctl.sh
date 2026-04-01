@@ -559,6 +559,328 @@ cmd_list() {
     echo ""
 }
 
+cmd_add_sa() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    require_yq
+    require_helm
+
+    if [[ $# -lt 2 ]]; then
+        print_error "Usage: user-ctl.sh add-sa <name> <group> [--duration <hours>h]"
+        exit 1
+    fi
+
+    local sa_name="$1"
+    local group="$2"
+    shift 2
+    validate_k8s_name "$sa_name" "Service account name"
+    validate_k8s_name "$group" "Group"
+
+    # Parse optional --duration flag
+    local duration="2160h"  # 90 days default
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --duration)
+                duration="$2"
+                shift 2
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Verify role exists
+    if ! role_exists "$group" "$VALUES_FILE"; then
+        print_error "No role found for group '${group}'."
+        print_info "Run 'user-ctl.sh add-role ${group}' first."
+        exit 1
+    fi
+
+    # Verify account doesn't already exist
+    if account_exists "$sa_name" "$VALUES_FILE"; then
+        print_error "Account '${sa_name}' already exists."
+        exit 1
+    fi
+
+    print_header "Add Service Account: ${sa_name} (group: ${group})"
+    echo ""
+
+    local users_dir="${TARGET_DIR}/users"
+    mkdir -p "$users_dir"
+
+    # Create ServiceAccount
+    kubectl apply -f - <<EOF
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${sa_name}
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/managed-by: user-ctl
+    user-ctl/group: ${group}
+EOF
+    print_success "ServiceAccount created in kube-system."
+
+    # Create RBAC bindings based on role type
+    local platform_dir="${TARGET_DIR}/k8s/platform"
+    if ls "${platform_dir}/${group}-role-"*.yaml &>/dev/null; then
+        # Developer preset: bind to Role in each namespace
+        local role_file
+        for role_file in "${platform_dir}/${group}-role-"*.yaml; do
+            local ns
+            ns="$(basename "$role_file" .yaml | sed "s/${group}-role-//")"
+            kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ${sa_name}
+  namespace: ${ns}
+  labels:
+    app.kubernetes.io/managed-by: user-ctl
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ${group}
+subjects:
+  - kind: ServiceAccount
+    name: ${sa_name}
+    namespace: kube-system
+EOF
+        done
+        print_success "RoleBindings created for namespaced access."
+    else
+        # Cluster-scoped role: detect if admin-readonly-settings or other
+        if [[ -f "${platform_dir}/${group}-clusterrole.yaml" ]]; then
+            # Has a custom clusterrole (viewer or custom)
+            local clusterrole_name
+            clusterrole_name="$(yq '.metadata.name' "${platform_dir}/${group}-clusterrole.yaml")"
+
+            kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ${sa_name}
+  labels:
+    app.kubernetes.io/managed-by: user-ctl
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ${clusterrole_name}
+subjects:
+  - kind: ServiceAccount
+    name: ${sa_name}
+    namespace: kube-system
+EOF
+        else
+            # admin-readonly-settings: bind to both admin and cluster-readonly
+            kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ${sa_name}
+  labels:
+    app.kubernetes.io/managed-by: user-ctl
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - kind: ServiceAccount
+    name: ${sa_name}
+    namespace: kube-system
+EOF
+            kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ${sa_name}-cluster-readonly
+  labels:
+    app.kubernetes.io/managed-by: user-ctl
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ${group}-cluster-readonly
+subjects:
+  - kind: ServiceAccount
+    name: ${sa_name}
+    namespace: kube-system
+EOF
+        fi
+        print_success "ClusterRoleBinding created."
+    fi
+
+    # Generate token
+    local token
+    token="$(kubectl create token "$sa_name" --namespace kube-system --duration "$duration")"
+    print_success "Token generated (duration: ${duration})."
+
+    # Calculate expiry for display
+    local duration_hours
+    duration_hours="$(echo "$duration" | sed 's/h$//')"
+    local expiry_date
+    if date -v+${duration_hours}H "+%Y-%m-%d %H:%M" &>/dev/null; then
+        # macOS date
+        expiry_date="$(date -v+${duration_hours}H "+%Y-%m-%d %H:%M")"
+    else
+        # GNU date
+        expiry_date="$(date -d "+${duration_hours} hours" "+%Y-%m-%d %H:%M")"
+    fi
+
+    # Generate kubeconfig
+    local kubeconfig_file="${users_dir}/${sa_name}.kubeconfig"
+    generate_token_kubeconfig "$sa_name" "$token" "$kubeconfig_file"
+    print_success "Kubeconfig written to ${kubeconfig_file}"
+
+    # Add ArgoCD account
+    add_argocd_account "$VALUES_FILE" "$sa_name"
+    add_argocd_user_group "$VALUES_FILE" "$sa_name" "$group"
+    print_success "ArgoCD account created."
+
+    # Upgrade ArgoCD if installed
+    if helm status argocd -n argocd &>/dev/null; then
+        gum spin --title "Upgrading ArgoCD..." -- \
+            helm upgrade argocd argo/argo-cd \
+                --namespace argocd \
+                --values "$VALUES_FILE" \
+                --wait --timeout 120s
+        print_success "ArgoCD upgraded."
+    fi
+
+    echo ""
+    print_header "Service Account Created"
+    print_info "Kubeconfig:   ${kubeconfig_file}"
+    print_info "Token expiry: ${expiry_date}"
+    echo ""
+    print_info "To use kubectl:"
+    print_info "  export KUBECONFIG=${kubeconfig_file}"
+    echo ""
+    print_info "To set ArgoCD password (first login):"
+    print_info "  argocd account update-password --account ${sa_name}"
+    echo ""
+}
+
+cmd_refresh_sa() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+
+    if [[ $# -lt 1 ]]; then
+        print_error "Usage: user-ctl.sh refresh-sa <name> [--duration <hours>h]"
+        exit 1
+    fi
+
+    local sa_name="$1"
+    shift
+
+    local duration="2160h"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --duration)
+                duration="$2"
+                shift 2
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Verify SA exists
+    if ! kubectl get serviceaccount "$sa_name" -n kube-system &>/dev/null; then
+        print_error "ServiceAccount '${sa_name}' not found in kube-system."
+        exit 1
+    fi
+
+    print_header "Refresh Token: ${sa_name}"
+    echo ""
+
+    local token
+    token="$(kubectl create token "$sa_name" --namespace kube-system --duration "$duration")"
+
+    local users_dir="${TARGET_DIR}/users"
+    local kubeconfig_file="${users_dir}/${sa_name}.kubeconfig"
+
+    generate_token_kubeconfig "$sa_name" "$token" "$kubeconfig_file"
+
+    local duration_hours
+    duration_hours="$(echo "$duration" | sed 's/h$//')"
+    local expiry_date
+    if date -v+${duration_hours}H "+%Y-%m-%d %H:%M" &>/dev/null; then
+        expiry_date="$(date -v+${duration_hours}H "+%Y-%m-%d %H:%M")"
+    else
+        expiry_date="$(date -d "+${duration_hours} hours" "+%Y-%m-%d %H:%M")"
+    fi
+
+    print_success "Token refreshed."
+    print_info "Kubeconfig:   ${kubeconfig_file}"
+    print_info "Token expiry: ${expiry_date}"
+    echo ""
+}
+
+cmd_remove_sa() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    require_yq
+    require_helm
+
+    if [[ $# -lt 1 ]]; then
+        print_error "Usage: user-ctl.sh remove-sa <name>"
+        exit 1
+    fi
+
+    local sa_name="$1"
+
+    print_header "Remove Service Account: ${sa_name}"
+    echo ""
+
+    if ! gum confirm --prompt.foreground 196 "Remove service account '${sa_name}'?"; then
+        print_warning "Aborted."
+        exit 0
+    fi
+
+    # Delete ServiceAccount
+    kubectl delete serviceaccount "$sa_name" -n kube-system --ignore-not-found
+    print_success "ServiceAccount removed."
+
+    # Delete ClusterRoleBindings and RoleBindings owned by this SA
+    kubectl delete clusterrolebinding "$sa_name" --ignore-not-found 2>/dev/null || true
+    kubectl delete clusterrolebinding "${sa_name}-cluster-readonly" --ignore-not-found 2>/dev/null || true
+
+    # Delete namespace-scoped rolebindings
+    local ns
+    for ns in $(kubectl get rolebinding -A -l app.kubernetes.io/managed-by=user-ctl \
+            -o jsonpath="{range .items[?(@.metadata.name==\"${sa_name}\")]}{.metadata.namespace}{\"\\n\"}{end}" 2>/dev/null); do
+        kubectl delete rolebinding "$sa_name" -n "$ns" --ignore-not-found 2>/dev/null || true
+    done
+    print_success "RBAC bindings removed."
+
+    # Remove ArgoCD account
+    if account_exists "$sa_name" "$VALUES_FILE"; then
+        remove_argocd_account "$VALUES_FILE" "$sa_name"
+        print_success "ArgoCD account removed."
+
+        if helm status argocd -n argocd &>/dev/null; then
+            gum spin --title "Upgrading ArgoCD..." -- \
+                helm upgrade argocd argo/argo-cd \
+                    --namespace argocd \
+                    --values "$VALUES_FILE" \
+                    --wait --timeout 120s
+            print_success "ArgoCD upgraded."
+        fi
+    fi
+
+    # Clean up local files
+    local users_dir="${TARGET_DIR}/users"
+    rm -f "${users_dir}/${sa_name}.kubeconfig"
+    print_success "Local files cleaned up."
+
+    echo ""
+    print_success "Service account '${sa_name}' removed."
+    echo ""
+}
+
 # --- Usage ---
 
 usage() {
