@@ -148,10 +148,21 @@ save_conf() {
     local repo_url="$1"
     local repo_owner="$2"
     local conf_file="${TARGET_DIR}/.infra-ctl.conf"
+
+    # Preserve KARGO_ENABLED if it exists in the current conf
+    local kargo_line=""
+    if [[ -f "$conf_file" ]] && grep -q '^KARGO_ENABLED=' "$conf_file"; then
+        kargo_line="$(grep '^KARGO_ENABLED=' "$conf_file")"
+    fi
+
     cat > "$conf_file" <<EOF
 REPO_URL=${repo_url}
 REPO_OWNER=${repo_owner}
 EOF
+
+    if [[ -n "$kargo_line" ]]; then
+        echo "$kargo_line" >> "$conf_file"
+    fi
 }
 
 # --- Template rendering ---
