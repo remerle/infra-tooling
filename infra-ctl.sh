@@ -66,6 +66,18 @@ cmd_init() {
         created_files+=("${gk_dir}/.gitkeep")
     done
 
+    # Create Kargo promotion order file if enabled
+    if is_kargo_enabled; then
+        local promo_file="${TARGET_DIR}/kargo/promotion-order.txt"
+        cat > "$promo_file" <<'PROMOEOF'
+dev
+staging
+production
+PROMOEOF
+        rm -f "${TARGET_DIR}/kargo/.gitkeep"
+        created_files+=("$promo_file")
+    fi
+
     # Render parent-app.yaml
     local parent_app="${TARGET_DIR}/argocd/parent-app.yaml"
     render_template \
@@ -156,6 +168,16 @@ cmd_add_app() {
         print_warning "No environments found. Only base/ will be created."
         print_info "Run 'infra-ctl.sh add-env <env>' to create overlays later."
     fi
+    if is_kargo_enabled; then
+        print_info "Kargo:   kargo/${app_name}/project.yaml"
+        print_info "Kargo:   kargo/${app_name}/warehouse.yaml"
+        if [[ ${#envs[@]} -gt 0 ]]; then
+            local env
+            for env in "${envs[@]}"; do
+                print_info "Kargo:   kargo/${app_name}/${env}-stage.yaml"
+            done
+        fi
+    fi
     echo ""
 
     if ! gum confirm "Create these files?"; then
@@ -219,6 +241,81 @@ cmd_add_app() {
                 created_files+=("$argo_app")
             fi
         done
+    fi
+
+    # Generate Kargo resources if enabled
+    if is_kargo_enabled; then
+        # Prompt for container image
+        local image_repo
+        image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app_name}" --header "Container image for Kargo:")"
+
+        local kargo_app_dir="${TARGET_DIR}/kargo/${app_name}"
+        mkdir -p "$kargo_app_dir"
+
+        # Generate Kargo Project
+        if safe_render_template \
+            "${TEMPLATE_DIR}/kargo/project.yaml" \
+            "${kargo_app_dir}/project.yaml" \
+            "APP_NAME=${app_name}"; then
+            created_files+=("${kargo_app_dir}/project.yaml")
+        fi
+
+        # Generate Warehouse
+        if safe_render_template \
+            "${TEMPLATE_DIR}/kargo/warehouse.yaml" \
+            "${kargo_app_dir}/warehouse.yaml" \
+            "APP_NAME=${app_name}" \
+            "IMAGE_REPO=${image_repo}"; then
+            created_files+=("${kargo_app_dir}/warehouse.yaml")
+        fi
+
+        # Generate Stages if environments exist
+        if [[ ${#envs[@]} -gt 0 ]]; then
+            read_promotion_order
+            local prev_stage=""
+            local promo_env
+            for promo_env in "${PROMOTION_ORDER[@]}"; do
+                # Only generate stages for environments that actually exist
+                local env_exists=false
+                local e
+                for e in "${envs[@]}"; do
+                    if [[ "$e" == "$promo_env" ]]; then
+                        env_exists=true
+                        break
+                    fi
+                done
+                [[ "$env_exists" == true ]] || continue
+
+                local stage_file="${kargo_app_dir}/${promo_env}-stage.yaml"
+                if [[ -z "$prev_stage" ]]; then
+                    # First stage: direct from Warehouse
+                    if safe_render_template \
+                        "${TEMPLATE_DIR}/kargo/stage-direct.yaml" \
+                        "$stage_file" \
+                        "APP_NAME=${app_name}" \
+                        "ENV=${promo_env}" \
+                        "IMAGE_REPO=${image_repo}" \
+                        "REPO_URL=${REPO_URL}"; then
+                        created_files+=("$stage_file")
+                    fi
+                else
+                    # Subsequent stages: promoted from previous
+                    if safe_render_template \
+                        "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
+                        "$stage_file" \
+                        "APP_NAME=${app_name}" \
+                        "ENV=${promo_env}" \
+                        "IMAGE_REPO=${image_repo}" \
+                        "UPSTREAM_STAGE=${app_name}-${prev_stage}" \
+                        "REPO_URL=${REPO_URL}"; then
+                        created_files+=("$stage_file")
+                    fi
+                fi
+                prev_stage="$promo_env"
+            done
+        else
+            print_info "No environments found. Kargo Stages will be created when you run 'add-env'."
+        fi
     fi
 
     print_summary "${created_files[@]}"
