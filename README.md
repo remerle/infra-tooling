@@ -63,7 +63,7 @@ Bootstraps the repository skeleton. Prompts for the Git repository URL (used in 
 - `argocd/parent-app.yaml` -- the "app of apps" that tells ArgoCD to watch `argocd/apps/` for Application manifests
 - `argocd/apps/projects.yaml` -- tells ArgoCD to watch `argocd/projects/` for AppProject resources
 - `argocd/projects/` -- where AppProject resources live (for access control, added later)
-- `kargo/` -- placeholder for future Kargo progressive delivery configuration
+- `kargo/` -- Kargo progressive delivery configuration (optional, see `enable-kargo`)
 - `.infra-ctl.conf` -- stores configuration for use by other commands (see below)
 
 ```bash
@@ -218,21 +218,252 @@ Common restrictions:
 
 Kubernetes-level RBAC (restricting what humans can do with `kubectl`) is a separate concern not yet covered by these tools.
 
-## Example: What You Get
+## Example: Deploying an Application
 
-After running these commands:
+This walkthrough deploys a two-service e-commerce app (SvelteKit frontend + Fastify backend) with PostgreSQL, from zero to a running local cluster.
+
+The application lives in a separate repo with CI workflows that push images to `ghcr.io/remerle/k8s-practice-frontend` and `ghcr.io/remerle/k8s-practice-backend`.
+
+### 1. Create the cluster and initialize the repo
 
 ```bash
+# Create a local k3d cluster with ArgoCD
+./cluster-ctl.sh init-cluster
+# Answer: expose ports 80/443? yes, install ArgoCD? yes
+
+# Initialize the GitOps repo structure
 ./infra-ctl.sh init
-./infra-ctl.sh add-project platform-team
-./infra-ctl.sh add-env dev
-./infra-ctl.sh add-env staging
-./infra-ctl.sh add-app frontend
-./infra-ctl.sh add-app backend
-./infra-ctl.sh add-app database
+# Enter your repo URL when prompted
 ```
 
-Your cluster ends up looking like this:
+### 2. Add environments
+
+```bash
+./infra-ctl.sh add-env dev
+./infra-ctl.sh add-env staging
+```
+
+This creates namespace manifests and sets up the overlay directories that will hold per-environment configuration.
+
+### 3. Add the applications
+
+```bash
+# Backend API (Deployment, port 3000)
+./infra-ctl.sh add-app backend
+# Choose: Deployment, port 3000
+
+# Frontend (Deployment, port 3000)
+./infra-ctl.sh add-app frontend
+# Choose: Deployment, port 3000
+
+# PostgreSQL (StatefulSet, port 5432)
+./infra-ctl.sh add-app postgres
+# Choose: StatefulSet, port 5432
+```
+
+Each command generates a Kustomize base, per-env overlays, and ArgoCD Application manifests.
+
+### 4. Write the actual Kubernetes manifests
+
+The tooling creates the scaffold; you provide the workload definitions. For each app, create a Deployment or StatefulSet in the base directory.
+
+**`k8s/apps/backend/base/deployment.yaml`:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/remerle/k8s-practice-backend:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: backend-secrets
+                  key: database-url
+            - name: FIREBASE_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: firebase-project-id
+            - name: CORS_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: backend-config
+                  key: cors-origin
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 3000
+          volumeMounts:
+            - name: image-storage
+              mountPath: /data/images
+      volumes:
+        - name: image-storage
+          persistentVolumeClaim:
+            claimName: backend-images
+```
+
+**`k8s/apps/frontend/base/deployment.yaml`:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app: frontend
+spec:
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: ghcr.io/remerle/k8s-practice-frontend:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: BACKEND_URL
+              value: "http://backend:3000"
+            - name: PUBLIC_FIREBASE_API_KEY
+              valueFrom:
+                configMapKeyRef:
+                  name: frontend-config
+                  key: firebase-api-key
+            - name: PUBLIC_FIREBASE_PROJECT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: frontend-config
+                  key: firebase-project-id
+```
+
+**`k8s/apps/postgres/base/statefulset.yaml`:**
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: app
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secrets
+                  key: password
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+```
+
+### 5. Customize per-environment overlays
+
+The generated overlays already set the image tag. Edit them to add environment-specific config. For example, in `k8s/apps/backend/overlays/dev/kustomization.yaml`, add a ConfigMap:
+
+```yaml
+# ... existing content ...
+configMapGenerator:
+  - name: backend-config
+    literals:
+      - firebase-project-id=your-project-id
+      - cors-origin=http://localhost:3000
+```
+
+### 6. Seal secrets (if Sealed Secrets is installed)
+
+```bash
+# Install the Sealed Secrets controller
+./secret-ctl.sh init
+
+# Create encrypted secrets for each app/env
+./secret-ctl.sh add postgres dev
+# Enter: username=appuser, password=devpassword
+
+./secret-ctl.sh add backend dev
+# Enter: database-url=postgresql://appuser:devpassword@postgres:5432/app
+```
+
+### 7. Commit and push
+
+```bash
+git add -A
+git commit -m "Deploy e-commerce app to dev and staging"
+git push
+```
+
+ArgoCD detects the changes and deploys everything. The parent app watches `argocd/apps/`, sees the Application manifests, and each Application syncs its overlay to the cluster.
+
+### 8. Verify
+
+```bash
+# Check ArgoCD sync status
+kubectl get applications -n argocd
+
+# Check running pods
+kubectl get pods -n dev
+
+# Port-forward to access the frontend
+kubectl port-forward svc/frontend -n dev 3000:3000
+# Open http://localhost:3000
+```
+
+### What you end up with
 
 ![Cluster View](docs/cluster-view.png)
 
