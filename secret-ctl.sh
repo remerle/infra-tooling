@@ -270,6 +270,17 @@ cmd_list() {
 
 # --- Usage ---
 
+cmd_preflight_check() {
+    echo ""
+    echo "  secret-ctl.sh dependencies:"
+    echo ""
+    preflight_check \
+        "gum:brew install gum" \
+        "kubectl:brew install kubectl" \
+        "kubeseal:brew install kubeseal" \
+        "jq:brew install jq"
+}
+
 usage() {
     cat <<EOF
 Usage: secret-ctl.sh <command> [options]
@@ -278,6 +289,7 @@ Commands:
   init                Install Sealed Secrets controller and set up key material
   add <app> <env>     Create or update a SealedSecret for an app/environment
   list [app] [env]    List app/environment pairs that have sealed secrets
+  preflight-check     Verify all required tools are installed
 
 Global options:
   --target-dir <path>   Directory to operate on (default: current directory)
@@ -302,6 +314,7 @@ main() {
         init)       cmd_init "$@" ;;
         add)        cmd_add "$@" ;;
         list)       cmd_list "$@" ;;
+        preflight-check)    cmd_preflight_check "$@" ;;
         -h|--help)  usage ;;
         *)
             print_error "Unknown command: $command"

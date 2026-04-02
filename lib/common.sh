@@ -60,6 +60,54 @@ require_helm() {
     fi
 }
 
+# Checks a list of required tools and reports all missing ones at once.
+# Usage: preflight_check "cmd1:hint1" "cmd2:hint2" ...
+#   Each argument is "command:install_hint". The hint is optional.
+#   Returns 0 if all tools are present, 1 if any are missing.
+preflight_check() {
+    local missing=0
+    local total=0
+    local tool hint
+
+    for entry in "$@"; do
+        tool="${entry%%:*}"
+        hint="${entry#*:}"
+        [[ "$hint" == "$tool" ]] && hint=""
+        total=$((total + 1))
+
+        if command -v "$tool" &>/dev/null; then
+            local version=""
+            case "$tool" in
+                gum)        version="$(gum --version 2>/dev/null || true)" ;;
+                kubectl)    version="$(kubectl version --client -o json 2>/dev/null | jq -r '.clientVersion.gitVersion' 2>/dev/null || true)" ;;
+                helm)       version="$(helm version --short 2>/dev/null || true)" ;;
+                jq)         version="$(jq --version 2>/dev/null || true)" ;;
+                yq)         version="$(yq --version 2>/dev/null | awk '{print $NF}' || true)" ;;
+                k3d)        version="$(k3d version 2>/dev/null | head -1 | awk '{print $NF}' || true)" ;;
+                kubeseal)   version="$(kubeseal --version 2>/dev/null | awk '{print $NF}' || true)" ;;
+                docker)     version="$(docker --version 2>/dev/null | sed 's/Docker version //' | cut -d, -f1 || true)" ;;
+                openssl)    version="$(openssl version 2>/dev/null | awk '{print $2}' || true)" ;;
+                *)          version="$(command -v "$tool")" ;;
+            esac
+            printf "  ✓ %-12s %s\n" "$tool" "${version:-found}"
+        else
+            printf "  ✗ %-12s MISSING" "$tool"
+            [[ -n "$hint" ]] && printf "  (install: %s)" "$hint"
+            printf "\n"
+            missing=$((missing + 1))
+        fi
+    done
+
+    echo ""
+    if [[ $missing -gt 0 ]]; then
+        echo "  ${missing} of ${total} required tools missing."
+        return 1
+    else
+        echo "  All ${total} required tools found."
+        return 0
+    fi
+}
+
 # --- Input validation ---
 
 # Validates a name for use as a Kubernetes resource name and filesystem path.
@@ -338,6 +386,60 @@ read_promotion_order() {
         print_error "kargo/promotion-order.txt is empty."
         exit 1
     fi
+}
+
+# Generates Kargo Stage resources for a single app across all existing environments
+# in the promotion order. First environment gets a direct-from-Warehouse stage;
+# subsequent environments get promoted-from-previous stages.
+#
+# Usage: generate_kargo_stages <app_name> <image_repo> <kargo_app_dir> <envs_csv>
+#   envs_csv: comma-separated list of existing environment names
+#   Prints paths of created files, one per line (caller appends to created_files).
+#   Requires PROMOTION_ORDER to be set (call read_promotion_order first).
+generate_kargo_stages() {
+    local app_name="$1"
+    local image_repo="$2"
+    local kargo_app_dir="$3"
+    local envs_csv="$4"
+
+    # Convert csv to associative array for O(1) lookup
+    local -A env_set=()
+    local env_item
+    IFS=',' read -ra env_arr <<< "$envs_csv"
+    for env_item in "${env_arr[@]}"; do
+        env_set["$env_item"]=1
+    done
+
+    local prev_stage=""
+    local promo_env
+    for promo_env in "${PROMOTION_ORDER[@]}"; do
+        [[ -n "${env_set[$promo_env]+x}" ]] || continue
+
+        local stage_file="${kargo_app_dir}/${promo_env}-stage.yaml"
+        if [[ -z "$prev_stage" ]]; then
+            if safe_render_template \
+                "${TEMPLATE_DIR}/kargo/stage-direct.yaml" \
+                "$stage_file" \
+                "APP_NAME=${app_name}" \
+                "ENV=${promo_env}" \
+                "IMAGE_REPO=${image_repo}" \
+                "REPO_URL=${REPO_URL}"; then
+                echo "$stage_file"
+            fi
+        else
+            if safe_render_template \
+                "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
+                "$stage_file" \
+                "APP_NAME=${app_name}" \
+                "ENV=${promo_env}" \
+                "IMAGE_REPO=${image_repo}" \
+                "UPSTREAM_STAGE=${app_name}-${prev_stage}" \
+                "REPO_URL=${REPO_URL}"; then
+                echo "$stage_file"
+            fi
+        fi
+        prev_stage="$promo_env"
+    done
 }
 
 # --- Repo URL parsing ---

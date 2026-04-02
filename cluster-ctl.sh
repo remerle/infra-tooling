@@ -142,7 +142,7 @@ KARGOINGRESS
         print_success "Kargo Ingress created at kargo.localhost"
 
         # Update .infra-ctl.conf if it exists
-        local conf_file="${SCRIPT_DIR}/.infra-ctl.conf"
+        local conf_file="${TARGET_DIR}/.infra-ctl.conf"
         if [[ -f "$conf_file" ]]; then
             if grep -q '^KARGO_ENABLED=' "$conf_file"; then
                 local tmp
@@ -238,7 +238,7 @@ cmd_status() {
         echo ""
         if helm status argocd -n argocd &>/dev/null; then
             local helm_status
-            helm_status="$(helm status argocd -n argocd -o json 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)" || true
+            helm_status="$(helm status argocd -n argocd -o json 2>/dev/null | jq -r '.info.status' 2>/dev/null)" || true
             print_info "Helm release: ${helm_status}"
         else
             print_info "ArgoCD was not installed via Helm."
@@ -257,7 +257,7 @@ cmd_status() {
         echo ""
         if helm status kargo -n kargo &>/dev/null; then
             local kargo_helm_status
-            kargo_helm_status="$(helm status kargo -n kargo -o json 2>/dev/null | grep -o '"status":"[^"]*"' | head -1 | cut -d'"' -f4)" || true
+            kargo_helm_status="$(helm status kargo -n kargo -o json 2>/dev/null | jq -r '.info.status' 2>/dev/null)" || true
             print_info "Helm release: ${kargo_helm_status}"
         else
             print_info "Kargo was not installed via Helm."
@@ -466,6 +466,19 @@ cmd_upgrade_kargo() {
 
 # --- Usage ---
 
+cmd_preflight_check() {
+    echo ""
+    echo "  cluster-ctl.sh dependencies:"
+    echo ""
+    preflight_check \
+        "gum:brew install gum" \
+        "k3d:brew install k3d" \
+        "kubectl:brew install kubectl" \
+        "jq:brew install jq" \
+        "helm:brew install helm" \
+        "docker:https://docs.docker.com/get-docker/"
+}
+
 usage() {
     cat <<EOF
 Usage: cluster-ctl.sh <command> [options]
@@ -478,6 +491,7 @@ Commands:
   upgrade-argocd      Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
   upgrade-kargo       Re-apply Kargo Helm release
   status              Show cluster and ArgoCD health
+  preflight-check     Verify all required tools are installed
 
 Global options:
   --target-dir <path>   Directory context (default: current directory)
@@ -506,6 +520,7 @@ main() {
         upgrade-argocd)     cmd_upgrade_argocd "$@" ;;
         upgrade-kargo)      cmd_upgrade_kargo "$@" ;;
         status)             cmd_status "$@" ;;
+        preflight-check)    cmd_preflight_check "$@" ;;
         -h|--help)          usage ;;
         *)
             print_error "Unknown command: $command"

@@ -272,47 +272,11 @@ cmd_add_app() {
         # Generate Stages if environments exist
         if [[ ${#envs[@]} -gt 0 ]]; then
             read_promotion_order
-            local prev_stage=""
-            local promo_env
-            for promo_env in "${PROMOTION_ORDER[@]}"; do
-                # Only generate stages for environments that actually exist
-                local env_exists=false
-                local e
-                for e in "${envs[@]}"; do
-                    if [[ "$e" == "$promo_env" ]]; then
-                        env_exists=true
-                        break
-                    fi
-                done
-                [[ "$env_exists" == true ]] || continue
-
-                local stage_file="${kargo_app_dir}/${promo_env}-stage.yaml"
-                if [[ -z "$prev_stage" ]]; then
-                    # First stage: direct from Warehouse
-                    if safe_render_template \
-                        "${TEMPLATE_DIR}/kargo/stage-direct.yaml" \
-                        "$stage_file" \
-                        "APP_NAME=${app_name}" \
-                        "ENV=${promo_env}" \
-                        "IMAGE_REPO=${image_repo}" \
-                        "REPO_URL=${REPO_URL}"; then
-                        created_files+=("$stage_file")
-                    fi
-                else
-                    # Subsequent stages: promoted from previous
-                    if safe_render_template \
-                        "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
-                        "$stage_file" \
-                        "APP_NAME=${app_name}" \
-                        "ENV=${promo_env}" \
-                        "IMAGE_REPO=${image_repo}" \
-                        "UPSTREAM_STAGE=${app_name}-${prev_stage}" \
-                        "REPO_URL=${REPO_URL}"; then
-                        created_files+=("$stage_file")
-                    fi
-                fi
-                prev_stage="$promo_env"
-            done
+            local envs_csv
+            envs_csv="$(IFS=','; echo "${envs[*]}")"
+            while IFS= read -r stage_file; do
+                created_files+=("$stage_file")
+            done < <(generate_kargo_stages "$app_name" "$image_repo" "$kargo_app_dir" "$envs_csv")
         else
             print_info "No environments found. Kargo Stages will be created when you run 'add-env'."
         fi
@@ -808,45 +772,11 @@ PROMOEOF
             fi
 
             # Stages
-            local prev_stage=""
-            local promo_env
-            for promo_env in "${PROMOTION_ORDER[@]}"; do
-                # Only generate for environments that exist
-                local env_exists=false
-                local e
-                for e in "${envs[@]}"; do
-                    if [[ "$e" == "$promo_env" ]]; then
-                        env_exists=true
-                        break
-                    fi
-                done
-                [[ "$env_exists" == true ]] || continue
-
-                local stage_file="${kargo_app_dir}/${promo_env}-stage.yaml"
-                if [[ -z "$prev_stage" ]]; then
-                    if safe_render_template \
-                        "${TEMPLATE_DIR}/kargo/stage-direct.yaml" \
-                        "$stage_file" \
-                        "APP_NAME=${app}" \
-                        "ENV=${promo_env}" \
-                        "IMAGE_REPO=${image_repo}" \
-                        "REPO_URL=${REPO_URL}"; then
-                        created_files+=("$stage_file")
-                    fi
-                else
-                    if safe_render_template \
-                        "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
-                        "$stage_file" \
-                        "APP_NAME=${app}" \
-                        "ENV=${promo_env}" \
-                        "IMAGE_REPO=${image_repo}" \
-                        "UPSTREAM_STAGE=${app}-${prev_stage}" \
-                        "REPO_URL=${REPO_URL}"; then
-                        created_files+=("$stage_file")
-                    fi
-                fi
-                prev_stage="$promo_env"
-            done
+            local envs_csv
+            envs_csv="$(IFS=','; echo "${envs[*]}")"
+            while IFS= read -r stage_file; do
+                created_files+=("$stage_file")
+            done < <(generate_kargo_stages "$app" "$image_repo" "$kargo_app_dir" "$envs_csv")
         done
     else
         print_info "No apps found. Kargo resources will be generated when you run 'add-app'."
@@ -856,6 +786,14 @@ PROMOEOF
 }
 
 # --- Usage ---
+
+cmd_preflight_check() {
+    echo ""
+    echo "  infra-ctl.sh dependencies:"
+    echo ""
+    preflight_check \
+        "gum:brew install gum"
+}
 
 usage() {
     cat <<EOF
@@ -868,6 +806,7 @@ Commands:
   add-project <name>    Create an ArgoCD AppProject
   edit-project <name>   Modify an existing ArgoCD AppProject
   enable-kargo          Enable Kargo and generate resources for existing apps
+  preflight-check       Verify all required tools are installed
 
 Global options:
   --target-dir <path>   Directory to operate on (default: current directory)
@@ -895,6 +834,7 @@ main() {
         add-project)    cmd_add_project "$@" ;;
         edit-project)   cmd_edit_project "$@" ;;
         enable-kargo)   cmd_enable_kargo "$@" ;;
+        preflight-check)    cmd_preflight_check "$@" ;;
         -h|--help)  usage ;;
         *)
             print_error "Unknown command: $command"

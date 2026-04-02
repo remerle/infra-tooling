@@ -164,6 +164,9 @@ cmd_add_role() {
             ;;
     esac
 
+    # Record the preset type for use by add-sa
+    echo "$preset" > "${platform_dir}/${role_name}.preset"
+
     # Apply k8s manifests
     echo ""
     local f
@@ -269,6 +272,9 @@ cmd_remove_role() {
             print_success "Removed: $f"
         done <<< "$manifest_files"
     fi
+
+    # Remove preset metadata file
+    rm -f "${platform_dir}/${role_name}.preset"
 
     # Remove ArgoCD policy
     remove_argocd_role_policy "$VALUES_FILE" "$role_name"
@@ -583,15 +589,30 @@ metadata:
 EOF
     print_success "ServiceAccount created in kube-system."
 
-    # Create RBAC bindings based on role type
+    # Create RBAC bindings based on role preset
     local platform_dir="${TARGET_DIR}/k8s/platform"
-    if ls "${platform_dir}/${group}-role-"*.yaml &>/dev/null; then
-        # Developer preset: bind to Role in each namespace
-        local role_file
-        for role_file in "${platform_dir}/${group}-role-"*.yaml; do
-            local ns
-            ns="$(basename "$role_file" .yaml | sed "s/${group}-role-//")"
-            kubectl apply -f - <<EOF
+    local preset_file="${platform_dir}/${group}.preset"
+    local preset=""
+    if [[ -f "$preset_file" ]]; then
+        preset="$(cat "$preset_file")"
+    else
+        # Fallback for roles created before preset files existed
+        if ls "${platform_dir}/${group}-role-"*.yaml &>/dev/null; then
+            preset="developer"
+        elif grep -q "name: admin$" "${platform_dir}/${group}-clusterrolebinding.yaml" 2>/dev/null; then
+            preset="admin-readonly-settings"
+        elif [[ -f "${platform_dir}/${group}-clusterrole.yaml" ]]; then
+            preset="viewer"
+        fi
+    fi
+
+    case "$preset" in
+        developer)
+            local role_file
+            for role_file in "${platform_dir}/${group}-role-"*.yaml; do
+                local ns
+                ns="$(basename "$role_file" .yaml | sed "s/${group}-role-//")"
+                kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -608,12 +629,10 @@ subjects:
     name: ${sa_name}
     namespace: kube-system
 EOF
-        done
-        print_success "RoleBindings created for namespaced access."
-    else
-        # Cluster-scoped role: detect preset by checking the bindings file
-        if grep -q "name: admin$" "${platform_dir}/${group}-clusterrolebinding.yaml" 2>/dev/null; then
-            # admin-readonly-settings: bind to both admin and cluster-readonly
+            done
+            print_success "RoleBindings created for namespaced access."
+            ;;
+        admin-readonly-settings)
             kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -646,11 +665,11 @@ subjects:
     name: ${sa_name}
     namespace: kube-system
 EOF
-        elif [[ -f "${platform_dir}/${group}-clusterrole.yaml" ]]; then
-            # viewer or custom: bind to the single clusterrole
+            print_success "ClusterRoleBinding created."
+            ;;
+        viewer|custom)
             local clusterrole_name
             clusterrole_name="$(yq '.metadata.name' "${platform_dir}/${group}-clusterrole.yaml")"
-
             kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -667,9 +686,14 @@ subjects:
     name: ${sa_name}
     namespace: kube-system
 EOF
-        fi
-        print_success "ClusterRoleBinding created."
-    fi
+            print_success "ClusterRoleBinding created."
+            ;;
+        *)
+            print_error "Could not determine role preset for group '${group}'."
+            print_error "Expected ${preset_file} or recognizable RBAC manifests in ${platform_dir}/."
+            exit 1
+            ;;
+    esac
 
     # Generate token
     local token
@@ -819,6 +843,18 @@ cmd_remove_sa() {
 
 # --- Usage ---
 
+cmd_preflight_check() {
+    echo ""
+    echo "  user-ctl.sh dependencies:"
+    echo ""
+    preflight_check \
+        "gum:brew install gum" \
+        "kubectl:brew install kubectl" \
+        "openssl:pre-installed on macOS" \
+        "yq:brew install yq" \
+        "helm:brew install helm"
+}
+
 usage() {
     cat <<EOF
 Usage: user-ctl.sh <command> [options]
@@ -835,6 +871,8 @@ Commands:
   add-sa <name> <group>         Create a service account with token
   remove-sa <name>              Remove a service account
   refresh-sa <name>             Regenerate a service account token
+
+  preflight-check               Verify all required tools are installed
 
 Global options:
   --target-dir <path>   Directory to operate on (default: current directory)
@@ -865,6 +903,7 @@ main() {
         add-sa)         cmd_add_sa "$@" ;;
         remove-sa)      cmd_remove_sa "$@" ;;
         refresh-sa)     cmd_refresh_sa "$@" ;;
+        preflight-check)    cmd_preflight_check "$@" ;;
         -h|--help)      usage ;;
         *)
             print_error "Unknown command: $command"
