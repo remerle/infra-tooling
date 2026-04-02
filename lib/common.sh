@@ -516,3 +516,20 @@ print_summary() {
     done
     echo ""
 }
+
+# Prints a summary of removed files.
+# Usage: print_removed "${removed_files[@]}"
+print_removed() {
+    local files=("$@")
+    if [[ ${#files[@]} -eq 0 ]]; then
+        print_warning "No files were removed."
+        return
+    fi
+    echo ""
+    print_header "Removed:"
+    local f
+    for f in "${files[@]}"; do
+        print_success "$f"
+    done
+    echo ""
+}
