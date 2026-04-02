@@ -443,9 +443,11 @@ cmd_add_repo_creds() {
     fi
 
     # Prompt for PAT
-    print_info "A fine-grained GitHub PAT is required with Contents (read) access"
-    print_info "to the GitOps repository. Create one at:"
+    print_info "A fine-grained GitHub PAT is required. Create one at:"
     print_info "  https://github.com/settings/personal-access-tokens/new"
+    print_info ""
+    print_info "Required permissions on the GitOps repository:"
+    print_info "  Contents:  Read-only"
     echo ""
     local pat
     pat="$(gum input --password --prompt "GitHub PAT: ")"
@@ -520,10 +522,13 @@ cmd_add_kargo_creds() {
     fi
 
     # Prompt for PAT
-    print_info "A fine-grained GitHub PAT is required with Contents (read+write)"
-    print_info "access to the GitOps repository. Kargo needs write access to commit"
-    print_info "image tag updates during promotions. Create one at:"
+    print_info "A fine-grained GitHub PAT is required. Kargo needs write access to"
+    print_info "commit image tag updates during promotions. Create one at:"
     print_info "  https://github.com/settings/personal-access-tokens/new"
+    print_info ""
+    print_info "Required permissions on the GitOps repository:"
+    print_info "  Contents:  Read and write"
+    print_info "  Packages:  Read (only if the container registry is private)"
     echo ""
     local pat
     pat="$(gum input --password --prompt "GitHub PAT: ")"
