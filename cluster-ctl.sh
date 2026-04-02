@@ -467,11 +467,13 @@ usage() {
 Usage: cluster-ctl.sh <command> [options]
 
 Commands:
-  init-cluster      Create a local k3d cluster and optionally install ArgoCD
-  delete-cluster    Tear down a k3d cluster
-  upgrade-argocd    Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
-  upgrade-kargo     Re-apply Kargo Helm release
-  status            Show cluster and ArgoCD health
+  init-cluster        Create a local k3d cluster and optionally install ArgoCD
+  delete-cluster      Tear down a k3d cluster
+  add-repo-creds      Configure ArgoCD access to a private Git repository
+  add-kargo-creds     Configure Kargo access to a private Git repo and container registry
+  upgrade-argocd      Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
+  upgrade-kargo       Re-apply Kargo Helm release
+  status              Show cluster and ArgoCD health
 
 Global options:
   --target-dir <path>   Directory context (default: current directory)
@@ -495,6 +497,8 @@ main() {
     case "$command" in
         init-cluster)       cmd_init_cluster "$@" ;;
         delete-cluster)     cmd_delete_cluster "$@" ;;
+        add-repo-creds)     cmd_add_repo_creds "$@" ;;
+        add-kargo-creds)    cmd_add_kargo_creds "$@" ;;
         upgrade-argocd)     cmd_upgrade_argocd "$@" ;;
         upgrade-kargo)      cmd_upgrade_kargo "$@" ;;
         status)             cmd_status "$@" ;;
