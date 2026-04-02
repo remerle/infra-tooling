@@ -287,7 +287,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/remerle/k8s-practice-backend:2026.04.01.8
+          image: ghcr.io/remerle/k8s-practice-backend:2026.04.02.9
           ports:
             - containerPort: 3000
           env:
@@ -328,7 +328,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: ghcr.io/remerle/k8s-practice-frontend:2026.04.01.7
+          image: ghcr.io/remerle/k8s-practice-frontend:2026.04.02.8
           ports:
             - containerPort: 3000
           env:
