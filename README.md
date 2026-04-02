@@ -74,7 +74,8 @@ These scripts are designed to be run from a separate GitOps repository, not from
 
 ```bash
 # Add to your shell profile (~/.zshrc, ~/.bashrc, etc.)
-export PATH="/path/to/infra-tooling:$PATH"
+# Run this from the directory that you cloned the project to
+echo "export PATH=\"$(pwd):$PATH\"" >> ~/.zshrc
 ```
 
 Then from any GitOps repo:
