@@ -73,6 +73,9 @@ cmd_init_cluster() {
     fi
     echo ""
 
+    local argocd_installed=false
+    local kargo_installed=false
+
     # Prompt for ArgoCD installation
     if gum confirm "Install ArgoCD?"; then
         echo ""
@@ -97,7 +100,7 @@ cmd_init_cluster() {
                 --wait --timeout 120s
 
         print_success "ArgoCD installed via Helm."
-        local argocd_installed=true
+        argocd_installed=true
     fi
 
     # Prompt for Kargo installation
@@ -149,7 +152,7 @@ KARGOINGRESS
             print_info "Set KARGO_ENABLED=true in .infra-ctl.conf"
         fi
 
-        local kargo_installed=true
+        kargo_installed=true
     fi
 
     # Summary
