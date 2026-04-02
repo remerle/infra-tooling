@@ -304,14 +304,7 @@ KARGOINGRESS
     # Next steps
     echo ""
     print_header "Next Steps"
-    print_info "1. Initialize your GitOps repo:   infra-ctl.sh init"
-    print_info "2. Add environments and apps:     infra-ctl.sh add-env / add-app"
-    if [[ "${argocd_installed:-}" == true ]]; then
-        print_info "3. If your repo is private:       cluster-ctl.sh add-repo-creds"
-    fi
-    if [[ "${kargo_installed:-}" == true ]]; then
-        print_info "4. Configure Kargo credentials:   cluster-ctl.sh add-kargo-creds"
-    fi
+    print_info "1. Initialize your GitOps repo:  infra-ctl.sh init"
     echo ""
 }
 

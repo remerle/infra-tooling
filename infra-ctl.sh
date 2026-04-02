@@ -109,9 +109,9 @@ PROMOEOF
 
     print_summary "${created_files[@]}"
     print_info "Repository initialized. Next steps:"
-    print_info "  1. (Optional) Add a project:  infra-ctl.sh add-project <name>"
-    print_info "  2. Add an environment:        infra-ctl.sh add-env <env-name>"
-    print_info "  3. Add an application:         infra-ctl.sh add-app <app-name>"
+    print_info "  1. Add environments and apps:    infra-ctl.sh add-env / add-app"
+    print_info "  2. (Optional) Add a project:     infra-ctl.sh add-project <name>"
+    print_info "  3. If your repo is private:      cluster-ctl.sh add-repo-creds"
 }
 
 cmd_add_app() {
@@ -295,6 +295,11 @@ cmd_add_app() {
     fi
 
     print_summary "${created_files[@]}"
+
+    if is_kargo_enabled && [[ -d "${TARGET_DIR}/kargo/${app_name}" ]]; then
+        print_info "If your repo or registry is private, configure credentials:"
+        print_info "  cluster-ctl.sh add-kargo-creds"
+    fi
 }
 
 cmd_add_env() {
