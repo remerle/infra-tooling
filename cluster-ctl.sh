@@ -90,11 +90,15 @@ cmd_init_cluster() {
             # Ensure the local CA is installed
             mkcert -install 2>/dev/null
 
-            # Generate wildcard cert for *.localhost
+            # Generate cert for localhost domains. Wildcard *.localhost doesn't
+            # work reliably -- some TLS implementations (including macOS/LibreSSL)
+            # refuse to match wildcards against single-label TLDs like .localhost.
+            # List each hostname explicitly instead.
             local tls_dir
             tls_dir="$(mktemp -d)"
             mkcert -cert-file "${tls_dir}/tls.crt" -key-file "${tls_dir}/tls.key" \
-                "*.localhost" "localhost" >/dev/null 2>&1
+                "localhost" "argocd.localhost" "kargo.localhost" "app.localhost" \
+                "*.localhost" >/dev/null 2>&1
 
             # Create TLS secret and default TLSStore in kube-system so Traefik uses it for all routes
             gum spin --title "Configuring TLS..." -- bash -c '
