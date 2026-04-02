@@ -101,6 +101,7 @@ cmd_init_cluster() {
         print_info "ArgoCD UI: http://argocd.localhost (username: admin)"
         print_info "Get the admin password with:"
         print_info "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
+        print_info "If your GitOps repo is private, run: cluster-ctl.sh add-repo-creds"
     fi
 
     # Prompt for Kargo installation
@@ -154,6 +155,7 @@ KARGOINGRESS
 
         echo ""
         print_info "Kargo UI: http://kargo.localhost"
+        print_info "If your repo or registry is private, run: cluster-ctl.sh add-kargo-creds <app> (after adding apps)"
     fi
 
     # Summary
