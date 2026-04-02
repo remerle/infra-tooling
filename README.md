@@ -19,31 +19,51 @@ Install the following tools before using these scripts:
 
 `gum` is required by both scripts. `k3d`, `kubectl`, and Docker are only needed for `cluster-ctl.sh`.
 
+## Setup
+
+These scripts are designed to be run from a separate GitOps repository, not from within this tooling repo. Add the tooling directory to your PATH so the commands are available everywhere:
+
+```bash
+# Add to your shell profile (~/.zshrc, ~/.bashrc, etc.)
+export PATH="/path/to/infra-tooling:$PATH"
+```
+
+Then from any GitOps repo:
+
+```bash
+cd ~/repos/my-gitops-repo
+infra-ctl.sh init
+infra-ctl.sh add-env dev
+infra-ctl.sh add-app backend
+```
+
+The scripts resolve templates relative to their own location, so they work correctly regardless of your current directory. The `--target-dir` flag defaults to your current working directory.
+
 ## Getting Started
 
 The typical workflow is:
 
 1. **Set up a cluster** (optional, if you want a local environment):
    ```bash
-   ./cluster-ctl.sh init-cluster
+   cluster-ctl.sh init-cluster
    ```
 
 2. **Initialize the repo structure**:
    ```bash
-   ./infra-ctl.sh init
+   infra-ctl.sh init
    ```
 
 3. **Add a project** (optional, can be done anytime):
    ```bash
-   ./infra-ctl.sh add-project my-team
+   infra-ctl.sh add-project my-team
    ```
 
 4. **Add environments and apps** (any order):
    ```bash
-   ./infra-ctl.sh add-env dev
-   ./infra-ctl.sh add-env staging
-   ./infra-ctl.sh add-app postgres
-   ./infra-ctl.sh add-app redis
+   infra-ctl.sh add-env dev
+   infra-ctl.sh add-env staging
+   infra-ctl.sh add-app postgres
+   infra-ctl.sh add-app redis
    ```
 
 Steps 3 and 4 can happen in any order. If you add apps before creating a project, they use ArgoCD's built-in `default` project (which allows everything). You can create a project later and reassign apps to it.
@@ -67,9 +87,9 @@ Bootstraps the repository skeleton. Prompts for the Git repository URL (used in 
 - `.infra-ctl.conf` -- stores configuration for use by other commands (see below)
 
 ```bash
-./infra-ctl.sh init
+infra-ctl.sh init
 # Or specify a target directory:
-./infra-ctl.sh init --target-dir /path/to/repo
+infra-ctl.sh init --target-dir /path/to/repo
 ```
 
 #### Configuration file (`.infra-ctl.conf`)
@@ -99,7 +119,7 @@ Scaffolds a new application across all existing environments. Creates:
 If ArgoCD projects exist, you'll be prompted to choose which project this app belongs to.
 
 ```bash
-./infra-ctl.sh add-app postgres
+infra-ctl.sh add-app postgres
 ```
 
 #### `add-env <name>`
@@ -113,7 +133,7 @@ Scaffolds a new environment across all existing applications. Creates:
 The script detects which project each app belongs to by reading its existing ArgoCD Application manifests, so project assignments carry over to the new environment automatically.
 
 ```bash
-./infra-ctl.sh add-env dev
+infra-ctl.sh add-env dev
 ```
 
 #### `add-project <name>`
@@ -123,7 +143,7 @@ Creates an ArgoCD AppProject resource. Projects let you control which Git repos 
 This is for organizational and access-control purposes. You don't need a project to get started -- the built-in `default` project works fine until you want to restrict access.
 
 ```bash
-./infra-ctl.sh add-project backend-team
+infra-ctl.sh add-project backend-team
 ```
 
 #### `edit-project <name>`
@@ -131,7 +151,7 @@ This is for organizational and access-control purposes. You don't need a project
 Modifies an existing AppProject. Re-prompts for all fields with current values pre-filled.
 
 ```bash
-./infra-ctl.sh edit-project backend-team
+infra-ctl.sh edit-project backend-team
 ```
 
 ### Global options
@@ -166,7 +186,7 @@ Manages the local k3d Kubernetes cluster lifecycle. Independent from `infra-ctl.
 Creates a local Kubernetes cluster using k3d (which runs Kubernetes inside Docker containers). Prompts for cluster name, number of agent nodes, and whether to expose ports for ingress. Optionally installs ArgoCD into the cluster.
 
 ```bash
-./cluster-ctl.sh init-cluster
+cluster-ctl.sh init-cluster
 ```
 
 #### `delete-cluster`
@@ -174,7 +194,7 @@ Creates a local Kubernetes cluster using k3d (which runs Kubernetes inside Docke
 Tears down a k3d cluster. Lists existing clusters and prompts for which one to delete.
 
 ```bash
-./cluster-ctl.sh delete-cluster
+cluster-ctl.sh delete-cluster
 ```
 
 #### `status`
@@ -182,7 +202,7 @@ Tears down a k3d cluster. Lists existing clusters and prompts for which one to d
 Shows current cluster status: k3d clusters, kubectl context, and ArgoCD pod health.
 
 ```bash
-./cluster-ctl.sh status
+cluster-ctl.sh status
 ```
 
 ## Templates
@@ -228,19 +248,19 @@ The application lives at [github.com/remerle/k8s-practice-app](https://github.co
 
 ```bash
 # Create a local k3d cluster with ArgoCD
-./cluster-ctl.sh init-cluster
+cluster-ctl.sh init-cluster
 # Answer: expose ports 80/443? yes, install ArgoCD? yes
 
 # Initialize the GitOps repo structure
-./infra-ctl.sh init
+infra-ctl.sh init
 # Enter your repo URL when prompted
 ```
 
 ### 2. Add environments
 
 ```bash
-./infra-ctl.sh add-env dev
-./infra-ctl.sh add-env staging
+infra-ctl.sh add-env dev
+infra-ctl.sh add-env staging
 ```
 
 This creates namespace manifests and sets up the overlay directories that will hold per-environment configuration.
@@ -249,15 +269,15 @@ This creates namespace manifests and sets up the overlay directories that will h
 
 ```bash
 # Backend API (Deployment, port 3000)
-./infra-ctl.sh add-app backend
+infra-ctl.sh add-app backend
 # Choose: Deployment, port 3000
 
 # Frontend (Deployment, port 3000)
-./infra-ctl.sh add-app frontend
+infra-ctl.sh add-app frontend
 # Choose: Deployment, port 3000
 
 # PostgreSQL (StatefulSet, port 5432)
-./infra-ctl.sh add-app postgres
+infra-ctl.sh add-app postgres
 # Choose: StatefulSet, port 5432
 ```
 
@@ -395,14 +415,14 @@ The backend and postgres manifests reference Secrets for credentials. Use Sealed
 
 ```bash
 # Install the Sealed Secrets controller
-./secret-ctl.sh init
+secret-ctl.sh init
 
 # PostgreSQL credentials
-./secret-ctl.sh add postgres dev
+secret-ctl.sh add postgres dev
 # Enter: username=appuser, password=devpassword
 
 # Backend database connection string (must match the postgres credentials above)
-./secret-ctl.sh add backend dev
+secret-ctl.sh add backend dev
 # Enter: database-url=postgresql://appuser:devpassword@postgres:5432/app
 ```
 
