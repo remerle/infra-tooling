@@ -18,9 +18,14 @@ cmd_init() {
     print_header "Initialize GitOps Repository"
     echo ""
 
-    # Prompt for repo URL
+    # Detect repo URL from git remote, prompt with it as default
+    local default_url=""
+    if git -C "$TARGET_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
+        default_url="$(git -C "$TARGET_DIR" remote get-url origin 2>/dev/null || true)"
+    fi
+
     local repo_url
-    repo_url="$(gum input --placeholder "https://github.com/owner/repo" --prompt "Repository URL: ")"
+    repo_url="$(gum input --value "$default_url" --placeholder "https://github.com/owner/repo" --prompt "Repository URL: ")"
 
     if [[ -z "$repo_url" ]]; then
         print_error "Repository URL is required."
