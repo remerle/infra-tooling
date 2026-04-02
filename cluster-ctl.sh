@@ -318,6 +318,93 @@ cmd_add_repo_creds() {
     echo ""
 }
 
+cmd_add_kargo_creds() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+
+    if [[ $# -eq 0 ]]; then
+        print_error "Usage: cluster-ctl.sh add-kargo-creds <app>"
+        exit 1
+    fi
+
+    local app_name="$1"
+    validate_k8s_name "$app_name" "App name"
+    load_conf
+
+    print_header "Configure Kargo Credentials: ${app_name}"
+    echo ""
+
+    # Verify Kargo app directory exists
+    local kargo_app_dir="${TARGET_DIR}/kargo/${app_name}"
+    if [[ ! -d "$kargo_app_dir" ]]; then
+        print_error "No Kargo resources found at kargo/${app_name}/"
+        print_info "This app may not use Kargo (e.g., it uses a public upstream image)."
+        print_info "Kargo resources are created by 'infra-ctl.sh add-app' when Kargo is enabled."
+        exit 1
+    fi
+
+    # Read image repo from warehouse
+    local image_repo
+    image_repo="$(grep 'repoURL:' "${kargo_app_dir}/warehouse.yaml" 2>/dev/null \
+        | head -1 | sed 's/.*repoURL:\s*//' | xargs)" || true
+    if [[ -z "$image_repo" ]]; then
+        print_error "Could not read image repo from kargo/${app_name}/warehouse.yaml"
+        exit 1
+    fi
+
+    print_info "Repository:       ${REPO_URL}"
+    print_info "Container image:  ${image_repo}"
+    echo ""
+
+    # Verify namespace exists in cluster
+    if ! kubectl get namespace "$app_name" &>/dev/null; then
+        print_error "Namespace '${app_name}' not found in the cluster."
+        print_info "The Kargo Project resource creates this namespace."
+        print_info "Push your changes and let ArgoCD sync, or apply it manually:"
+        print_info "  kubectl apply -f kargo/${app_name}/project.yaml"
+        exit 1
+    fi
+
+    # Prompt for PAT
+    local pat
+    pat="$(gum input --password --prompt "GitHub PAT (needs repo read+write access): ")"
+    if [[ -z "$pat" ]]; then
+        print_error "A GitHub PAT is required."
+        exit 1
+    fi
+
+    # Create Git credential
+    kubectl create secret generic gitops-repo-creds \
+        --namespace "$app_name" \
+        --from-literal=type=git \
+        --from-literal=url="${REPO_URL}" \
+        --from-literal=username=git \
+        --from-literal=password="${pat}" \
+        --dry-run=client -o yaml \
+        | kubectl label --local -f - kargo.akuity.io/cred-type=git -o yaml \
+        | kubectl apply -f -
+
+    print_success "Git credentials configured for ${REPO_URL}"
+
+    # Optionally create registry credential
+    echo ""
+    if gum confirm "Is the container registry private?"; then
+        kubectl create secret generic registry-creds \
+            --namespace "$app_name" \
+            --from-literal=type=image \
+            --from-literal=repoURL="${image_repo}" \
+            --from-literal=username=git \
+            --from-literal=password="${pat}" \
+            --dry-run=client -o yaml \
+            | kubectl label --local -f - kargo.akuity.io/cred-type=image -o yaml \
+            | kubectl apply -f -
+
+        print_success "Registry credentials configured for ${image_repo}"
+    fi
+
+    echo ""
+}
+
 cmd_upgrade_argocd() {
     require_gum
     require_cmd "kubectl" "brew install kubectl"
