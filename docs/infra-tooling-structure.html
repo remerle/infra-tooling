@@ -15,27 +15,32 @@
   }
 
   .root {
-    width: 1100px;
+    width: 1200px;
     padding: 24px;
     background: rgba(10, 14, 20, 0.97);
     border: 1px solid rgba(48, 54, 61, 0.8);
     border-radius: 12px;
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 16px;
   }
 
-  /* ── Top row: k8s + argocd ── */
-  .top-row {
+  /* ── Grid rows ── */
+  .row-2col {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 16px;
   }
 
-  /* ── Bottom row: tooling + kargo + config ── */
-  .bottom-row {
+  .row-3col {
     display: grid;
-    grid-template-columns: 1.1fr 0.9fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+  }
+
+  .row-4col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
     gap: 16px;
   }
 
@@ -76,13 +81,21 @@
     background: linear-gradient(135deg, #6d3bbf 0%, #9b6dff 100%);
     box-shadow: 0 1px 8px rgba(137, 87, 229, 0.3);
   }
+  .header-kargo {
+    background: linear-gradient(135deg, #b35c15 0%, #da6d28 100%);
+    box-shadow: 0 1px 8px rgba(218, 109, 40, 0.25);
+  }
+  .header-sealed {
+    background: linear-gradient(135deg, #8b2252 0%, #c2185b 100%);
+    box-shadow: 0 1px 8px rgba(194, 24, 91, 0.3);
+  }
   .header-tooling {
     background: linear-gradient(135deg, #1a7f37 0%, #2ea043 100%);
     box-shadow: 0 1px 8px rgba(46, 160, 67, 0.3);
   }
-  .header-kargo {
-    background: linear-gradient(135deg, #b35c15 0%, #da6d28 100%);
-    box-shadow: 0 1px 8px rgba(218, 109, 40, 0.25);
+  .header-rbac {
+    background: linear-gradient(135deg, #0d7377 0%, #14a3a8 100%);
+    box-shadow: 0 1px 8px rgba(20, 163, 168, 0.3);
   }
   .header-config {
     background: linear-gradient(135deg, #3d444d 0%, #565e68 100%);
@@ -107,7 +120,7 @@
 
   .item-name {
     font-family: 'JetBrains Mono', 'SF Mono', monospace;
-    font-size: 12.5px;
+    font-size: 12px;
     font-weight: 600;
     color: #e6edf3;
     margin-bottom: 5px;
@@ -119,7 +132,7 @@
   }
 
   .item-desc {
-    font-size: 11.5px;
+    font-size: 11px;
     color: #7d8590;
     line-height: 1.45;
   }
@@ -127,8 +140,8 @@
   /* ── Tags (pill badges) ── */
   .tag {
     font-family: 'Inter', sans-serif;
-    font-size: 9.5px;
-    padding: 2px 8px;
+    font-size: 9px;
+    padding: 2px 7px;
     border-radius: 12px;
     font-weight: 600;
     letter-spacing: 0.2px;
@@ -139,6 +152,9 @@
   .tag-add-env  { background: rgba(188, 140, 255, 0.12); color: #d2a8ff; border: 1px solid rgba(137, 87, 229, 0.4); }
   .tag-add-app  { background: rgba(88, 166, 255, 0.12); color: #79c0ff; border: 1px solid rgba(31, 111, 235, 0.4); }
   .tag-add-proj { background: rgba(240, 136, 62, 0.12); color: #ffa657; border: 1px solid rgba(218, 109, 40, 0.4); }
+  .tag-secret   { background: rgba(194, 24, 91, 0.12); color: #f48fb1; border: 1px solid rgba(194, 24, 91, 0.4); }
+  .tag-user     { background: rgba(20, 163, 168, 0.12); color: #4dd0e1; border: 1px solid rgba(20, 163, 168, 0.4); }
+  .tag-optional { background: rgba(139, 148, 158, 0.1); color: #8b949e; border: 1px solid rgba(139, 148, 158, 0.3); }
 
   .tag-kind {
     font-family: 'JetBrains Mono', monospace;
@@ -169,20 +185,24 @@
     letter-spacing: 1.2px;
   }
 
+  .rel-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 24px;
+  }
+
   .rel-row {
     display: flex;
     align-items: center;
-    gap: 10px;
-    margin-bottom: 8px;
-    font-size: 11.5px;
+    gap: 8px;
+    font-size: 11px;
   }
-  .rel-row:last-child { margin-bottom: 0; }
 
   .rel-box {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 10.5px;
+    font-size: 10px;
     font-weight: 500;
-    padding: 3px 10px;
+    padding: 3px 8px;
     border-radius: 5px;
     white-space: nowrap;
   }
@@ -190,31 +210,34 @@
   .rel-arrow {
     color: #484f58;
     font-weight: 600;
-    font-size: 13px;
+    font-size: 12px;
   }
 
   .rel-desc {
     color: #7d8590;
-    font-size: 11px;
+    font-size: 10.5px;
   }
 
   .rel-k8s    { background: rgba(31, 111, 235, 0.12); color: #58a6ff; border: 1px solid rgba(31, 111, 235, 0.35); }
   .rel-argocd { background: rgba(137, 87, 229, 0.12); color: #d2a8ff; border: 1px solid rgba(137, 87, 229, 0.35); }
+  .rel-kargo  { background: rgba(218, 109, 40, 0.12); color: #ffa657; border: 1px solid rgba(218, 109, 40, 0.35); }
+  .rel-sealed { background: rgba(194, 24, 91, 0.12); color: #f48fb1; border: 1px solid rgba(194, 24, 91, 0.35); }
   .rel-conf   { background: rgba(110, 118, 129, 0.12); color: #8b949e; border: 1px solid rgba(110, 118, 129, 0.35); }
 
   /* ── Legend ── */
   .legend {
     display: flex;
-    gap: 20px;
+    gap: 16px;
     justify-content: center;
     padding: 6px 0 2px;
+    flex-wrap: wrap;
   }
 
   .legend-item {
     display: flex;
     align-items: center;
     gap: 6px;
-    font-size: 11px;
+    font-size: 10.5px;
     color: #7d8590;
   }
 
@@ -226,7 +249,7 @@
 
   .config-val {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 11.5px;
+    font-size: 11px;
     color: #d2a8ff;
     font-weight: 500;
   }
@@ -235,22 +258,26 @@
 <body>
 <div class="root">
 
-  <!-- Top row: k8s/ and argocd/ -->
-  <div class="top-row">
+  <!-- Row 1: k8s/ and argocd/ -->
+  <div class="row-2col">
     <div class="section">
       <div class="section-header header-k8s">What Gets Deployed <span class="path">&mdash; k8s/</span></div>
       <div class="section-body">
         <div class="item">
           <div class="item-name">namespaces/ <span class="tag tag-kind">Namespace</span> <span class="tag tag-add-env">add-env</span></div>
-          <div class="item-desc">One YAML per environment (dev.yaml, staging.yaml, prod.yaml). Defines the Kubernetes namespace resource.</div>
+          <div class="item-desc">One YAML per environment (dev.yaml, staging.yaml). Defines the Kubernetes namespace.</div>
         </div>
         <div class="item">
           <div class="item-name">apps/&lt;app&gt;/base/ <span class="tag tag-kind">Kustomization</span> <span class="tag tag-add-app">add-app</span></div>
-          <div class="item-desc">Kustomize base shared across all environments. References deployment.yaml and service.yaml.</div>
+          <div class="item-desc">Kustomize base shared across environments. References deployment.yaml and service.yaml.</div>
         </div>
         <div class="item">
           <div class="item-name">apps/&lt;app&gt;/overlays/&lt;env&gt;/ <span class="tag tag-kind">Kustomization</span> <span class="tag tag-add-env">add-env</span> <span class="tag tag-add-app">add-app</span></div>
-          <div class="item-desc">Environment-specific Kustomize overlay. Sets image tags, replicas, and env vars. References ../base.</div>
+          <div class="item-desc">Environment overlay. Sets image tags, replicas, env vars. Sealed secrets live here too.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">platform/ <span class="tag tag-kind">RBAC</span> <span class="tag tag-user">user-ctl</span></div>
+          <div class="item-desc">ClusterRoles, Roles, and Bindings generated by user-ctl.sh add-role.</div>
         </div>
       </div>
     </div>
@@ -260,62 +287,124 @@
       <div class="section-body">
         <div class="item">
           <div class="item-name">parent-app.yaml <span class="tag tag-kind">Application</span> <span class="tag tag-init">init</span></div>
-          <div class="item-desc">App-of-apps root Application. Watches argocd/apps/ and auto-syncs all Application manifests found there.</div>
-        </div>
-        <div class="item">
-          <div class="item-name">apps/projects.yaml <span class="tag tag-kind">Application</span> <span class="tag tag-init">init</span></div>
-          <div class="item-desc">Dedicated Application that watches argocd/projects/ and syncs AppProject CRDs.</div>
+          <div class="item-desc">App-of-apps root. Watches argocd/apps/ and syncs all Application manifests.</div>
         </div>
         <div class="item">
           <div class="item-name">apps/&lt;app&gt;-&lt;env&gt;.yaml <span class="tag tag-kind">Application</span> <span class="tag tag-add-env">add-env</span> <span class="tag tag-add-app">add-app</span></div>
-          <div class="item-desc">One ArgoCD Application per app+env combo. Points to the matching Kustomize overlay. Deploys to the env namespace.</div>
+          <div class="item-desc">One Application per app+env. Points to the Kustomize overlay, deploys to env namespace.</div>
         </div>
         <div class="item">
           <div class="item-name">projects/&lt;name&gt;.yaml <span class="tag tag-kind">AppProject</span> <span class="tag tag-add-proj">add-project</span></div>
-          <div class="item-desc">AppProject resources for RBAC. Controls which repos and namespaces apps can access.</div>
+          <div class="item-desc">AppProject for RBAC. Controls which repos and namespaces apps can access.</div>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Bottom row: tooling, kargo, config -->
-  <div class="bottom-row">
+  <!-- Row 2: kargo/ and sealed secrets -->
+  <div class="row-2col">
     <div class="section">
-      <div class="section-header header-tooling">Generators</div>
+      <div class="section-header header-kargo">Progressive Delivery <span class="path">&mdash; kargo/</span> <span class="tag tag-optional">optional</span></div>
+      <div class="section-body">
+        <div class="item">
+          <div class="item-name">promotion-order.txt <span class="tag tag-init">init</span></div>
+          <div class="item-desc">Linear pipeline definition. One env per line (default: dev, staging, production).</div>
+        </div>
+        <div class="item">
+          <div class="item-name">&lt;app&gt;/warehouse.yaml <span class="tag tag-kind">Warehouse</span> <span class="tag tag-add-app">add-app</span></div>
+          <div class="item-desc">Watches container registry for new image tags. One per app.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">&lt;app&gt;/&lt;env&gt;-stage.yaml <span class="tag tag-kind">Stage</span> <span class="tag tag-add-env">add-env</span> <span class="tag tag-add-app">add-app</span></div>
+          <div class="item-desc">Promotion stage. Updates overlay image tag, commits, triggers ArgoCD sync.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header header-sealed">Secrets <span class="path">&mdash; sealed secrets</span></div>
+      <div class="section-body">
+        <div class="item">
+          <div class="item-name">.sealed-secrets-cert.pem <span class="tag tag-secret">secret-ctl init</span></div>
+          <div class="item-desc">Public cert for encrypting secrets. Committed to repo, safe to share.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">overlays/&lt;env&gt;/sealed-secret.yaml <span class="tag tag-kind">SealedSecret</span> <span class="tag tag-secret">secret-ctl add</span></div>
+          <div class="item-desc">Encrypted secret per app/env. Decrypted in-cluster by the Sealed Secrets controller.</div>
+        </div>
+        <div class="item">
+          <div class="item-name">.sealed-secrets-key.json <span class="tag tag-kind">gitignored</span></div>
+          <div class="item-desc">Private key backup. Never committed. Required for disaster recovery only.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 3: tooling scripts -->
+  <div class="row-4col">
+    <div class="section">
+      <div class="section-header header-tooling">Repo Structure</div>
       <div class="section-body">
         <div class="item">
           <div class="item-name">infra-ctl.sh</div>
-          <div class="item-desc">Manages repo structure. Commands: init, add-app, add-env, add-project, edit-project.</div>
+          <div class="item-desc">init, add-app, add-env, add-project, enable-kargo</div>
         </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header header-tooling">Cluster</div>
+      <div class="section-body">
         <div class="item">
           <div class="item-name">cluster-ctl.sh</div>
-          <div class="item-desc">Manages local k3d cluster. Commands: init-cluster, delete-cluster, status.</div>
-        </div>
-        <div class="item">
-          <div class="item-name">templates/</div>
-          <div class="item-desc">{{PLACEHOLDER}} templates rendered by bash parameter expansion. Mirrors the output directory structure.</div>
+          <div class="item-desc">init-cluster, delete-cluster, upgrade-argocd, upgrade-kargo, status</div>
         </div>
       </div>
     </div>
 
     <div class="section">
-      <div class="section-header header-kargo">Progressive Delivery <span class="path">&mdash; kargo/</span></div>
+      <div class="section-header header-tooling">Secrets</div>
       <div class="section-body">
         <div class="item">
-          <div class="item-name">Reserved</div>
-          <div class="item-desc">Placeholder for future Kargo integration. Currently empty; will contain promotion policies and stages.</div>
+          <div class="item-name">secret-ctl.sh</div>
+          <div class="item-desc">init, add, backup-key, restore-key</div>
         </div>
       </div>
     </div>
 
     <div class="section">
-      <div class="section-header header-config">Config</div>
+      <div class="section-header header-tooling">Users &amp; RBAC</div>
       <div class="section-body">
         <div class="item">
-          <div class="item-name">.infra-ctl.conf <span class="tag tag-init">init</span></div>
+          <div class="item-name">user-ctl.sh</div>
+          <div class="item-desc">add-role, add, add-sa, remove, list</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Row 4: config -->
+  <div class="row-2col">
+    <div class="section">
+      <div class="section-header header-config">Config <span class="path">&mdash; .infra-ctl.conf</span></div>
+      <div class="section-body">
+        <div class="item">
           <div class="item-desc">
-            <span class="config-val">REPO_URL</span> / <span class="config-val">REPO_OWNER</span><br>
-            Stored at repo root. Sourced by bash for template rendering. Tracked in git.
+            <span class="config-val">REPO_URL</span> &mdash; Git repo for ArgoCD Application manifests<br>
+            <span class="config-val">REPO_OWNER</span> &mdash; GitHub owner for image defaults<br>
+            <span class="config-val">KARGO_ENABLED</span> &mdash; Enable Kargo resource generation (optional)
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header header-config">Helm Values <span class="path">&mdash; helm/argocd-values.yaml</span></div>
+      <div class="section-body">
+        <div class="item">
+          <div class="item-desc">
+            <span class="config-val">configs.cm</span> &mdash; ArgoCD accounts (managed by user-ctl)<br>
+            <span class="config-val">configs.rbac.policy.csv</span> &mdash; Casbin policy (managed by user-ctl)
           </div>
         </div>
       </div>
@@ -325,44 +414,54 @@
   <!-- Relationships -->
   <div class="relationships">
     <div class="rel-title">Relationships</div>
-    <div class="rel-row">
-      <span class="rel-box rel-argocd">parent-app.yaml</span>
-      <span class="rel-arrow">&rarr;</span>
-      <span class="rel-box rel-argocd">argocd/apps/*</span>
-      <span class="rel-desc">watches directory, auto-syncs all Applications</span>
-    </div>
-    <div class="rel-row">
-      <span class="rel-box rel-argocd">apps/projects.yaml</span>
-      <span class="rel-arrow">&rarr;</span>
-      <span class="rel-box rel-argocd">argocd/projects/*</span>
-      <span class="rel-desc">watches directory, syncs AppProject CRDs</span>
-    </div>
-    <div class="rel-row">
-      <span class="rel-box rel-argocd">&lt;app&gt;-&lt;env&gt;.yaml</span>
-      <span class="rel-arrow">&rarr;</span>
-      <span class="rel-box rel-k8s">k8s/apps/&lt;app&gt;/overlays/&lt;env&gt;/</span>
-      <span class="rel-desc">source path for Kustomize build</span>
-    </div>
-    <div class="rel-row">
-      <span class="rel-box rel-k8s">overlays/&lt;env&gt;/kustomization.yaml</span>
-      <span class="rel-arrow">&rarr;</span>
-      <span class="rel-box rel-k8s">../../base/</span>
-      <span class="rel-desc">inherits and patches the base resources</span>
-    </div>
-    <div class="rel-row">
-      <span class="rel-box rel-argocd">&lt;app&gt;-&lt;env&gt;.yaml</span>
-      <span class="rel-arrow">&rarr;</span>
-      <span class="rel-box rel-argocd">projects/&lt;name&gt;.yaml</span>
-      <span class="rel-desc">spec.project references an AppProject for RBAC</span>
+    <div class="rel-grid">
+      <div class="rel-row">
+        <span class="rel-box rel-argocd">parent-app.yaml</span>
+        <span class="rel-arrow">&rarr;</span>
+        <span class="rel-box rel-argocd">argocd/apps/*</span>
+        <span class="rel-desc">watches &amp; syncs Applications</span>
+      </div>
+      <div class="rel-row">
+        <span class="rel-box rel-argocd">&lt;app&gt;-&lt;env&gt;.yaml</span>
+        <span class="rel-arrow">&rarr;</span>
+        <span class="rel-box rel-k8s">overlays/&lt;env&gt;/</span>
+        <span class="rel-desc">Kustomize source path</span>
+      </div>
+      <div class="rel-row">
+        <span class="rel-box rel-kargo">Warehouse</span>
+        <span class="rel-arrow">&rarr;</span>
+        <span class="rel-box rel-conf">ghcr.io registry</span>
+        <span class="rel-desc">watches for new image tags</span>
+      </div>
+      <div class="rel-row">
+        <span class="rel-box rel-kargo">Stage</span>
+        <span class="rel-arrow">&rarr;</span>
+        <span class="rel-box rel-k8s">overlays/&lt;env&gt;/</span>
+        <span class="rel-desc">updates image tag via git commit</span>
+      </div>
+      <div class="rel-row">
+        <span class="rel-box rel-kargo">Stage</span>
+        <span class="rel-arrow">&rarr;</span>
+        <span class="rel-box rel-argocd">&lt;app&gt;-&lt;env&gt;.yaml</span>
+        <span class="rel-desc">triggers ArgoCD sync</span>
+      </div>
+      <div class="rel-row">
+        <span class="rel-box rel-sealed">SealedSecret</span>
+        <span class="rel-arrow">&rarr;</span>
+        <span class="rel-box rel-k8s">Secret (in-cluster)</span>
+        <span class="rel-desc">decrypted by controller</span>
+      </div>
     </div>
   </div>
 
   <!-- Legend -->
   <div class="legend">
-    <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div> Created by init</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#d2a8ff"></div> Created by add-env</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#79c0ff"></div> Created by add-app</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#ffa657"></div> Created by add-project</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#3fb950"></div> init</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#d2a8ff"></div> add-env</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#79c0ff"></div> add-app</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#ffa657"></div> add-project</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f48fb1"></div> secret-ctl</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#4dd0e1"></div> user-ctl</div>
   </div>
 
 </div>
