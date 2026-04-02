@@ -899,6 +899,214 @@ cmd_remove_app() {
     print_removed "${removed_files[@]}"
 }
 
+cmd_remove_env() {
+    require_gum
+
+    if [[ $# -eq 0 ]]; then
+        print_error "Usage: infra-ctl.sh remove-env <env-name>"
+        exit 1
+    fi
+
+    local env_name="$1"
+    validate_k8s_name "$env_name" "Environment name"
+    load_conf
+
+    # Guard: env must exist
+    local ns_file="${TARGET_DIR}/k8s/namespaces/${env_name}.yaml"
+    if [[ ! -f "$ns_file" ]]; then
+        print_error "Environment '${env_name}' not found at ${ns_file}"
+        exit 1
+    fi
+
+    # Detect apps for overlay/manifest cleanup
+    local apps=()
+    while IFS= read -r app; do
+        apps+=("$app")
+    done < <(detect_apps)
+
+    # Build list of files/dirs to remove
+    local to_remove=()
+
+    # Namespace file
+    to_remove+=("$ns_file")
+
+    # Per-app overlay dirs and ArgoCD manifests
+    local app
+    for app in "${apps[@]}"; do
+        local overlay_dir="${TARGET_DIR}/k8s/apps/${app}/overlays/${env_name}"
+        [[ -d "$overlay_dir" ]] && to_remove+=("$overlay_dir")
+
+        local argo_app="${TARGET_DIR}/argocd/apps/${app}-${env_name}.yaml"
+        [[ -f "$argo_app" ]] && to_remove+=("$argo_app")
+    done
+
+    # Kargo: compute chain repair info before deletion
+    local kargo_repair=false
+    local downstream_env=""
+    local upstream_env=""
+    local kargo_stages_to_remove=()
+
+    if is_kargo_enabled; then
+        # Collect stage files to remove
+        for app in "${apps[@]}"; do
+            local stage_file="${TARGET_DIR}/kargo/${app}/${env_name}-stage.yaml"
+            [[ -f "$stage_file" ]] && kargo_stages_to_remove+=("$stage_file")
+        done
+
+        # Read promotion order and find neighbors
+        if [[ -f "${TARGET_DIR}/kargo/promotion-order.txt" ]]; then
+            read_promotion_order
+
+            local idx=-1
+            local i
+            for i in "${!PROMOTION_ORDER[@]}"; do
+                if [[ "${PROMOTION_ORDER[$i]}" == "$env_name" ]]; then
+                    idx=$i
+                    break
+                fi
+            done
+
+            if [[ $idx -ge 0 ]]; then
+                # Find upstream (env before the removed one)
+                if [[ $idx -gt 0 ]]; then
+                    upstream_env="${PROMOTION_ORDER[$((idx - 1))]}"
+                fi
+
+                # Find downstream (env after the removed one)
+                if [[ $((idx + 1)) -lt ${#PROMOTION_ORDER[@]} ]]; then
+                    downstream_env="${PROMOTION_ORDER[$((idx + 1))]}"
+                    kargo_repair=true
+                fi
+            fi
+        fi
+    fi
+
+    # Preview
+    print_header "Remove Environment: ${env_name}"
+    echo ""
+    local item
+    for item in "${to_remove[@]}"; do
+        if [[ -d "$item" ]]; then
+            print_info "Delete dir:  ${item}"
+        else
+            print_info "Delete file: ${item}"
+        fi
+    done
+    for item in "${kargo_stages_to_remove[@]}"; do
+        print_info "Delete file: ${item}"
+    done
+
+    if [[ "$kargo_repair" == true ]]; then
+        echo ""
+        print_info "Kargo chain repair:"
+        if [[ -z "$upstream_env" ]]; then
+            print_info "  ${downstream_env} stage will become first in chain (direct from warehouse)"
+        else
+            print_info "  ${downstream_env} stage will be re-linked to upstream: ${upstream_env}"
+        fi
+    fi
+
+    if is_kargo_enabled && [[ -f "${TARGET_DIR}/kargo/promotion-order.txt" ]]; then
+        print_info "Update: kargo/promotion-order.txt (remove '${env_name}')"
+    fi
+    echo ""
+
+    if ! gum confirm "Remove environment '${env_name}' and all its resources?"; then
+        print_warning "Aborted."
+        exit 0
+    fi
+
+    # Execute removal
+    local removed_files=()
+    for item in "${to_remove[@]}"; do
+        if [[ -d "$item" ]]; then
+            rm -rf "$item"
+        else
+            rm -f "$item"
+        fi
+        removed_files+=("$item")
+    done
+
+    for item in "${kargo_stages_to_remove[@]}"; do
+        rm -f "$item"
+        removed_files+=("$item")
+    done
+
+    # Kargo: update promotion-order.txt and repair chain
+    local regenerated_files=()
+    if is_kargo_enabled && [[ -f "${TARGET_DIR}/kargo/promotion-order.txt" ]]; then
+        # Remove env from promotion-order.txt
+        local order_file="${TARGET_DIR}/kargo/promotion-order.txt"
+        local tmp
+        tmp="$(grep -v "^${env_name}$" "$order_file")"
+        printf '%s\n' "$tmp" >"$order_file"
+
+        # Repair downstream stages
+        if [[ "$kargo_repair" == true ]]; then
+            for app in "${apps[@]}"; do
+                local kargo_app_dir="${TARGET_DIR}/kargo/${app}"
+                [[ -d "$kargo_app_dir" ]] || continue
+
+                local downstream_stage="${kargo_app_dir}/${downstream_env}-stage.yaml"
+                [[ -f "$downstream_stage" ]] || continue
+
+                # Read image repo from warehouse
+                local image_repo
+                image_repo="$(grep 'repoURL:' "${kargo_app_dir}/warehouse.yaml" 2>/dev/null \
+                    | head -1 | sed 's/.*repoURL:\s*//' | xargs)" || image_repo="ghcr.io/${REPO_OWNER}/${app}"
+
+                if [[ -z "$upstream_env" ]]; then
+                    # Downstream becomes first in chain: direct from warehouse
+                    render_template \
+                        "${TEMPLATE_DIR}/kargo/stage-direct.yaml" \
+                        "$downstream_stage" \
+                        "APP_NAME=${app}" \
+                        "ENV=${downstream_env}" \
+                        "IMAGE_REPO=${image_repo}" \
+                        "REPO_URL=${REPO_URL}"
+                else
+                    # Re-link downstream to new upstream
+                    render_template \
+                        "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
+                        "$downstream_stage" \
+                        "APP_NAME=${app}" \
+                        "ENV=${downstream_env}" \
+                        "IMAGE_REPO=${image_repo}" \
+                        "UPSTREAM_STAGE=${app}-${upstream_env}" \
+                        "REPO_URL=${REPO_URL}"
+                fi
+                regenerated_files+=("$downstream_stage")
+            done
+        fi
+    fi
+
+    # Restore .gitkeep if k8s/namespaces/ is now empty
+    local ns_dir="${TARGET_DIR}/k8s/namespaces"
+    if [[ -d "$ns_dir" ]]; then
+        local has_yaml=false
+        local f
+        for f in "$ns_dir"/*.yaml; do
+            [[ -f "$f" ]] && has_yaml=true && break
+        done
+        if [[ "$has_yaml" == false ]]; then
+            touch "${ns_dir}/.gitkeep"
+            removed_files+=("(restored ${ns_dir}/.gitkeep)")
+        fi
+    fi
+
+    print_removed "${removed_files[@]}"
+
+    if [[ ${#regenerated_files[@]} -gt 0 ]]; then
+        echo ""
+        print_header "Regenerated (Kargo chain repair):"
+        local f
+        for f in "${regenerated_files[@]}"; do
+            print_success "$f"
+        done
+        echo ""
+    fi
+}
+
 # --- Usage ---
 
 cmd_preflight_check() {
