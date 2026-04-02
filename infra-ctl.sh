@@ -558,6 +558,16 @@ cmd_add_project() {
         destinations_block+="      server: https://kubernetes.default.svc"
     fi
 
+    # Prompt for cluster-scoped resource access
+    local cluster_resources_block
+    if gum confirm "Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)"; then
+        cluster_resources_block="    - group: '*'"$'\n'
+        cluster_resources_block+="      kind: '*'"
+    else
+        cluster_resources_block="    - group: ''"$'\n'
+        cluster_resources_block+="      kind: Namespace"
+    fi
+
     # Render template
     render_template \
         "${TEMPLATE_DIR}/argocd/appproject.yaml" \
@@ -565,7 +575,8 @@ cmd_add_project() {
         "PROJECT_NAME=${project_name}" \
         "PROJECT_DESCRIPTION=${description}" \
         "SOURCE_REPOS=${source_repos_block}" \
-        "DESTINATIONS=${destinations_block}"
+        "DESTINATIONS=${destinations_block}" \
+        "CLUSTER_RESOURCES=${cluster_resources_block}"
 
     # Remove .gitkeep from projects dir if it exists
     rm -f "${TARGET_DIR}/argocd/projects/.gitkeep"
@@ -672,6 +683,25 @@ cmd_edit_project() {
         destinations_block+="      server: https://kubernetes.default.svc"
     fi
 
+    # Prompt for cluster-scoped resource access
+    local current_cluster_restricted=false
+    if ! grep -q "clusterResourceWhitelist:" "$project_file" || ! grep -A1 "clusterResourceWhitelist:" "$project_file" | grep -q "group: '\*'"; then
+        current_cluster_restricted=true
+    fi
+
+    local cluster_resources_block
+    confirm_msg="Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)"
+    if [[ "$current_cluster_restricted" == true ]]; then
+        confirm_msg="Allow full cluster-scoped resource access? (currently restricted)"
+    fi
+    if gum confirm "$confirm_msg"; then
+        cluster_resources_block="    - group: '*'"$'\n'
+        cluster_resources_block+="      kind: '*'"
+    else
+        cluster_resources_block="    - group: ''"$'\n'
+        cluster_resources_block+="      kind: Namespace"
+    fi
+
     # Regenerate from template
     render_template \
         "${TEMPLATE_DIR}/argocd/appproject.yaml" \
@@ -679,7 +709,8 @@ cmd_edit_project() {
         "PROJECT_NAME=${project_name}" \
         "PROJECT_DESCRIPTION=${description}" \
         "SOURCE_REPOS=${source_repos_block}" \
-        "DESTINATIONS=${destinations_block}"
+        "DESTINATIONS=${destinations_block}" \
+        "CLUSTER_RESOURCES=${cluster_resources_block}"
 
     print_success "Project '${project_name}' updated."
     echo ""

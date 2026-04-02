@@ -10,5 +10,4 @@ spec:
   destinations:
 {{DESTINATIONS}}
   clusterResourceWhitelist:
-    - group: '*'
-      kind: '*'
+{{CLUSTER_RESOURCES}}
