@@ -222,7 +222,7 @@ Kubernetes-level RBAC (restricting what humans can do with `kubectl`) is a separ
 
 This walkthrough deploys a two-service e-commerce app (SvelteKit frontend + Fastify backend) with PostgreSQL, from zero to a running local cluster.
 
-The application lives at [github.com/remerle/k8s-practice-app](https://github.com/remerle/k8s-practice-app). CI workflows build and push images to `ghcr.io/remerle/k8s-practice-frontend` and `ghcr.io/remerle/k8s-practice-backend`, tagged as `YYYY.MM.DD.<buildNum>`.
+The application lives at [github.com/remerle/k8s-practice-app](https://github.com/remerle/k8s-practice-app). CI workflows build and push images to `ghcr.io/remerle/k8s-practice-frontend` and `ghcr.io/remerle/k8s-practice-backend`, tagged as `YY.M.<buildNum>`.
 
 ### 1. Create the cluster and initialize the repo
 
@@ -287,7 +287,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/remerle/k8s-practice-backend:2026.04.02.9
+          image: ghcr.io/remerle/k8s-practice-backend:26.4.9
           ports:
             - containerPort: 3000
           env:
@@ -306,7 +306,7 @@ spec:
               port: 3000
 ```
 
-`DATABASE_URL` contains credentials, so it goes in a Secret (see step 5). The image tag should match a version from the CI workflow (format: `YYYY.MM.DD.<buildNum>`). For admin features, you'd also add `FIREBASE_PROJECT_ID` and `CORS_ORIGIN` via a ConfigMap, but they're not needed to get the storefront running. Product image uploads require a PersistentVolumeClaim mounted at `/data/images`; without it, uploaded images are lost on pod restart.
+`DATABASE_URL` contains credentials, so it goes in a Secret (see step 5). The image tag should match a version from the CI workflow (format: `YY.M.<buildNum>`). For admin features, you'd also add `FIREBASE_PROJECT_ID` and `CORS_ORIGIN` via a ConfigMap, but they're not needed to get the storefront running. Product image uploads require a PersistentVolumeClaim mounted at `/data/images`; without it, uploaded images are lost on pod restart.
 
 **`k8s/apps/frontend/base/deployment.yaml`:**
 
@@ -328,7 +328,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: ghcr.io/remerle/k8s-practice-frontend:2026.04.02.8
+          image: ghcr.io/remerle/k8s-practice-frontend:26.4.8
           ports:
             - containerPort: 3000
           env:
