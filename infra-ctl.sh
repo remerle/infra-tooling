@@ -816,6 +816,89 @@ PROMOEOF
     print_summary "${created_files[@]}"
 }
 
+cmd_remove_app() {
+    require_gum
+
+    if [[ $# -eq 0 ]]; then
+        print_error "Usage: infra-ctl.sh remove-app <app-name>"
+        exit 1
+    fi
+
+    local app_name="$1"
+    validate_k8s_name "$app_name" "App name"
+    load_conf
+
+    # Guard: app must exist
+    local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
+    if [[ ! -d "$app_dir" ]]; then
+        print_error "Application '${app_name}' not found at ${app_dir}"
+        exit 1
+    fi
+
+    # Detect envs for ArgoCD manifest cleanup
+    local envs=()
+    while IFS= read -r env; do
+        envs+=("$env")
+    done < <(detect_envs)
+
+    # Build list of files/dirs to remove
+    local to_remove=()
+
+    # App directory (base + all overlays)
+    to_remove+=("${app_dir}")
+
+    # ArgoCD Application manifests
+    local env
+    for env in "${envs[@]}"; do
+        local argo_app="${TARGET_DIR}/argocd/apps/${app_name}-${env}.yaml"
+        [[ -f "$argo_app" ]] && to_remove+=("$argo_app")
+    done
+
+    # Kargo resources
+    local kargo_app_dir="${TARGET_DIR}/kargo/${app_name}"
+    if is_kargo_enabled && [[ -d "$kargo_app_dir" ]]; then
+        to_remove+=("$kargo_app_dir")
+    fi
+
+    # Preview
+    print_header "Remove Application: ${app_name}"
+    echo ""
+    local item
+    for item in "${to_remove[@]}"; do
+        if [[ -d "$item" ]]; then
+            print_info "Delete dir:  ${item}"
+        else
+            print_info "Delete file: ${item}"
+        fi
+    done
+    echo ""
+
+    if ! gum confirm "Remove application '${app_name}' and all its resources?"; then
+        print_warning "Aborted."
+        exit 0
+    fi
+
+    # Execute removal
+    local removed_files=()
+    for item in "${to_remove[@]}"; do
+        if [[ -d "$item" ]]; then
+            rm -rf "$item"
+        else
+            rm -f "$item"
+        fi
+        removed_files+=("$item")
+    done
+
+    # Restore .gitkeep if k8s/apps/ is now empty
+    local apps_dir="${TARGET_DIR}/k8s/apps"
+    if [[ -d "$apps_dir" ]] && ! ls -d "$apps_dir"/*/ &>/dev/null; then
+        touch "${apps_dir}/.gitkeep"
+        removed_files+=("(restored ${apps_dir}/.gitkeep)")
+    fi
+
+    print_removed "${removed_files[@]}"
+}
+
 # --- Usage ---
 
 cmd_preflight_check() {
