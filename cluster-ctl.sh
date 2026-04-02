@@ -477,15 +477,35 @@ cmd_add_repo_creds() {
 cmd_add_kargo_creds() {
     require_gum
     require_cmd "kubectl" "brew install kubectl"
+    load_conf
 
-    if [[ $# -eq 0 ]]; then
-        print_error "Usage: cluster-ctl.sh add-kargo-creds <app>"
-        exit 1
+    local app_name=""
+
+    if [[ $# -gt 0 ]]; then
+        app_name="$1"
+    else
+        # Detect apps with Kargo resources and let user pick
+        local kargo_apps=()
+        local dir
+        for dir in "${TARGET_DIR}"/kargo/*/; do
+            [[ -d "$dir" ]] || continue
+            kargo_apps+=("$(basename "$dir")")
+        done
+
+        if [[ ${#kargo_apps[@]} -eq 0 ]]; then
+            print_error "No Kargo apps found in kargo/."
+            print_info "Kargo resources are created by 'infra-ctl.sh add-app' when Kargo is enabled."
+            exit 1
+        fi
+
+        if [[ ${#kargo_apps[@]} -eq 1 ]]; then
+            app_name="${kargo_apps[0]}"
+        else
+            app_name="$(printf '%s\n' "${kargo_apps[@]}" | gum choose --header "Select app:")"
+        fi
     fi
 
-    local app_name="$1"
     validate_k8s_name "$app_name" "App name"
-    load_conf
 
     print_header "Configure Kargo Credentials: ${app_name}"
     echo ""
