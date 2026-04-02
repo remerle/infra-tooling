@@ -9,3 +9,11 @@ configs:
   rbac:
     policy.default: role:readonly
     policy.csv: ""
+  params:
+    # Run server without TLS so the ingress controller handles termination
+    server.insecure: true
+
+server:
+  ingress:
+    enabled: true
+    hostname: argocd.localhost

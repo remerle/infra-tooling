@@ -320,15 +320,14 @@
     </div>
   </div>
 
-  <!-- Access URLs -->
+  <!-- Access URL -->
   <div class="access-bar">
     <div class="access-item">
       <span class="access-label">ArgoCD UI:</span>
-      <span class="access-url">https://localhost:8080</span>
+      <span class="access-url">http://argocd.localhost</span>
     </div>
     <div class="access-item">
-      <span class="access-label">Port-forward:</span>
-      <span class="access-url">kubectl port-forward svc/argocd-server -n argocd 8080:443</span>
+      <span class="access-label">via Traefik Ingress (k3d built-in)</span>
     </div>
   </div>
 

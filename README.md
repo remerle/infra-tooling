@@ -358,6 +358,29 @@ spec:
 
 `API_URL` tells the frontend's server-side proxy where to forward API requests. The `backend` hostname resolves via the Kubernetes Service created by `add-app`. Firebase config is only needed for admin auth. The image tag in the base manifest is a starting point; per-environment overlays control which version actually runs (via the `images` field in `kustomization.yaml`).
 
+**`k8s/apps/frontend/base/ingress.yaml`:**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: frontend
+spec:
+  rules:
+    - host: app.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 3000
+```
+
+This makes the frontend accessible at `http://app.localhost` via k3d's built-in Traefik ingress controller (requires ports 80/443 exposed during `cluster-ctl.sh init-cluster`).
+
 **`k8s/apps/postgres/base/statefulset.yaml`:**
 
 ```yaml
@@ -454,9 +477,8 @@ kubectl get applications -n argocd
 # Check running pods
 kubectl get pods -n dev
 
-# Port-forward to access the frontend
-kubectl port-forward svc/frontend -n dev 3000:3000
-# Open http://localhost:3000
+# Open the frontend (no port-forward needed)
+open http://app.localhost
 ```
 
 ### What you end up with
@@ -479,12 +501,9 @@ The `parent-app` Application is the entry point. It watches the `argocd/apps/` d
 
 When you push a change, ArgoCD detects the drift within its polling interval (default 3 minutes), re-renders the manifests via `kustomize build`, and applies the diff. Two policies enforce GitOps discipline: `selfHeal` reverts any manual `kubectl` edits back to match Git, and `prune` deletes resources that have been removed from the repo. Git is the single source of truth; the cluster converges to match it.
 
-To access the ArgoCD dashboard:
+ArgoCD is accessible at `http://argocd.localhost` (username: `admin`). Get the initial password with:
 
 ```bash
-kubectl port-forward svc/argocd-server -n argocd 8080:443
-# Open https://localhost:8080 (username: admin)
-# Get the password:
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
 ```
 
@@ -500,17 +519,14 @@ Each Stage promotion is a four-step process: clear the git worktree, update the 
 
 Kargo doesn't replace ArgoCD; it feeds it. Kargo writes to Git, ArgoCD reads from Git and deploys. They work together but can operate independently.
 
-To access the Kargo dashboard:
-
-```bash
-kubectl port-forward svc/kargo-api -n kargo 8443:443
-# Open https://localhost:8443
-```
+The Kargo dashboard is accessible at `http://kargo.localhost`.
 
 ### Local Access URLs
 
-| Service | URL | Port-forward command |
-|---------|-----|---------------------|
-| ArgoCD UI | https://localhost:8080 | `kubectl port-forward svc/argocd-server -n argocd 8080:443` |
-| Kargo UI | https://localhost:8443 | `kubectl port-forward svc/kargo-api -n kargo 8443:443` |
-| Frontend app | http://localhost:3000 | `kubectl port-forward svc/frontend -n dev 3000:3000` |
+All services are accessible via Ingress on `.localhost` domains (requires ports 80/443 exposed during `cluster-ctl.sh init-cluster`). No port-forwarding needed.
+
+| Service | URL | Notes |
+|---------|-----|-------|
+| ArgoCD UI | http://argocd.localhost | username: `admin`, password: see `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
+| Kargo UI | http://kargo.localhost | Ingress created by `cluster-ctl.sh` during Kargo install |
+| Frontend app | http://app.localhost | Requires Ingress in `k8s/apps/frontend/base/ingress.yaml` |

@@ -98,12 +98,9 @@ cmd_init_cluster() {
         print_success "ArgoCD installed via Helm."
 
         echo ""
+        print_info "ArgoCD UI: http://argocd.localhost (username: admin)"
         print_info "Get the admin password with:"
         print_info "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
-        echo ""
-        print_info "Port-forward the ArgoCD UI:"
-        print_info "  kubectl port-forward svc/argocd-server -n argocd 8080:443"
-        print_info "  Then open: https://localhost:8080 (username: admin)"
     fi
 
     # Prompt for Kargo installation
@@ -117,6 +114,30 @@ cmd_init_cluster() {
                 --wait --timeout 120s
 
         print_success "Kargo installed via Helm."
+
+        # Create Ingress for Kargo dashboard
+        kubectl apply -f - <<KARGOINGRESS
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kargo
+  namespace: kargo
+  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  rules:
+    - host: kargo.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kargo-api
+                port:
+                  number: 443
+KARGOINGRESS
+        print_success "Kargo Ingress created at kargo.localhost"
 
         # Update .infra-ctl.conf if it exists
         local conf_file="${SCRIPT_DIR}/.infra-ctl.conf"
@@ -132,9 +153,7 @@ cmd_init_cluster() {
         fi
 
         echo ""
-        print_info "Kargo dashboard:"
-        print_info "  kubectl port-forward svc/kargo-api -n kargo 8443:443"
-        print_info "  Then open: https://localhost:8443"
+        print_info "Kargo UI: http://kargo.localhost"
     fi
 
     # Summary
