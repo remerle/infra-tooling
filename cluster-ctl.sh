@@ -147,12 +147,13 @@ EOF
 
         local argocd_log
         argocd_log="$(mktemp)"
-        if gum spin --title "Installing ArgoCD via Helm (this may take a minute)..." -- \
-            helm install argocd argo/argo-cd \
+        local argocd_cmd="helm install argocd argo/argo-cd \
             --namespace argocd --create-namespace \
-            --values "$values_file" \
-            ${argocd_tls_args[@]+"${argocd_tls_args[@]}"} \
-            --wait --timeout 120s >"$argocd_log" 2>&1; then
+            --values \"$values_file\" \
+            ${argocd_tls_args[*]+${argocd_tls_args[*]}} \
+            --wait --timeout 120s >\"$argocd_log\" 2>&1"
+        if gum spin --title "Installing ArgoCD via Helm (this may take a minute)..." -- \
+            bash -c "$argocd_cmd"; then
             print_success "ArgoCD installed via Helm."
             argocd_installed=true
         else
@@ -172,10 +173,10 @@ EOF
         if ! kubectl get crd certificates.cert-manager.io &>/dev/null; then
             helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null 2>&1
             gum spin --title "Installing cert-manager (required by Kargo)..." -- \
-                helm install cert-manager jetstack/cert-manager \
+                bash -c "helm install cert-manager jetstack/cert-manager \
                 --namespace cert-manager --create-namespace \
                 --set crds.enabled=true \
-                --wait --timeout 120s
+                --wait --timeout 120s >/dev/null 2>&1"
             print_success "cert-manager installed."
             echo ""
         fi
@@ -194,14 +195,14 @@ EOF
         local kargo_log
         kargo_log="$(mktemp)"
         if gum spin --title "Installing Kargo via Helm (this may take a minute)..." -- \
-            helm install kargo \
+            bash -c "helm install kargo \
             oci://ghcr.io/akuity/kargo-charts/kargo \
             --namespace kargo --create-namespace \
-            --set "api.adminAccount.passwordHash=${kargo_hash}" \
-            --set "api.adminAccount.tokenSigningKey=${kargo_signing_key}" \
+            --set \"api.adminAccount.passwordHash=${kargo_hash}\" \
+            --set \"api.adminAccount.tokenSigningKey=${kargo_signing_key}\" \
             --set api.tls.enabled=false \
             --set api.tls.terminatedUpstream=true \
-            --wait --timeout 120s >"$kargo_log" 2>&1; then
+            --wait --timeout 120s >\"$kargo_log\" 2>&1"; then
             print_success "Kargo installed via Helm."
 
             # Create Ingress for Kargo dashboard
