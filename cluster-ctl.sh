@@ -35,7 +35,7 @@ cmd_init_cluster() {
 
     # Prompt for agent nodes
     local agents
-    agents="$(gum input --value "1" --prompt "Agent nodes: ")"
+    agents="$(gum input --value "3" --prompt "Agent nodes: ")"
 
     # Prompt for port exposure
     local port_args=()
