@@ -1127,6 +1127,8 @@ Commands:
   add-env <name>        Scaffold a new environment across all applications
   add-project <name>    Create an ArgoCD AppProject
   edit-project <name>   Modify an existing ArgoCD AppProject
+  remove-app <name>     Remove an application and all its resources
+  remove-env <name>     Remove an environment and all its resources
   enable-kargo          Enable Kargo and generate resources for existing apps
   preflight-check       Verify all required tools are installed
 
@@ -1155,6 +1157,8 @@ main() {
         add-env) cmd_add_env "$@" ;;
         add-project) cmd_add_project "$@" ;;
         edit-project) cmd_edit_project "$@" ;;
+        remove-app) cmd_remove_app "$@" ;;
+        remove-env) cmd_remove_env "$@" ;;
         enable-kargo) cmd_enable_kargo "$@" ;;
         preflight-check) cmd_preflight_check "$@" ;;
         -h | --help) usage ;;
