@@ -84,13 +84,11 @@ No external state store. The filesystem is the source of truth.
 
 ### k3d cluster architecture
 
-k3d runs k3s inside Docker containers. Each cluster has a server node (runs the API server), agent nodes (run application pods), and a load balancer container (`k3d-<name>-serverlb`) that forwards host ports into the cluster.
+k3d runs k3s inside Docker containers. Each cluster has a server node (runs the API server), agent nodes (run application pods), and a load balancer container (`k3d-<name>-serverlb`) that forwards host ports into the cluster. Port forwarding requires two layers: the serverlb nginx container bridges host ports to node ports, and the k3s built-in ServiceLB (klipper-lb) bridges node ports to Traefik pods via iptables DaemonSet pods. Both layers are required; disabling ServiceLB breaks ingress because the serverlb container sends traffic to node port 80/443 but nothing listens there without ServiceLB's iptables rules.
 
-Two non-obvious workarounds in `cluster-ctl.sh init-cluster`:
+One non-obvious workaround in `cluster-ctl.sh init-cluster`:
 
-1. **ServiceLB is disabled** (`--disable=servicelb`). k3d's own load balancer handles host port forwarding. The k3s built-in ServiceLB (klipper-lb) is redundant and deploys iptables DaemonSet pods on every node that are unnecessary in the k3d context.
-
-2. **KUBECONFIG is set on agent nodes** via `--env`. The k3d entrypoint script runs `until kubectl uncordon "$HOSTNAME"; do sleep 3; done` on every node. On agent nodes, no kubeconfig is set by default, so kubectl falls back to `localhost:8080`, which doesn't exist (only the server node runs the API server). Setting `KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig` on agent nodes lets the uncordon loop succeed and exit.
+**KUBECONFIG is set on agent nodes** via `--env`. The k3d entrypoint script runs `until kubectl uncordon "$HOSTNAME"; do sleep 3; done` on every node. On agent nodes, no kubeconfig is set by default, so kubectl falls back to `localhost:8080`, which doesn't exist (only the server node runs the API server). Setting `KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig` on agent nodes lets the uncordon loop succeed and exit.
 
 ### Why gum is required
 

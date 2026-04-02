@@ -265,7 +265,7 @@ k3d runs Kubernetes (k3s) inside Docker containers. Each cluster has several con
 
 - **Server node** (`k3d-<name>-server-0`) -- runs the k3s control plane (API server, scheduler, etcd). This is where `kubectl` commands are processed.
 - **Agent nodes** (`k3d-<name>-agent-N`) -- worker nodes that run your application pods. They communicate with the server node over the Docker network but do not run an API server themselves.
-- **Load balancer** (`k3d-<name>-serverlb`) -- a lightweight container that forwards host ports (80, 443) into the cluster for ingress traffic. This replaces the k3s built-in ServiceLB (klipper-lb), which is disabled because it runs redundant iptables pods on every node and causes errors on agent nodes.
+- **Load balancer** (`k3d-<name>-serverlb`) -- an nginx container that forwards host ports (80, 443) into the cluster. It sends traffic to every node, where the k3s built-in ServiceLB (klipper-lb) routes it to Traefik via iptables rules. Both layers are required: the serverlb bridges Docker-to-node, and ServiceLB bridges node-to-pod.
 
 The k3d entrypoint script on every node runs `kubectl uncordon` in a loop until the node is ready. On agent nodes, `kubectl` has no kubeconfig by default and falls back to `localhost:8080`, which doesn't exist (only server nodes run the API server). The cluster creation passes `KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig` to agent nodes so this loop can reach the API server through the internal cluster address.
 

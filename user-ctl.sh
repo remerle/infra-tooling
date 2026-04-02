@@ -343,7 +343,7 @@ cmd_add() {
     local csr_b64
     csr_b64="$(base64 <"$csr_file" | tr -d '\n')"
 
-    kubectl apply -f - <<EOF
+    gum spin --title "Submitting CSR to Kubernetes..." -- kubectl apply -f - <<EOF
 apiVersion: certificates.k8s.io/v1
 kind: CertificateSigningRequest
 metadata:
@@ -434,7 +434,8 @@ cmd_remove() {
     fi
 
     # Delete k8s CSR if it exists
-    kubectl delete csr "$username" --ignore-not-found 2>/dev/null || true
+    gum spin --title "Removing K8s CSR..." -- \
+        kubectl delete csr "$username" --ignore-not-found 2>/dev/null || true
     print_success "K8s CSR removed."
 
     # Warn about x509 certificate limitation
@@ -577,7 +578,7 @@ cmd_add_sa() {
     mkdir -p "$users_dir"
 
     # Create ServiceAccount
-    kubectl apply -f - <<EOF
+    gum spin --title "Creating ServiceAccount..." -- kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -808,21 +809,17 @@ cmd_remove_sa() {
         exit 0
     fi
 
-    # Delete ServiceAccount
-    kubectl delete serviceaccount "$sa_name" -n kube-system --ignore-not-found
-    print_success "ServiceAccount removed."
-
-    # Delete ClusterRoleBindings and RoleBindings owned by this SA
-    kubectl delete clusterrolebinding "$sa_name" --ignore-not-found 2>/dev/null || true
-    kubectl delete clusterrolebinding "${sa_name}-cluster-readonly" --ignore-not-found 2>/dev/null || true
-
-    # Delete namespace-scoped rolebindings
-    local ns
-    for ns in $(kubectl get rolebinding -A -l app.kubernetes.io/managed-by=user-ctl \
-        -o jsonpath="{range .items[?(@.metadata.name==\"${sa_name}\")]}{.metadata.namespace}{\"\\n\"}{end}" 2>/dev/null); do
-        kubectl delete rolebinding "$sa_name" -n "$ns" --ignore-not-found 2>/dev/null || true
-    done
-    print_success "RBAC bindings removed."
+    # Delete ServiceAccount and RBAC bindings
+    gum spin --title "Removing ServiceAccount and RBAC bindings..." -- bash -c "
+        kubectl delete serviceaccount \"${sa_name}\" -n kube-system --ignore-not-found
+        kubectl delete clusterrolebinding \"${sa_name}\" --ignore-not-found 2>/dev/null || true
+        kubectl delete clusterrolebinding \"${sa_name}-cluster-readonly\" --ignore-not-found 2>/dev/null || true
+        for ns in \$(kubectl get rolebinding -A -l app.kubernetes.io/managed-by=user-ctl \
+            -o jsonpath=\"{range .items[?(@.metadata.name==\\\"${sa_name}\\\")]}{.metadata.namespace}{\\\"\\\\n\\\"}{end}\" 2>/dev/null); do
+            kubectl delete rolebinding \"${sa_name}\" -n \"\$ns\" --ignore-not-found 2>/dev/null || true
+        done
+    "
+    print_success "ServiceAccount and RBAC bindings removed."
 
     # Remove ArgoCD account
     if account_exists "$sa_name" "$VALUES_FILE"; then

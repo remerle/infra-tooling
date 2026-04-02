@@ -44,9 +44,6 @@ cmd_init_cluster() {
     fi
 
     # Create cluster
-    # Disable the k3s built-in ServiceLB (klipper-lb). k3d provides its own
-    # load balancer container (k3d-<name>-serverlb) for host port forwarding.
-    #
     # Set KUBECONFIG on agent nodes so the k3d entrypoint's "kubectl uncordon"
     # loop can reach the API server. Without this, kubectl defaults to
     # localhost:8080, which doesn't exist on agent nodes, and spams errors.
@@ -56,7 +53,6 @@ cmd_init_cluster() {
     gum spin --title "Creating k3d cluster '${cluster_name}'..." -- \
         k3d cluster create "$cluster_name" \
         --agents "$agents" \
-        --k3s-arg "--disable=servicelb@server:*" \
         --env "KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig@agent:*" \
         ${port_args[@]+"${port_args[@]}"} \
         --wait
@@ -101,11 +97,12 @@ cmd_init_cluster() {
                 "*.localhost" "localhost" >/dev/null 2>&1
 
             # Create TLS secret and default TLSStore in kube-system so Traefik uses it for all routes
-            kubectl create secret tls localhost-tls \
-                --cert="${tls_dir}/tls.crt" --key="${tls_dir}/tls.key" \
-                --namespace kube-system --dry-run=client -o yaml | kubectl apply -f -
+            gum spin --title "Configuring TLS..." -- bash -c '
+                kubectl create secret tls localhost-tls \
+                    --cert="'"${tls_dir}"'/tls.crt" --key="'"${tls_dir}"'/tls.key" \
+                    --namespace kube-system --dry-run=client -o yaml | kubectl apply -f -
 
-            kubectl apply -f - <<'TLSSTORE'
+                kubectl apply -f - <<EOF
 apiVersion: traefik.io/v1alpha1
 kind: TLSStore
 metadata:
@@ -114,7 +111,8 @@ metadata:
 spec:
   defaultCertificate:
     secretName: localhost-tls
-TLSSTORE
+EOF
+            '
 
             rm -rf "$tls_dir"
             tls_enabled=true
@@ -147,19 +145,21 @@ TLSSTORE
             )
         fi
 
-        local argocd_output
-        if argocd_output="$(gum spin --title "Installing ArgoCD via Helm (this may take a minute)..." -- \
+        local argocd_log
+        argocd_log="$(mktemp)"
+        if gum spin --title "Installing ArgoCD via Helm (this may take a minute)..." -- \
             helm install argocd argo/argo-cd \
             --namespace argocd --create-namespace \
             --values "$values_file" \
             ${argocd_tls_args[@]+"${argocd_tls_args[@]}"} \
-            --wait --timeout 120s 2>&1)"; then
+            --wait --timeout 120s >"$argocd_log" 2>&1; then
             print_success "ArgoCD installed via Helm."
             argocd_installed=true
         else
             print_error "ArgoCD installation failed:"
-            echo "$argocd_output" >&2
+            cat "$argocd_log" >&2
         fi
+        rm -f "$argocd_log"
     fi
 
     # Prompt for Kargo installation
@@ -180,13 +180,8 @@ TLSSTORE
             echo ""
         fi
 
-        # Prompt for admin password
         local kargo_password
-        kargo_password="$(gum input --password --prompt "Kargo admin password: ")"
-        if [[ -z "$kargo_password" ]]; then
-            kargo_password="$(openssl rand -base64 48 | tr -d '=+/' | head -c 32)"
-            print_info "Generated random password."
-        fi
+        kargo_password="$(openssl rand -base64 48 | tr -d '=+/' | head -c 32)"
 
         local kargo_hash
         kargo_hash="$(htpasswd -bnBC 10 "" "$kargo_password" | tr -d ':\n')"
@@ -196,8 +191,9 @@ TLSSTORE
         # TLS termination happens at the Traefik level, not in Kargo;
         # api.tls.enabled=false disables TLS on the Kargo API server itself,
         # api.tls.terminatedUpstream=true signals that an upstream proxy already terminated TLS.
-        local kargo_output
-        if kargo_output="$(gum spin --title "Installing Kargo via Helm (this may take a minute)..." -- \
+        local kargo_log
+        kargo_log="$(mktemp)"
+        if gum spin --title "Installing Kargo via Helm (this may take a minute)..." -- \
             helm install kargo \
             oci://ghcr.io/akuity/kargo-charts/kargo \
             --namespace kargo --create-namespace \
@@ -205,7 +201,7 @@ TLSSTORE
             --set "api.adminAccount.tokenSigningKey=${kargo_signing_key}" \
             --set api.tls.enabled=false \
             --set api.tls.terminatedUpstream=true \
-            --wait --timeout 120s 2>&1)"; then
+            --wait --timeout 120s >"$kargo_log" 2>&1; then
             print_success "Kargo installed via Helm."
 
             # Create Ingress for Kargo dashboard
@@ -215,7 +211,7 @@ TLSSTORE
     traefik.ingress.kubernetes.io/router.tls: "true"'
             fi
 
-            kubectl apply -f - <<KARGOINGRESS
+            gum spin --title "Creating Kargo Ingress..." -- kubectl apply -f - <<KARGOINGRESS
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -253,8 +249,9 @@ KARGOINGRESS
             kargo_installed=true
         else
             print_error "Kargo installation failed:"
-            echo "$kargo_output" >&2
+            cat "$kargo_log" >&2
         fi
+        rm -f "$kargo_log"
     fi
 
     # Summary
@@ -438,15 +435,17 @@ cmd_add_repo_creds() {
     fi
 
     # Create or replace the secret
-    kubectl create secret generic repo-creds \
-        --namespace argocd \
-        --from-literal=type=git \
-        --from-literal=url="${REPO_URL}" \
-        --from-literal=username=git \
-        --from-literal=password="${pat}" \
-        --dry-run=client -o yaml \
-        | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml \
-        | kubectl apply -f -
+    gum spin --title "Configuring ArgoCD repo credentials..." -- bash -c '
+        kubectl create secret generic repo-creds \
+            --namespace argocd \
+            --from-literal=type=git \
+            --from-literal=url="'"${REPO_URL}"'" \
+            --from-literal=username=git \
+            --from-literal=password="'"${pat}"'" \
+            --dry-run=client -o yaml \
+            | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml \
+            | kubectl apply -f -
+    '
 
     echo ""
     print_success "ArgoCD repository credentials configured for ${REPO_URL}"
@@ -509,30 +508,34 @@ cmd_add_kargo_creds() {
     fi
 
     # Create Git credential
-    kubectl create secret generic gitops-repo-creds \
-        --namespace "$app_name" \
-        --from-literal=type=git \
-        --from-literal=url="${REPO_URL}" \
-        --from-literal=username=git \
-        --from-literal=password="${pat}" \
-        --dry-run=client -o yaml \
-        | kubectl label --local -f - kargo.akuity.io/cred-type=git -o yaml \
-        | kubectl apply -f -
+    gum spin --title "Configuring Kargo Git credentials..." -- bash -c '
+        kubectl create secret generic gitops-repo-creds \
+            --namespace "'"$app_name"'" \
+            --from-literal=type=git \
+            --from-literal=url="'"${REPO_URL}"'" \
+            --from-literal=username=git \
+            --from-literal=password="'"${pat}"'" \
+            --dry-run=client -o yaml \
+            | kubectl label --local -f - kargo.akuity.io/cred-type=git -o yaml \
+            | kubectl apply -f -
+    '
 
     print_success "Git credentials configured for ${REPO_URL}"
 
     # Optionally create registry credential
     echo ""
     if gum confirm "Is the container registry private?"; then
-        kubectl create secret generic registry-creds \
-            --namespace "$app_name" \
-            --from-literal=type=image \
-            --from-literal=repoURL="${image_repo}" \
-            --from-literal=username=git \
-            --from-literal=password="${pat}" \
-            --dry-run=client -o yaml \
-            | kubectl label --local -f - kargo.akuity.io/cred-type=image -o yaml \
-            | kubectl apply -f -
+        gum spin --title "Configuring registry credentials..." -- bash -c '
+            kubectl create secret generic registry-creds \
+                --namespace "'"$app_name"'" \
+                --from-literal=type=image \
+                --from-literal=repoURL="'"${image_repo}"'" \
+                --from-literal=username=git \
+                --from-literal=password="'"${pat}"'" \
+                --dry-run=client -o yaml \
+                | kubectl label --local -f - kargo.akuity.io/cred-type=image -o yaml \
+                | kubectl apply -f -
+        '
 
         print_success "Registry credentials configured for ${image_repo}"
     fi
