@@ -269,9 +269,11 @@ k3d runs Kubernetes (k3s) inside Docker containers. Each cluster has several con
 
 The k3d entrypoint script on every node runs `kubectl uncordon` in a loop until the node is ready. On agent nodes, `kubectl` has no kubeconfig by default and falls back to `localhost:8080`, which doesn't exist (only server nodes run the API server). The cluster creation passes `KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig` to agent nodes so this loop can reach the API server through the internal cluster address.
 
-#### Kargo TLS
+#### Kargo TLS and cert-manager
 
-When Kargo is installed, TLS termination is handled by Traefik (the k3s built-in ingress controller), not by the Kargo API server itself. Two Helm values control this: `api.tls.enabled=false` disables TLS on the Kargo API server, and `api.tls.terminatedUpstream=true` tells Kargo that an upstream proxy has already terminated TLS. Both are required; without `terminatedUpstream`, Kargo doesn't know the connection was secured and may reject requests or refuse to set secure cookies.
+Kargo requires [cert-manager](https://cert-manager.io/) as a dependency. Kargo registers Kubernetes [admission webhooks](https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/) to validate its custom resources (Stages, Warehouses, Freight) before they are persisted. The Kubernetes API server requires TLS for all admission webhook endpoints, and Kargo uses cert-manager to generate self-signed certificates for them. There is no way to disable this requirement; the Kargo Helm chart will fail to install without cert-manager CRDs present. `cluster-ctl.sh` installs cert-manager automatically before Kargo if needed.
+
+Separately, TLS termination for the Kargo dashboard/API is handled by Traefik, not by Kargo itself. Two Helm values control this: `api.tls.enabled=false` disables TLS on the Kargo API server, and `api.tls.terminatedUpstream=true` tells Kargo that an upstream proxy has already terminated TLS. Both are required; without `terminatedUpstream`, Kargo doesn't know the connection was secured and may reject requests or refuse to set secure cookies.
 
 ## Templates
 

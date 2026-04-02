@@ -166,6 +166,20 @@ TLSSTORE
     if gum confirm "Install Kargo?"; then
         echo ""
 
+        # Kargo requires cert-manager for webhook server TLS certificates
+        # (Kubernetes API server requires TLS for admission webhooks, and
+        # Kargo uses cert-manager to generate self-signed certs for them)
+        if ! kubectl get crd certificates.cert-manager.io &>/dev/null; then
+            helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null 2>&1
+            gum spin --title "Installing cert-manager (required by Kargo)..." -- \
+                helm install cert-manager jetstack/cert-manager \
+                --namespace cert-manager --create-namespace \
+                --set crds.enabled=true \
+                --wait --timeout 120s
+            print_success "cert-manager installed."
+            echo ""
+        fi
+
         # Prompt for admin password
         local kargo_password
         kargo_password="$(gum input --password --prompt "Kargo admin password: ")"
