@@ -75,6 +75,43 @@ cmd_init_cluster() {
 
     local argocd_installed=false
     local kargo_installed=false
+    local tls_enabled=false
+
+    # Prompt for local HTTPS
+    if command -v mkcert &>/dev/null; then
+        if gum confirm "Enable HTTPS with trusted local certs? (via mkcert)"; then
+            echo ""
+            # Ensure the local CA is installed
+            mkcert -install 2>/dev/null
+
+            # Generate wildcard cert for *.localhost
+            local tls_dir
+            tls_dir="$(mktemp -d)"
+            mkcert -cert-file "${tls_dir}/tls.crt" -key-file "${tls_dir}/tls.key" \
+                "*.localhost" "localhost" >/dev/null 2>&1
+
+            # Create TLS secret and default TLSStore in kube-system so Traefik uses it for all routes
+            kubectl create secret tls localhost-tls \
+                --cert="${tls_dir}/tls.crt" --key="${tls_dir}/tls.key" \
+                --namespace kube-system --dry-run=client -o yaml | kubectl apply -f -
+
+            kubectl apply -f - <<'TLSSTORE'
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: kube-system
+spec:
+  defaultCertificate:
+    secretName: localhost-tls
+TLSSTORE
+
+            rm -rf "$tls_dir"
+            tls_enabled=true
+            print_success "HTTPS enabled with trusted local certs."
+            echo ""
+        fi
+    fi
 
     # Prompt for ArgoCD installation
     if gum confirm "Install ArgoCD?"; then
@@ -93,37 +130,73 @@ cmd_init_cluster() {
         gum spin --title "Updating Helm repos..." -- \
             helm repo update
 
-        gum spin --title "Installing ArgoCD via Helm (this may take a minute)..." -- \
+        local argocd_tls_args=()
+        if [[ "$tls_enabled" == true ]]; then
+            argocd_tls_args=(
+                --set 'server.ingress.annotations.traefik\.ingress\.kubernetes\.io/router\.tls=true'
+            )
+        fi
+
+        local argocd_output
+        if argocd_output="$(gum spin --title "Installing ArgoCD via Helm (this may take a minute)..." -- \
             helm install argocd argo/argo-cd \
                 --namespace argocd --create-namespace \
                 --values "$values_file" \
-                --wait --timeout 120s
-
-        print_success "ArgoCD installed via Helm."
-        argocd_installed=true
+                ${argocd_tls_args[@]+"${argocd_tls_args[@]}"} \
+                --wait --timeout 120s 2>&1)"; then
+            print_success "ArgoCD installed via Helm."
+            argocd_installed=true
+        else
+            print_error "ArgoCD installation failed:"
+            echo "$argocd_output" >&2
+        fi
     fi
 
     # Prompt for Kargo installation
     if gum confirm "Install Kargo?"; then
         echo ""
 
-        gum spin --title "Installing Kargo via Helm (this may take a minute)..." -- \
+        # Prompt for admin password
+        local kargo_password
+        kargo_password="$(gum input --password --prompt "Kargo admin password: ")"
+        if [[ -z "$kargo_password" ]]; then
+            kargo_password="$(openssl rand -base64 48 | tr -d '=+/' | head -c 32)"
+            print_info "Generated random password."
+        fi
+
+        local kargo_hash
+        kargo_hash="$(htpasswd -bnBC 10 "" "$kargo_password" | tr -d ':\n')"
+        local kargo_signing_key
+        kargo_signing_key="$(openssl rand -base64 48 | tr -d '=+/' | head -c 32)"
+
+        local kargo_output
+        # api.tls.enabled=false: Traefik ingress handles TLS, avoids cert-manager dependency
+        # api.tls.terminatedUpstream=true: tells Kargo that TLS is handled by the ingress
+        if kargo_output="$(gum spin --title "Installing Kargo via Helm (this may take a minute)..." -- \
             helm install kargo \
                 oci://ghcr.io/akuity/kargo-charts/kargo \
                 --namespace kargo --create-namespace \
-                --wait --timeout 120s
+                --set "api.adminAccount.passwordHash=${kargo_hash}" \
+                --set "api.adminAccount.tokenSigningKey=${kargo_signing_key}" \
+                --set api.tls.enabled=false \
+                --set api.tls.terminatedUpstream=true \
+                --wait --timeout 120s 2>&1)"; then
+            print_success "Kargo installed via Helm."
 
-        print_success "Kargo installed via Helm."
+            # Create Ingress for Kargo dashboard
+            local kargo_annotations=""
+            if [[ "$tls_enabled" == true ]]; then
+                kargo_annotations='  annotations:
+    traefik.ingress.kubernetes.io/router.tls: "true"'
+            fi
 
-        # Create Ingress for Kargo dashboard
-        kubectl apply -f - <<KARGOINGRESS
+            kubectl apply -f - <<KARGOINGRESS
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: kargo
   namespace: kargo
-  annotations:
-    traefik.ingress.kubernetes.io/router.tls: "true"
+${kargo_annotations}
 spec:
   rules:
     - host: kargo.localhost
@@ -137,22 +210,26 @@ spec:
                 port:
                   number: 443
 KARGOINGRESS
-        print_success "Kargo Ingress created at kargo.localhost"
+            print_success "Kargo Ingress created at kargo.localhost"
 
-        # Update .infra-ctl.conf if it exists
-        local conf_file="${TARGET_DIR}/.infra-ctl.conf"
-        if [[ -f "$conf_file" ]]; then
-            if grep -q '^KARGO_ENABLED=' "$conf_file"; then
-                local tmp
-                tmp="$(awk '/^KARGO_ENABLED=/{print "KARGO_ENABLED=true"; next}1' "$conf_file")"
-                printf '%s\n' "$tmp" > "$conf_file"
-            else
-                echo "KARGO_ENABLED=true" >> "$conf_file"
+            # Update .infra-ctl.conf if it exists
+            local conf_file="${TARGET_DIR}/.infra-ctl.conf"
+            if [[ -f "$conf_file" ]]; then
+                if grep -q '^KARGO_ENABLED=' "$conf_file"; then
+                    local tmp
+                    tmp="$(awk '/^KARGO_ENABLED=/{print "KARGO_ENABLED=true"; next}1' "$conf_file")"
+                    printf '%s\n' "$tmp" > "$conf_file"
+                else
+                    echo "KARGO_ENABLED=true" >> "$conf_file"
+                fi
+                print_info "Set KARGO_ENABLED=true in .infra-ctl.conf"
             fi
-            print_info "Set KARGO_ENABLED=true in .infra-ctl.conf"
-        fi
 
-        kargo_installed=true
+            kargo_installed=true
+        else
+            print_error "Kargo installation failed:"
+            echo "$kargo_output" >&2
+        fi
     fi
 
     # Summary
@@ -160,20 +237,30 @@ KARGOINGRESS
     print_header "Cluster Summary"
     local context
     context="$(kubectl config current-context)"
+    local proto="http"
+    if [[ "$tls_enabled" == true ]]; then
+        proto="https"
+    fi
+
     print_info "Cluster:  ${cluster_name}"
     print_info "Context:  ${context}"
     print_info "Agents:   ${agents}"
+    if [[ "$tls_enabled" == true ]]; then
+        print_info "HTTPS:    enabled (mkcert)"
+    fi
 
     if [[ "${argocd_installed:-}" == true ]]; then
         echo ""
-        print_info "ArgoCD UI: http://argocd.localhost (username: admin)"
-        print_info "Get the admin password with:"
-        print_info "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
+        local argocd_password
+        argocd_password="$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)"
+        print_info "ArgoCD UI: ${proto}://argocd.localhost (username: admin)"
+        print_info "ArgoCD admin password: ${argocd_password}"
     fi
 
     if [[ "${kargo_installed:-}" == true ]]; then
         echo ""
-        print_info "Kargo UI: http://kargo.localhost"
+        print_info "Kargo UI: ${proto}://kargo.localhost (username: admin)"
+        print_info "Kargo admin password: ${kargo_password}"
     fi
 
     # Next steps

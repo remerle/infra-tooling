@@ -65,8 +65,9 @@ Install the following tools before using these scripts:
 | [k3d](https://k3d.io) | Local Kubernetes clusters (Docker-based) | `brew install k3d` |
 | [kubectl](https://kubernetes.io/docs/tasks/tools/) | Kubernetes CLI | `brew install kubectl` |
 | [Docker](https://www.docker.com/) | Required by k3d | `brew install --cask docker` |
+| [mkcert](https://github.com/FiloSottile/mkcert) | Local HTTPS with trusted certs (optional) | `brew install mkcert` |
 
-`gum` is required by both scripts. `k3d`, `kubectl`, and Docker are only needed for `cluster-ctl.sh`.
+`gum` is required by all scripts. `k3d`, `kubectl`, and Docker are only needed for `cluster-ctl.sh`. `mkcert` is optional -- if installed, `init-cluster` will offer to enable HTTPS.
 
 ## Setup
 
@@ -608,10 +609,13 @@ The Kargo dashboard is accessible at `http://kargo.localhost`.
 
 ### Local Access URLs
 
+> [!NOTE]
+> This tooling creates clusters for **local development, testing, and experimentation only**. By default, TLS is not configured and all traffic is unencrypted HTTP over localhost. If [mkcert](https://github.com/FiloSottile/mkcert) is installed, `cluster-ctl.sh init-cluster` will offer to enable HTTPS with locally-trusted certificates. This only encrypts browser-to-ingress traffic; intra-cluster traffic between pods is unencrypted. In production, a CNI plugin like [Cilium](https://cilium.io/) can provide transparent encryption of all pod-to-pod traffic. Do not expose this setup to untrusted networks.
+
 All services are accessible via Ingress on `.localhost` domains (requires ports 80/443 exposed during `cluster-ctl.sh init-cluster`). No port-forwarding needed.
 
 | Service | URL | Notes |
 |---------|-----|-------|
-| ArgoCD UI | http://argocd.localhost | username: `admin`, password: see `kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' \| base64 -d` |
-| Kargo UI | http://kargo.localhost | Ingress created by `cluster-ctl.sh` during Kargo install |
+| ArgoCD UI | http://argocd.localhost | username: `admin`, password: shown during `cluster-ctl.sh init-cluster` |
+| Kargo UI | http://kargo.localhost | username: `admin`, password: set during `cluster-ctl.sh init-cluster` |
 | Frontend app | http://app.localhost | Requires Ingress in `k8s/apps/frontend/base/ingress.yaml` |

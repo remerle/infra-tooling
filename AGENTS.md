@@ -7,7 +7,7 @@ Design decisions and conventions for AI agents working in this repository.
 Four independent bash scripts at the repository root:
 
 - **`infra-ctl.sh`** -- manages the GitOps repository structure (directories, templates, manifests). Git-only; does not interact with any cluster.
-- **`cluster-ctl.sh`** -- manages the local k3d cluster lifecycle (creation, ArgoCD Helm installation/upgrade, teardown). Interacts with Docker, Kubernetes, and Helm.
+- **`cluster-ctl.sh`** -- manages the local k3d cluster lifecycle (creation, ArgoCD Helm installation/upgrade, Kargo, teardown). Interacts with Docker, Kubernetes, and Helm.
 - **`secret-ctl.sh`** -- manages per-environment secrets using Bitnami Sealed Secrets. Interacts with the cluster (for controller install and key management) and writes encrypted SealedSecret files to the repo.
 - **`user-ctl.sh`** -- manages RBAC roles, human users (x509 certs), and service accounts (short-lived tokens). Interacts with the cluster (CSR API, RBAC bindings, Helm upgrades) and writes to `helm/argocd-values.yaml` and `k8s/platform/`.
 
@@ -114,6 +114,8 @@ Permission presets (selected during `add-role`):
 ### Kargo integration (optional)
 
 Kargo progressive delivery is optional, gated behind `KARGO_ENABLED=true` in `.infra-ctl.conf`. When enabled, `infra-ctl.sh add-app` and `add-env` generate Kargo resources alongside ArgoCD + Kustomize files.
+
+The Kargo admin account password (bcrypt hash) and token signing key are generated at install time and passed via `--set` flags -- nothing is persisted to a values file. TLS is disabled on the Kargo API server (Traefik ingress handles termination), which avoids a cert-manager dependency.
 
 The promotion pipeline is defined in `kargo/promotion-order.txt` (one env per line, default: dev, staging, production). The first environment sources images directly from a Warehouse (container registry watcher). Each subsequent environment promotes only images verified in the previous stage.
 
