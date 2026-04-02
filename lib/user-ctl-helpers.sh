@@ -57,20 +57,22 @@ generate_argocd_policy_custom() {
     local resources_csv="$2"
     local actions_csv="$3"
 
-    IFS=',' read -ra resources <<< "$resources_csv"
-    IFS=',' read -ra actions <<< "$actions_csv"
+    IFS=',' read -ra resources <<<"$resources_csv"
+    IFS=',' read -ra actions <<<"$actions_csv"
 
     local resource action
     for resource in "${resources[@]}"; do
-        resource="$(echo "$resource" | xargs)"  # trim whitespace
+        resource="$(echo "$resource" | xargs)" # trim whitespace
         for action in "${actions[@]}"; do
             action="$(echo "$action" | xargs)"
             # applications and logs use project/app scope; others use plain scope
             case "$resource" in
-                applications|logs|exec)
-                    echo "p, role:${role_name}, ${resource}, ${action}, */*, allow" ;;
+                applications | logs | exec)
+                    echo "p, role:${role_name}, ${resource}, ${action}, */*, allow"
+                    ;;
                 *)
-                    echo "p, role:${role_name}, ${resource}, ${action}, *, allow" ;;
+                    echo "p, role:${role_name}, ${resource}, ${action}, *, allow"
+                    ;;
             esac
         done
     done
@@ -137,7 +139,7 @@ format_verbs_yaml() {
     local verbs_csv="$1"
     local IFS=','
     local verbs=()
-    read -ra verbs <<< "$verbs_csv"
+    read -ra verbs <<<"$verbs_csv"
     local quoted=()
     local v
     for v in "${verbs[@]}"; do
@@ -316,7 +318,7 @@ generate_cert_kubeconfig() {
     server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
     ca_data="$(kubectl config view --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
 
-    cat > "$output_file" <<EOF
+    cat >"$output_file" <<EOF
 apiVersion: v1
 kind: Config
 clusters:
@@ -333,8 +335,8 @@ current-context: ${username}@${cluster_name}
 users:
   - name: ${username}
     user:
-      client-certificate-data: $(base64 < "$cert_file" | tr -d '\n')
-      client-key-data: $(base64 < "$key_file" | tr -d '\n')
+      client-certificate-data: $(base64 <"$cert_file" | tr -d '\n')
+      client-key-data: $(base64 <"$key_file" | tr -d '\n')
 EOF
     chmod 600 "$output_file"
 }
@@ -351,7 +353,7 @@ generate_token_kubeconfig() {
     server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
     ca_data="$(kubectl config view --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
 
-    cat > "$output_file" <<EOF
+    cat >"$output_file" <<EOF
 apiVersion: v1
 kind: Config
 clusters:
@@ -429,9 +431,9 @@ upgrade_argocd_if_installed() {
     if helm status argocd -n argocd &>/dev/null; then
         gum spin --title "Upgrading ArgoCD..." -- \
             helm upgrade argocd argo/argo-cd \
-                --namespace argocd \
-                --values "$values_file" \
-                --wait --timeout 120s
+            --namespace argocd \
+            --values "$values_file" \
+            --wait --timeout 120s
         print_success "ArgoCD upgraded."
     else
         print_warning "ArgoCD not installed. Changes saved to values file; will take effect on next install."

@@ -36,7 +36,7 @@ cmd_init() {
 
     if gum spin --title "Waiting for Sealed Secrets controller to be ready..." -- \
         kubectl wait --for=condition=available deployment/sealed-secrets-controller \
-            -n kube-system --timeout=90s; then
+        -n kube-system --timeout=90s; then
         print_success "Sealed Secrets controller is ready."
     else
         print_warning "Controller not ready yet. It may need a moment to stabilize."
@@ -47,20 +47,20 @@ cmd_init() {
     # Export the public cert for offline encryption
     gum spin --title "Exporting public cert..." -- \
         kubeseal --fetch-cert --controller-name=sealed-secrets-controller \
-            --controller-namespace=kube-system > "$cert_file"
+        --controller-namespace=kube-system >"$cert_file"
 
     print_success "Public cert saved to .sealed-secrets-cert.pem (commit this file)."
 
     # Back up the private key
     kubectl get secret -n kube-system -l sealedsecrets.bitnami.com/sealed-secrets-key \
-        -o json > "$key_backup"
+        -o json >"$key_backup"
 
     print_success "Private key backed up to .sealed-secrets-key.json (gitignored)."
 
     # Add key backup to .gitignore (idempotent)
     local gitignore="${TARGET_DIR}/.gitignore"
     if [[ ! -f "$gitignore" ]] || ! grep -qF '.sealed-secrets-key.json' "$gitignore"; then
-        echo '.sealed-secrets-key.json' >> "$gitignore"
+        echo '.sealed-secrets-key.json' >>"$gitignore"
         print_success "Added .sealed-secrets-key.json to .gitignore"
     fi
 
@@ -191,7 +191,7 @@ cmd_add() {
         mkdir -p "$overlay_dir"
         printf '%s' "$secret_json" | kubeseal \
             --cert "$cert_file" \
-            --format yaml > "$sealed_file"
+            --format yaml >"$sealed_file"
     fi
 
     print_success "SealedSecret written to ${sealed_file}"
@@ -202,7 +202,7 @@ cmd_add() {
         local tmp_kust
         tmp_kust="$(mktemp)"
         awk '/^resources:/{print; print "  - sealed-secret.yaml"; next} {print}' \
-            "$kustomization" > "$tmp_kust" && mv "$tmp_kust" "$kustomization"
+            "$kustomization" >"$tmp_kust" && mv "$tmp_kust" "$kustomization"
         print_success "Added sealed-secret.yaml to overlay kustomization.yaml"
     fi
 
@@ -311,11 +311,11 @@ main() {
     shift
 
     case "$command" in
-        init)       cmd_init "$@" ;;
-        add)        cmd_add "$@" ;;
-        list)       cmd_list "$@" ;;
-        preflight-check)    cmd_preflight_check "$@" ;;
-        -h|--help)  usage ;;
+        init) cmd_init "$@" ;;
+        add) cmd_add "$@" ;;
+        list) cmd_list "$@" ;;
+        preflight-check) cmd_preflight_check "$@" ;;
+        -h | --help) usage ;;
         *)
             print_error "Unknown command: $command"
             usage

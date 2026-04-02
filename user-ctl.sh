@@ -43,7 +43,7 @@ cmd_add_role() {
 
     # Generate ArgoCD policy
     case "$preset" in
-        admin-readonly-settings|developer|viewer)
+        admin-readonly-settings | developer | viewer)
             argocd_policy="$(generate_argocd_policy "$role_name" "$preset")"
             ;;
         custom)
@@ -78,8 +78,8 @@ cmd_add_role() {
             local cr_file="${platform_dir}/${role_name}-clusterrole.yaml"
             local crb_file="${platform_dir}/${role_name}-clusterrolebinding.yaml"
 
-            generate_k8s_admin_readonly_clusterrole "$role_name" > "$cr_file"
-            generate_k8s_admin_readonly_bindings "$role_name" > "$crb_file"
+            generate_k8s_admin_readonly_clusterrole "$role_name" >"$cr_file"
+            generate_k8s_admin_readonly_bindings "$role_name" >"$crb_file"
             created_files+=("$cr_file" "$crb_file")
             ;;
         developer)
@@ -104,17 +104,17 @@ cmd_add_role() {
                 local role_file="${platform_dir}/${role_name}-role-${ns}.yaml"
                 local rb_file="${platform_dir}/${role_name}-rolebinding-${ns}.yaml"
 
-                generate_k8s_developer_role "$role_name" "$ns" > "$role_file"
-                generate_k8s_developer_rolebinding "$role_name" "$ns" > "$rb_file"
+                generate_k8s_developer_role "$role_name" "$ns" >"$role_file"
+                generate_k8s_developer_rolebinding "$role_name" "$ns" >"$rb_file"
                 created_files+=("$role_file" "$rb_file")
-            done <<< "$selected_namespaces"
+            done <<<"$selected_namespaces"
             ;;
         viewer)
             local cr_file="${platform_dir}/${role_name}-clusterrole.yaml"
             local crb_file="${platform_dir}/${role_name}-clusterrolebinding.yaml"
 
-            generate_k8s_viewer_clusterrole "$role_name" > "$cr_file"
-            generate_k8s_viewer_binding "$role_name" > "$crb_file"
+            generate_k8s_viewer_clusterrole "$role_name" >"$cr_file"
+            generate_k8s_viewer_binding "$role_name" >"$crb_file"
             created_files+=("$cr_file" "$crb_file")
             ;;
         custom)
@@ -133,8 +133,8 @@ cmd_add_role() {
                 local cr_file="${platform_dir}/${role_name}-clusterrole.yaml"
                 local crb_file="${platform_dir}/${role_name}-clusterrolebinding.yaml"
 
-                generate_k8s_custom_clusterrole "$role_name" "$k8s_verbs" > "$cr_file"
-                generate_k8s_viewer_binding "$role_name" > "$crb_file"
+                generate_k8s_custom_clusterrole "$role_name" "$k8s_verbs" >"$cr_file"
+                generate_k8s_viewer_binding "$role_name" >"$crb_file"
                 created_files+=("$cr_file" "$crb_file")
             else
                 local envs
@@ -156,16 +156,16 @@ cmd_add_role() {
                     local role_file="${platform_dir}/${role_name}-role-${ns}.yaml"
                     local rb_file="${platform_dir}/${role_name}-rolebinding-${ns}.yaml"
 
-                    generate_k8s_custom_role "$role_name" "$ns" "$k8s_verbs" > "$role_file"
-                    generate_k8s_developer_rolebinding "$role_name" "$ns" > "$rb_file"
+                    generate_k8s_custom_role "$role_name" "$ns" "$k8s_verbs" >"$role_file"
+                    generate_k8s_developer_rolebinding "$role_name" "$ns" >"$rb_file"
                     created_files+=("$role_file" "$rb_file")
-                done <<< "$selected_ns"
+                done <<<"$selected_ns"
             fi
             ;;
     esac
 
     # Record the preset type for use by add-sa
-    echo "$preset" > "${platform_dir}/${role_name}.preset"
+    echo "$preset" >"${platform_dir}/${role_name}.preset"
 
     # Apply k8s manifests
     echo ""
@@ -225,10 +225,10 @@ cmd_list_roles() {
 
         # Check for k8s manifests
         local k8s_files
-        k8s_files="$(ls "${TARGET_DIR}/k8s/platform/${role}-"*.yaml 2>/dev/null | wc -l | xargs)" || k8s_files="0"
+        k8s_files="$(find "${TARGET_DIR}/k8s/platform" -maxdepth 1 -name "${role}-*.yaml" 2>/dev/null | wc -l | xargs)" || k8s_files="0"
 
         print_info "${role}  (${policy_count} ArgoCD policies, ${k8s_files} k8s manifests)"
-    done <<< "$roles"
+    done <<<"$roles"
     echo ""
 }
 
@@ -270,7 +270,7 @@ cmd_remove_role() {
                 kubectl delete -f "$f" --ignore-not-found
             rm "$f"
             print_success "Removed: $f"
-        done <<< "$manifest_files"
+        done <<<"$manifest_files"
     fi
 
     # Remove preset metadata file
@@ -334,14 +334,14 @@ cmd_add() {
 
     gum spin --title "Generating CSR..." -- \
         openssl req -new -key "$key_file" \
-            -subj "/CN=${username}/O=${group}" \
-            -out "$csr_file"
+        -subj "/CN=${username}/O=${group}" \
+        -out "$csr_file"
 
     print_success "Key and CSR generated."
 
     # Submit CSR to Kubernetes
     local csr_b64
-    csr_b64="$(base64 < "$csr_file" | tr -d '\n')"
+    csr_b64="$(base64 <"$csr_file" | tr -d '\n')"
 
     kubectl apply -f - <<EOF
 apiVersion: certificates.k8s.io/v1
@@ -378,7 +378,7 @@ EOF
         exit 1
     fi
 
-    echo "$cert_data" | base64 -d > "$crt_file"
+    echo "$cert_data" | base64 -d >"$crt_file"
     print_success "Certificate issued and saved."
 
     # Generate kubeconfig
@@ -456,7 +456,7 @@ cmd_remove() {
     # Clean up local files
     local users_dir="${TARGET_DIR}/users"
     rm -f "${users_dir}/${username}.key" "${users_dir}/${username}.crt" \
-          "${users_dir}/${username}.csr" "${users_dir}/${username}.kubeconfig"
+        "${users_dir}/${username}.csr" "${users_dir}/${username}.kubeconfig"
     print_success "Local files cleaned up."
 
     echo ""
@@ -517,7 +517,7 @@ cmd_list() {
         fi
 
         print_info "${account}  [${type_label}]  group: ${group}${expiry_info}"
-    done <<< "$accounts"
+    done <<<"$accounts"
     echo ""
 }
 
@@ -539,7 +539,7 @@ cmd_add_sa() {
     validate_k8s_name "$group" "Group"
 
     # Parse optional --duration flag
-    local duration="2160h"  # 90 days default
+    local duration="2160h" # 90 days default
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --duration)
@@ -667,7 +667,7 @@ subjects:
 EOF
             print_success "ClusterRoleBinding created."
             ;;
-        viewer|custom)
+        viewer | custom)
             local clusterrole_name
             clusterrole_name="$(yq '.metadata.name' "${platform_dir}/${group}-clusterrole.yaml")"
             kubectl apply -f - <<EOF
@@ -707,7 +707,7 @@ EOF
     # Generate kubeconfig
     local kubeconfig_file="${users_dir}/${sa_name}.kubeconfig"
     generate_token_kubeconfig "$sa_name" "$token" "$kubeconfig_file"
-    echo "$expiry_date" > "${users_dir}/${sa_name}.expiry"
+    echo "$expiry_date" >"${users_dir}/${sa_name}.expiry"
     print_success "Kubeconfig written to ${kubeconfig_file}"
 
     # Add ArgoCD account
@@ -780,7 +780,7 @@ cmd_refresh_sa() {
     local expiry_date
     expiry_date="$(calculate_expiry_date "$duration")"
 
-    echo "$expiry_date" > "${users_dir}/${sa_name}.expiry"
+    echo "$expiry_date" >"${users_dir}/${sa_name}.expiry"
     print_success "Token refreshed."
     print_info "Kubeconfig:   ${kubeconfig_file}"
     print_info "Token expiry: ${expiry_date}"
@@ -819,7 +819,7 @@ cmd_remove_sa() {
     # Delete namespace-scoped rolebindings
     local ns
     for ns in $(kubectl get rolebinding -A -l app.kubernetes.io/managed-by=user-ctl \
-            -o jsonpath="{range .items[?(@.metadata.name==\"${sa_name}\")]}{.metadata.namespace}{\"\\n\"}{end}" 2>/dev/null); do
+        -o jsonpath="{range .items[?(@.metadata.name==\"${sa_name}\")]}{.metadata.namespace}{\"\\n\"}{end}" 2>/dev/null); do
         kubectl delete rolebinding "$sa_name" -n "$ns" --ignore-not-found 2>/dev/null || true
     done
     print_success "RBAC bindings removed."
@@ -894,17 +894,17 @@ main() {
     shift
 
     case "$command" in
-        add-role)       cmd_add_role "$@" ;;
-        remove-role)    cmd_remove_role "$@" ;;
-        list-roles)     cmd_list_roles "$@" ;;
-        add)            cmd_add "$@" ;;
-        remove)         cmd_remove "$@" ;;
-        list)           cmd_list "$@" ;;
-        add-sa)         cmd_add_sa "$@" ;;
-        remove-sa)      cmd_remove_sa "$@" ;;
-        refresh-sa)     cmd_refresh_sa "$@" ;;
-        preflight-check)    cmd_preflight_check "$@" ;;
-        -h|--help)      usage ;;
+        add-role) cmd_add_role "$@" ;;
+        remove-role) cmd_remove_role "$@" ;;
+        list-roles) cmd_list_roles "$@" ;;
+        add) cmd_add "$@" ;;
+        remove) cmd_remove "$@" ;;
+        list) cmd_list "$@" ;;
+        add-sa) cmd_add_sa "$@" ;;
+        remove-sa) cmd_remove_sa "$@" ;;
+        refresh-sa) cmd_refresh_sa "$@" ;;
+        preflight-check) cmd_preflight_check "$@" ;;
+        -h | --help) usage ;;
         *)
             print_error "Unknown command: $command"
             usage

@@ -82,6 +82,16 @@ No external state store. The filesystem is the source of truth.
 
 ## Key decisions
 
+### k3d cluster architecture
+
+k3d runs k3s inside Docker containers. Each cluster has a server node (runs the API server), agent nodes (run application pods), and a load balancer container (`k3d-<name>-serverlb`) that forwards host ports into the cluster.
+
+Two non-obvious workarounds in `cluster-ctl.sh init-cluster`:
+
+1. **ServiceLB is disabled** (`--disable=servicelb`). k3d's own load balancer handles host port forwarding. The k3s built-in ServiceLB (klipper-lb) is redundant and deploys iptables DaemonSet pods on every node that are unnecessary in the k3d context.
+
+2. **KUBECONFIG is set on agent nodes** via `--env`. The k3d entrypoint script runs `until kubectl uncordon "$HOSTNAME"; do sleep 3; done` on every node. On agent nodes, no kubeconfig is set by default, so kubectl falls back to `localhost:8080`, which doesn't exist (only the server node runs the API server). Setting `KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig` on agent nodes lets the uncordon loop succeed and exit.
+
 ### Why gum is required
 
 All interactive prompts, confirmations, and styled output use [gum](https://github.com/charmbracelet/gum). This is a hard dependency, not optional. Both scripts check for it at startup and fail with install instructions if missing.
@@ -116,7 +126,7 @@ Permission presets (selected during `add-role`):
 
 Kargo progressive delivery is optional, gated behind `KARGO_ENABLED=true` in `.infra-ctl.conf`. When enabled, `infra-ctl.sh add-app` and `add-env` generate Kargo resources alongside ArgoCD + Kustomize files.
 
-The Kargo admin account password (bcrypt hash) and token signing key are generated at install time and passed via `--set` flags -- nothing is persisted to a values file. TLS is disabled on the Kargo API server (Traefik ingress handles termination), which avoids a cert-manager dependency.
+The Kargo admin account password (bcrypt hash) and token signing key are generated at install time and passed via `--set` flags -- nothing is persisted to a values file. TLS termination is handled by Traefik, not by the Kargo API server. Two Helm values control this: `api.tls.enabled=false` disables TLS on the Kargo API server itself, and `api.tls.terminatedUpstream=true` tells Kargo that an upstream proxy already terminated TLS. Both are required; without `terminatedUpstream`, Kargo doesn't know the connection was secured.
 
 The promotion pipeline is defined in `kargo/promotion-order.txt` (one env per line, default: dev, staging, production). The first environment sources images directly from a Warehouse (container registry watcher). Each subsequent environment promotes only images verified in the previous stage.
 

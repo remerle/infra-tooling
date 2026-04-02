@@ -69,7 +69,7 @@ cmd_init() {
     # Create Kargo promotion order file if enabled
     if is_kargo_enabled; then
         local promo_file="${TARGET_DIR}/kargo/promotion-order.txt"
-        cat > "$promo_file" <<'PROMOEOF'
+        cat >"$promo_file" <<'PROMOEOF'
 dev
 staging
 production
@@ -273,7 +273,10 @@ cmd_add_app() {
         if [[ ${#envs[@]} -gt 0 ]]; then
             read_promotion_order
             local envs_csv
-            envs_csv="$(IFS=','; echo "${envs[*]}")"
+            envs_csv="$(
+                IFS=','
+                echo "${envs[*]}"
+            )"
             while IFS= read -r stage_file; do
                 created_files+=("$stage_file")
             done < <(generate_kargo_stages "$app_name" "$image_repo" "$kargo_app_dir" "$envs_csv")
@@ -410,7 +413,7 @@ cmd_add_env() {
         echo ""
 
         # Append to promotion-order.txt
-        echo "$env_name" >> "${TARGET_DIR}/kargo/promotion-order.txt"
+        echo "$env_name" >>"${TARGET_DIR}/kargo/promotion-order.txt"
 
         # Determine the upstream stage (last env before the new one)
         local upstream_env="${PROMOTION_ORDER[${#PROMOTION_ORDER[@]}-1]}"
@@ -480,10 +483,10 @@ cmd_add_project() {
         local repos_input
         repos_input="$(gum input --value "${REPO_URL}" --prompt "Allowed repos (comma-separated): ")"
         source_repos_block=""
-        IFS=',' read -ra repos <<< "$repos_input"
+        IFS=',' read -ra repos <<<"$repos_input"
         local repo
         for repo in "${repos[@]}"; do
-            repo="$(echo "$repo" | xargs)"  # trim whitespace
+            repo="$(echo "$repo" | xargs)" # trim whitespace
             source_repos_block+="    - ${repo}"$'\n'
         done
         # Remove trailing newline
@@ -515,7 +518,7 @@ cmd_add_project() {
             [[ -z "$ns" ]] && continue
             destinations_block+="    - namespace: ${ns}"$'\n'
             destinations_block+="      server: https://kubernetes.default.svc"$'\n'
-        done <<< "$selected_namespaces"
+        done <<<"$selected_namespaces"
         destinations_block="${destinations_block%$'\n'}"
     else
         destinations_block="    - namespace: '*'"$'\n'
@@ -603,7 +606,7 @@ cmd_edit_project() {
         local repos_input
         repos_input="$(gum input --value "$current_repos" --prompt "Allowed repos (comma-separated): ")"
         source_repos_block=""
-        IFS=',' read -ra repos <<< "$repos_input"
+        IFS=',' read -ra repos <<<"$repos_input"
         local repo
         for repo in "${repos[@]}"; do
             repo="$(echo "$repo" | xargs)"
@@ -640,7 +643,7 @@ cmd_edit_project() {
             [[ -z "$ns" ]] && continue
             destinations_block+="    - namespace: ${ns}"$'\n'
             destinations_block+="      server: https://kubernetes.default.svc"$'\n'
-        done <<< "$selected_namespaces"
+        done <<<"$selected_namespaces"
         destinations_block="${destinations_block%$'\n'}"
     else
         destinations_block="    - namespace: '*'"$'\n'
@@ -697,9 +700,9 @@ cmd_enable_kargo() {
     if grep -q '^KARGO_ENABLED=' "$conf_file"; then
         local tmp
         tmp="$(awk '/^KARGO_ENABLED=/{print "KARGO_ENABLED=true"; next}1' "$conf_file")"
-        printf '%s\n' "$tmp" > "$conf_file"
+        printf '%s\n' "$tmp" >"$conf_file"
     else
-        echo "KARGO_ENABLED=true" >> "$conf_file"
+        echo "KARGO_ENABLED=true" >>"$conf_file"
     fi
     print_success "Set KARGO_ENABLED=true in .infra-ctl.conf"
 
@@ -722,9 +725,9 @@ cmd_enable_kargo() {
             exit 0
         fi
 
-        printf '%s\n' "${envs[@]}" > "$promo_file"
+        printf '%s\n' "${envs[@]}" >"$promo_file"
     else
-        cat > "$promo_file" <<'PROMOEOF'
+        cat >"$promo_file" <<'PROMOEOF'
 dev
 staging
 production
@@ -773,7 +776,10 @@ PROMOEOF
 
             # Stages
             local envs_csv
-            envs_csv="$(IFS=','; echo "${envs[*]}")"
+            envs_csv="$(
+                IFS=','
+                echo "${envs[*]}"
+            )"
             while IFS= read -r stage_file; do
                 created_files+=("$stage_file")
             done < <(generate_kargo_stages "$app" "$image_repo" "$kargo_app_dir" "$envs_csv")
@@ -828,14 +834,14 @@ main() {
     shift
 
     case "$command" in
-        init)       cmd_init "$@" ;;
-        add-app)    cmd_add_app "$@" ;;
-        add-env)    cmd_add_env "$@" ;;
-        add-project)    cmd_add_project "$@" ;;
-        edit-project)   cmd_edit_project "$@" ;;
-        enable-kargo)   cmd_enable_kargo "$@" ;;
-        preflight-check)    cmd_preflight_check "$@" ;;
-        -h|--help)  usage ;;
+        init) cmd_init "$@" ;;
+        add-app) cmd_add_app "$@" ;;
+        add-env) cmd_add_env "$@" ;;
+        add-project) cmd_add_project "$@" ;;
+        edit-project) cmd_edit_project "$@" ;;
+        enable-kargo) cmd_enable_kargo "$@" ;;
+        preflight-check) cmd_preflight_check "$@" ;;
+        -h | --help) usage ;;
         *)
             print_error "Unknown command: $command"
             usage

@@ -78,16 +78,16 @@ preflight_check() {
         if command -v "$tool" &>/dev/null; then
             local version=""
             case "$tool" in
-                gum)        version="$(gum --version 2>/dev/null || true)" ;;
-                kubectl)    version="$(kubectl version --client -o json 2>/dev/null | jq -r '.clientVersion.gitVersion' 2>/dev/null || true)" ;;
-                helm)       version="$(helm version --short 2>/dev/null || true)" ;;
-                jq)         version="$(jq --version 2>/dev/null || true)" ;;
-                yq)         version="$(yq --version 2>/dev/null | awk '{print $NF}' || true)" ;;
-                k3d)        version="$(k3d version 2>/dev/null | head -1 | awk '{print $NF}' || true)" ;;
-                kubeseal)   version="$(kubeseal --version 2>/dev/null | awk '{print $NF}' || true)" ;;
-                docker)     version="$(docker --version 2>/dev/null | sed 's/Docker version //' | cut -d, -f1 || true)" ;;
-                openssl)    version="$(openssl version 2>/dev/null | awk '{print $2}' || true)" ;;
-                *)          version="$(command -v "$tool")" ;;
+                gum) version="$(gum --version 2>/dev/null || true)" ;;
+                kubectl) version="$(kubectl version --client -o json 2>/dev/null | jq -r '.clientVersion.gitVersion' 2>/dev/null || true)" ;;
+                helm) version="$(helm version --short 2>/dev/null || true)" ;;
+                jq) version="$(jq --version 2>/dev/null || true)" ;;
+                yq) version="$(yq --version 2>/dev/null | awk '{print $NF}' || true)" ;;
+                k3d) version="$(k3d version 2>/dev/null | head -1 | awk '{print $NF}' || true)" ;;
+                kubeseal) version="$(kubeseal --version 2>/dev/null | awk '{print $NF}' || true)" ;;
+                docker) version="$(docker --version 2>/dev/null | sed 's/Docker version //' | cut -d, -f1 || true)" ;;
+                openssl) version="$(openssl version 2>/dev/null | awk '{print $2}' || true)" ;;
+                *) version="$(command -v "$tool")" ;;
             esac
             printf "  ✓ %-12s %s\n" "$tool" "${version:-found}"
         else
@@ -189,7 +189,7 @@ load_conf() {
             print_error "Malformed line in ${conf_file}: ${line}"
             exit 1
         fi
-    done < "$conf_file"
+    done <"$conf_file"
 }
 
 save_conf() {
@@ -203,13 +203,13 @@ save_conf() {
         kargo_line="$(grep '^KARGO_ENABLED=' "$conf_file")"
     fi
 
-    cat > "$conf_file" <<EOF
+    cat >"$conf_file" <<EOF
 REPO_URL=${repo_url}
 REPO_OWNER=${repo_owner}
 EOF
 
     if [[ -n "$kargo_line" ]]; then
-        echo "$kargo_line" >> "$conf_file"
+        echo "$kargo_line" >>"$conf_file"
     fi
 }
 
@@ -241,7 +241,7 @@ render_template() {
     done
 
     mkdir -p "$(dirname "$output")"
-    printf '%s\n' "$content" > "$output"
+    printf '%s\n' "$content" >"$output"
 }
 
 # Writes content to a file only if the file does not already exist.
@@ -256,7 +256,7 @@ safe_write() {
     fi
 
     mkdir -p "$(dirname "$output")"
-    printf '%s\n' "$content" > "$output"
+    printf '%s\n' "$content" >"$output"
     return 0
 }
 
@@ -378,9 +378,9 @@ read_promotion_order() {
     while IFS= read -r line || [[ -n "$line" ]]; do
         # Skip empty lines and comments
         [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-        line="$(echo "$line" | xargs)"  # trim whitespace
+        line="$(echo "$line" | xargs)" # trim whitespace
         PROMOTION_ORDER+=("$line")
-    done < "$order_file"
+    done <"$order_file"
 
     if [[ ${#PROMOTION_ORDER[@]} -eq 0 ]]; then
         print_error "kargo/promotion-order.txt is empty."
@@ -405,7 +405,7 @@ generate_kargo_stages() {
     # Convert csv to associative array for O(1) lookup
     local -A env_set=()
     local env_item
-    IFS=',' read -ra env_arr <<< "$envs_csv"
+    IFS=',' read -ra env_arr <<<"$envs_csv"
     for env_item in "${env_arr[@]}"; do
         env_set["$env_item"]=1
     done

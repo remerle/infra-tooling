@@ -44,12 +44,22 @@ cmd_init_cluster() {
     fi
 
     # Create cluster
+    # Disable the k3s built-in ServiceLB (klipper-lb). k3d provides its own
+    # load balancer container (k3d-<name>-serverlb) for host port forwarding.
+    #
+    # Set KUBECONFIG on agent nodes so the k3d entrypoint's "kubectl uncordon"
+    # loop can reach the API server. Without this, kubectl defaults to
+    # localhost:8080, which doesn't exist on agent nodes, and spams errors.
+    # The @agent:* suffix is k3d's node filter syntax: apply this env var to
+    # all agent nodes only (server nodes already have API access on localhost).
     echo ""
     gum spin --title "Creating k3d cluster '${cluster_name}'..." -- \
         k3d cluster create "$cluster_name" \
-            --agents "$agents" \
-            ${port_args[@]+"${port_args[@]}"} \
-            --wait
+        --agents "$agents" \
+        --k3s-arg "--disable=servicelb@server:*" \
+        --env "KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig@agent:*" \
+        ${port_args[@]+"${port_args[@]}"} \
+        --wait
 
     print_success "Cluster '${cluster_name}' created."
     echo ""
@@ -62,8 +72,8 @@ cmd_init_cluster() {
     # Metrics Server needs --kubelet-insecure-tls in k3d (self-signed kubelet certs)
     gum spin --title "Patching Metrics Server for k3d..." -- \
         kubectl patch deployment metrics-server -n kube-system \
-            --type=json \
-            -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+        --type=json \
+        -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
 
     if gum spin --title "Waiting for Metrics Server to be ready..." -- \
         kubectl wait --for=condition=available deployment/metrics-server -n kube-system --timeout=60s; then
@@ -140,10 +150,10 @@ TLSSTORE
         local argocd_output
         if argocd_output="$(gum spin --title "Installing ArgoCD via Helm (this may take a minute)..." -- \
             helm install argocd argo/argo-cd \
-                --namespace argocd --create-namespace \
-                --values "$values_file" \
-                ${argocd_tls_args[@]+"${argocd_tls_args[@]}"} \
-                --wait --timeout 120s 2>&1)"; then
+            --namespace argocd --create-namespace \
+            --values "$values_file" \
+            ${argocd_tls_args[@]+"${argocd_tls_args[@]}"} \
+            --wait --timeout 120s 2>&1)"; then
             print_success "ArgoCD installed via Helm."
             argocd_installed=true
         else
@@ -169,18 +179,19 @@ TLSSTORE
         local kargo_signing_key
         kargo_signing_key="$(openssl rand -base64 48 | tr -d '=+/' | head -c 32)"
 
+        # TLS termination happens at the Traefik level, not in Kargo;
+        # api.tls.enabled=false disables TLS on the Kargo API server itself,
+        # api.tls.terminatedUpstream=true signals that an upstream proxy already terminated TLS.
         local kargo_output
-        # api.tls.enabled=false: Traefik ingress handles TLS, avoids cert-manager dependency
-        # api.tls.terminatedUpstream=true: tells Kargo that TLS is handled by the ingress
         if kargo_output="$(gum spin --title "Installing Kargo via Helm (this may take a minute)..." -- \
             helm install kargo \
-                oci://ghcr.io/akuity/kargo-charts/kargo \
-                --namespace kargo --create-namespace \
-                --set "api.adminAccount.passwordHash=${kargo_hash}" \
-                --set "api.adminAccount.tokenSigningKey=${kargo_signing_key}" \
-                --set api.tls.enabled=false \
-                --set api.tls.terminatedUpstream=true \
-                --wait --timeout 120s 2>&1)"; then
+            oci://ghcr.io/akuity/kargo-charts/kargo \
+            --namespace kargo --create-namespace \
+            --set "api.adminAccount.passwordHash=${kargo_hash}" \
+            --set "api.adminAccount.tokenSigningKey=${kargo_signing_key}" \
+            --set api.tls.enabled=false \
+            --set api.tls.terminatedUpstream=true \
+            --wait --timeout 120s 2>&1)"; then
             print_success "Kargo installed via Helm."
 
             # Create Ingress for Kargo dashboard
@@ -218,9 +229,9 @@ KARGOINGRESS
                 if grep -q '^KARGO_ENABLED=' "$conf_file"; then
                     local tmp
                     tmp="$(awk '/^KARGO_ENABLED=/{print "KARGO_ENABLED=true"; next}1' "$conf_file")"
-                    printf '%s\n' "$tmp" > "$conf_file"
+                    printf '%s\n' "$tmp" >"$conf_file"
                 else
-                    echo "KARGO_ENABLED=true" >> "$conf_file"
+                    echo "KARGO_ENABLED=true" >>"$conf_file"
                 fi
                 print_info "Set KARGO_ENABLED=true in .infra-ctl.conf"
             fi
@@ -538,9 +549,9 @@ cmd_upgrade_argocd() {
 
     gum spin --title "Upgrading ArgoCD..." -- \
         helm upgrade argocd argo/argo-cd \
-            --namespace argocd \
-            --values "$values_file" \
-            --wait --timeout 120s
+        --namespace argocd \
+        --values "$values_file" \
+        --wait --timeout 120s
 
     print_success "ArgoCD upgraded."
     echo ""
@@ -562,9 +573,9 @@ cmd_upgrade_kargo() {
 
     gum spin --title "Upgrading Kargo..." -- \
         helm upgrade kargo \
-            oci://ghcr.io/akuity/kargo-charts/kargo \
-            --namespace kargo \
-            --wait --timeout 120s
+        oci://ghcr.io/akuity/kargo-charts/kargo \
+        --namespace kargo \
+        --wait --timeout 120s
 
     print_success "Kargo upgraded."
     echo ""
@@ -619,15 +630,15 @@ main() {
     shift
 
     case "$command" in
-        init-cluster)       cmd_init_cluster "$@" ;;
-        delete-cluster)     cmd_delete_cluster "$@" ;;
-        add-repo-creds)     cmd_add_repo_creds "$@" ;;
-        add-kargo-creds)    cmd_add_kargo_creds "$@" ;;
-        upgrade-argocd)     cmd_upgrade_argocd "$@" ;;
-        upgrade-kargo)      cmd_upgrade_kargo "$@" ;;
-        status)             cmd_status "$@" ;;
-        preflight-check)    cmd_preflight_check "$@" ;;
-        -h|--help)          usage ;;
+        init-cluster) cmd_init_cluster "$@" ;;
+        delete-cluster) cmd_delete_cluster "$@" ;;
+        add-repo-creds) cmd_add_repo_creds "$@" ;;
+        add-kargo-creds) cmd_add_kargo_creds "$@" ;;
+        upgrade-argocd) cmd_upgrade_argocd "$@" ;;
+        upgrade-kargo) cmd_upgrade_kargo "$@" ;;
+        status) cmd_status "$@" ;;
+        preflight-check) cmd_preflight_check "$@" ;;
+        -h | --help) usage ;;
         *)
             print_error "Unknown command: $command"
             usage

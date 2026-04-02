@@ -259,6 +259,20 @@ Shows current cluster status: k3d clusters, kubectl context, and ArgoCD pod heal
 cluster-ctl.sh status
 ```
 
+### k3d cluster architecture
+
+k3d runs Kubernetes (k3s) inside Docker containers. Each cluster has several containers:
+
+- **Server node** (`k3d-<name>-server-0`) -- runs the k3s control plane (API server, scheduler, etcd). This is where `kubectl` commands are processed.
+- **Agent nodes** (`k3d-<name>-agent-N`) -- worker nodes that run your application pods. They communicate with the server node over the Docker network but do not run an API server themselves.
+- **Load balancer** (`k3d-<name>-serverlb`) -- a lightweight container that forwards host ports (80, 443) into the cluster for ingress traffic. This replaces the k3s built-in ServiceLB (klipper-lb), which is disabled because it runs redundant iptables pods on every node and causes errors on agent nodes.
+
+The k3d entrypoint script on every node runs `kubectl uncordon` in a loop until the node is ready. On agent nodes, `kubectl` has no kubeconfig by default and falls back to `localhost:8080`, which doesn't exist (only server nodes run the API server). The cluster creation passes `KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig` to agent nodes so this loop can reach the API server through the internal cluster address.
+
+#### Kargo TLS
+
+When Kargo is installed, TLS termination is handled by Traefik (the k3s built-in ingress controller), not by the Kargo API server itself. Two Helm values control this: `api.tls.enabled=false` disables TLS on the Kargo API server, and `api.tls.terminatedUpstream=true` tells Kargo that an upstream proxy has already terminated TLS. Both are required; without `terminatedUpstream`, Kargo doesn't know the connection was secured and may reject requests or refuse to set secure cookies.
+
 ## Templates
 
 Templates live in `templates/` and use `{{PLACEHOLDER}}` markers that get replaced when generating files. They're organized by where their output ends up:
