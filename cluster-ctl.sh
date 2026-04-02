@@ -230,7 +230,7 @@ spec:
               service:
                 name: kargo-api
                 port:
-                  number: 443
+                  number: 80
 KARGOINGRESS
             print_success "Kargo Ingress created at kargo.localhost"
 
