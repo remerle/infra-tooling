@@ -611,29 +611,8 @@ EOF
         done
         print_success "RoleBindings created for namespaced access."
     else
-        # Cluster-scoped role: detect if admin-readonly-settings or other
-        if [[ -f "${platform_dir}/${group}-clusterrole.yaml" ]]; then
-            # Has a custom clusterrole (viewer or custom)
-            local clusterrole_name
-            clusterrole_name="$(yq '.metadata.name' "${platform_dir}/${group}-clusterrole.yaml")"
-
-            kubectl apply -f - <<EOF
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: ${sa_name}
-  labels:
-    app.kubernetes.io/managed-by: user-ctl
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: ${clusterrole_name}
-subjects:
-  - kind: ServiceAccount
-    name: ${sa_name}
-    namespace: kube-system
-EOF
-        else
+        # Cluster-scoped role: detect preset by checking the bindings file
+        if grep -q "name: admin$" "${platform_dir}/${group}-clusterrolebinding.yaml" 2>/dev/null; then
             # admin-readonly-settings: bind to both admin and cluster-readonly
             kubectl apply -f - <<EOF
 apiVersion: rbac.authorization.k8s.io/v1
@@ -662,6 +641,27 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: ${group}-cluster-readonly
+subjects:
+  - kind: ServiceAccount
+    name: ${sa_name}
+    namespace: kube-system
+EOF
+        elif [[ -f "${platform_dir}/${group}-clusterrole.yaml" ]]; then
+            # viewer or custom: bind to the single clusterrole
+            local clusterrole_name
+            clusterrole_name="$(yq '.metadata.name' "${platform_dir}/${group}-clusterrole.yaml")"
+
+            kubectl apply -f - <<EOF
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ${sa_name}
+  labels:
+    app.kubernetes.io/managed-by: user-ctl
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ${clusterrole_name}
 subjects:
   - kind: ServiceAccount
     name: ${sa_name}
