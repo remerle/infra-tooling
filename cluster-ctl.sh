@@ -264,6 +264,60 @@ cmd_status() {
     echo ""
 }
 
+cmd_add_repo_creds() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    load_conf
+
+    print_header "Configure ArgoCD Repository Credentials"
+    echo ""
+
+    # Verify ArgoCD is installed
+    if ! kubectl get namespace argocd &>/dev/null; then
+        print_error "ArgoCD namespace not found."
+        print_info "Run 'cluster-ctl.sh init-cluster' and install ArgoCD first."
+        exit 1
+    fi
+
+    print_info "Repository: ${REPO_URL}"
+    echo ""
+
+    # Check for existing credential
+    local existing
+    existing="$(kubectl get secret repo-creds -n argocd -o name 2>/dev/null)" || true
+    if [[ -n "$existing" ]]; then
+        print_warning "Repository credentials already exist."
+        if ! gum confirm "Overwrite existing credentials?"; then
+            print_warning "Aborted."
+            exit 0
+        fi
+        echo ""
+    fi
+
+    # Prompt for PAT
+    local pat
+    pat="$(gum input --password --prompt "GitHub PAT (needs repo read access): ")"
+    if [[ -z "$pat" ]]; then
+        print_error "A GitHub PAT is required."
+        exit 1
+    fi
+
+    # Create or replace the secret
+    kubectl create secret generic repo-creds \
+        --namespace argocd \
+        --from-literal=type=git \
+        --from-literal=url="${REPO_URL}" \
+        --from-literal=username=git \
+        --from-literal=password="${pat}" \
+        --dry-run=client -o yaml \
+        | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml \
+        | kubectl apply -f -
+
+    echo ""
+    print_success "ArgoCD repository credentials configured for ${REPO_URL}"
+    echo ""
+}
+
 cmd_upgrade_argocd() {
     require_gum
     require_cmd "kubectl" "brew install kubectl"
