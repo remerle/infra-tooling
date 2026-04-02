@@ -633,7 +633,7 @@ All services are accessible via Ingress on `.localhost` domains (requires ports 
 | Service | URL | Notes |
 |---------|-----|-------|
 | ArgoCD UI | https://argocd.localhost | username: `admin`, password: shown during `cluster-ctl.sh init-cluster` |
-| Kargo UI | https://kargo.localhost | username: `admin`, password: auto-generated, shown during `cluster-ctl.sh init-cluster` |
+| Kargo UI | https://kargo.localhost | username: `admin`, password: set during `cluster-ctl.sh init-cluster` |
 | Frontend app | https://app.localhost | Requires Ingress in `k8s/apps/frontend/base/ingress.yaml` |
 
 When HTTPS is enabled, the mkcert certificate includes explicit SANs for `argocd.localhost`, `kargo.localhost`, and `app.localhost` (wildcard `*.localhost` is unreliable on macOS). If you add other `.localhost` services, add their hostnames to the `mkcert` command in `cluster-ctl.sh`.

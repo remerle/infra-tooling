@@ -185,8 +185,20 @@ EOF
             echo ""
         fi
 
-        local kargo_password
-        kargo_password="$(openssl rand -base64 48 | tr -d '=+/' | head -c 32)"
+        local kargo_password kargo_password_confirm
+        while true; do
+            kargo_password="$(gum input --password --prompt "Kargo admin password: ")"
+            if [[ -z "$kargo_password" ]]; then
+                print_error "Password cannot be empty."
+                continue
+            fi
+            kargo_password_confirm="$(gum input --password --prompt "Confirm password: ")"
+            if [[ "$kargo_password" != "$kargo_password_confirm" ]]; then
+                print_error "Passwords do not match."
+                continue
+            fi
+            break
+        done
 
         local kargo_hash
         kargo_hash="$(htpasswd -bnBC 10 "" "$kargo_password" | tr -d ':\n')"
@@ -287,7 +299,6 @@ KARGOINGRESS
     if [[ "${kargo_installed:-}" == true ]]; then
         echo ""
         print_info "Kargo UI: ${proto}://kargo.localhost (username: admin)"
-        print_info "Kargo admin password: ${kargo_password}"
     fi
 
     # Next steps
