@@ -4,8 +4,6 @@ metadata:
   name: {{APP_NAME}}
 spec:
   clusterIP: None
-  selector:
-    app: {{APP_NAME}}
   ports:
     - port: {{PORT}}
       targetPort: {{PORT}}

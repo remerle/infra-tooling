@@ -3,8 +3,6 @@ kind: Service
 metadata:
   name: {{APP_NAME}}
 spec:
-  selector:
-    app: {{APP_NAME}}
   ports:
     - port: {{PORT}}
       targetPort: {{PORT}}
