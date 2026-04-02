@@ -18,10 +18,14 @@ cmd_init() {
     print_header "Initialize GitOps Repository"
     echo ""
 
-    # Detect repo URL from git remote, prompt with it as default
+    # Detect repo URL from git remote, prompt with it as default.
+    # Convert SSH URLs to HTTPS since ArgoCD uses HTTPS for repo access.
     local default_url=""
     if git -C "$TARGET_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
         default_url="$(git -C "$TARGET_DIR" remote get-url origin 2>/dev/null || true)"
+        if [[ "$default_url" =~ ^git@github\.com:(.+)$ ]]; then
+            default_url="https://github.com/${BASH_REMATCH[1]}"
+        fi
     fi
 
     local repo_url
