@@ -15,7 +15,7 @@
   }
 
   .root {
-    width: 1100px;
+    width: 1200px;
     padding: 24px;
     background: rgba(10, 14, 20, 0.97);
     border: 1px solid rgba(48, 54, 61, 0.8);
@@ -30,7 +30,8 @@
     display: grid;
     gap: 16px;
   }
-  .cluster-row-3 { grid-template-columns: 1.3fr 1fr 1fr; }
+  .cluster-row-2 { grid-template-columns: 1fr 1fr; }
+  .cluster-row-3 { grid-template-columns: 1fr 1fr 1fr; }
 
   .ns {
     border-radius: 10px;
@@ -71,6 +72,10 @@
   .header-staging {
     background: linear-gradient(135deg, #b35c15 0%, #da6d28 100%);
     box-shadow: 0 1px 8px rgba(218, 109, 40, 0.25);
+  }
+  .header-system {
+    background: linear-gradient(135deg, #3d444d 0%, #565e68 100%);
+    box-shadow: 0 1px 8px rgba(86, 94, 104, 0.2);
   }
 
   .ns-body {
@@ -156,10 +161,10 @@
     border: 1px solid rgba(139, 148, 158, 0.25);
   }
 
-  .tag-user {
-    background: rgba(88, 166, 255, 0.12);
-    color: #79c0ff;
-    border: 1px solid rgba(31, 111, 235, 0.4);
+  .tag-sealed {
+    background: rgba(194, 24, 91, 0.12);
+    color: #f48fb1;
+    border: 1px solid rgba(194, 24, 91, 0.4);
   }
 
   /* ── Sync flow section ── */
@@ -250,78 +255,68 @@
     color: #484f58;
     font-size: 10px;
   }
-
-  .dashed {
-    border: 1px dashed rgba(88, 166, 255, 0.25) !important;
-  }
-  .dashed .resource-name {
-    color: #7d8590;
-    font-style: italic;
-  }
 </style>
 </head>
 <body>
 <div class="root">
 
-  <div class="cluster-row cluster-row-3">
+  <!-- Row 1: ArgoCD namespace (full width) -->
+  <div class="ns">
+    <div class="ns-header header-argocd">namespace: argocd <span class="ns-kind">Namespace</span></div>
+    <div class="ns-body" style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;">
 
-    <!-- argocd namespace -->
-    <div class="ns">
-      <div class="ns-header header-argocd">namespace: argocd <span class="ns-kind">Namespace</span></div>
-      <div class="ns-body">
+      <div>
         <div class="resource">
           <div class="resource-name">parent-app <span class="tag tag-kind">Application</span></div>
           <div class="resource-desc">Watches argocd/apps/. Auto-discovers and syncs all child Applications.</div>
           <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/parent-app.yaml</span></div>
         </div>
-        <div class="resource">
-          <div class="resource-name">projects <span class="tag tag-kind">Application</span></div>
-          <div class="resource-desc">Watches argocd/projects/. Syncs AppProject resources.</div>
-          <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/apps/projects.yaml</span></div>
-        </div>
-        <div class="resource">
-          <div class="resource-name">platform-team <span class="tag tag-kind">AppProject</span></div>
-          <div class="resource-desc">RBAC boundary for all three apps. Controls repo and namespace access.</div>
-          <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/projects/platform-team.yaml</span></div>
-        </div>
+      </div>
 
+      <div style="display: flex; flex-direction: column; gap: 6px;">
         <div class="app-group">
           <div class="app-group-label">frontend</div>
           <div class="resource">
             <div class="resource-name">frontend-dev <span class="tag tag-kind">Application</span></div>
             <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/apps/frontend-dev.yaml</span></div>
           </div>
-          <div class="resource">
+          <div class="resource" style="margin-top: 4px;">
             <div class="resource-name">frontend-staging <span class="tag tag-kind">Application</span></div>
             <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/apps/frontend-staging.yaml</span></div>
           </div>
         </div>
+      </div>
 
+      <div style="display: flex; flex-direction: column; gap: 6px;">
         <div class="app-group">
           <div class="app-group-label">backend</div>
           <div class="resource">
             <div class="resource-name">backend-dev <span class="tag tag-kind">Application</span></div>
             <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/apps/backend-dev.yaml</span></div>
           </div>
-          <div class="resource">
+          <div class="resource" style="margin-top: 4px;">
             <div class="resource-name">backend-staging <span class="tag tag-kind">Application</span></div>
             <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/apps/backend-staging.yaml</span></div>
           </div>
         </div>
-
         <div class="app-group">
-          <div class="app-group-label">database</div>
+          <div class="app-group-label">postgres</div>
           <div class="resource">
-            <div class="resource-name">database-dev <span class="tag tag-kind">Application</span></div>
-            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/apps/database-dev.yaml</span></div>
+            <div class="resource-name">postgres-dev <span class="tag tag-kind">Application</span></div>
+            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/apps/postgres-dev.yaml</span></div>
           </div>
-          <div class="resource">
-            <div class="resource-name">database-staging <span class="tag tag-kind">Application</span></div>
-            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/apps/database-staging.yaml</span></div>
+          <div class="resource" style="margin-top: 4px;">
+            <div class="resource-name">postgres-staging <span class="tag tag-kind">Application</span></div>
+            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">argocd/apps/postgres-staging.yaml</span></div>
           </div>
         </div>
       </div>
+
     </div>
+  </div>
+
+  <!-- Row 2: dev and staging namespaces -->
+  <div class="cluster-row cluster-row-2">
 
     <!-- dev namespace -->
     <div class="ns">
@@ -331,11 +326,12 @@
           <div class="app-group-label">frontend</div>
           <div class="resource">
             <div class="resource-name">frontend <span class="tag tag-kind">Deployment</span></div>
+            <div class="resource-desc">SvelteKit app, proxies API to backend. Image: ghcr.io/remerle/k8s-practice-frontend</div>
             <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/frontend/overlays/dev/</span></div>
           </div>
           <div class="resource">
             <div class="resource-name">frontend <span class="tag tag-kind">Service</span></div>
-            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/frontend/base/</span></div>
+            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/frontend/base/service.yaml</span></div>
           </div>
         </div>
 
@@ -343,29 +339,34 @@
           <div class="app-group-label">backend</div>
           <div class="resource">
             <div class="resource-name">backend <span class="tag tag-kind">Deployment</span></div>
+            <div class="resource-desc">Fastify REST API. Image: ghcr.io/remerle/k8s-practice-backend</div>
             <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/backend/overlays/dev/</span></div>
           </div>
           <div class="resource">
             <div class="resource-name">backend <span class="tag tag-kind">Service</span></div>
-            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/backend/base/</span></div>
+            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/backend/base/service.yaml</span></div>
+          </div>
+          <div class="resource">
+            <div class="resource-name">backend-secrets <span class="tag tag-kind">Secret</span> <span class="tag tag-sealed">sealed</span></div>
+            <div class="resource-desc">DATABASE_URL connection string</div>
           </div>
         </div>
 
         <div class="app-group">
-          <div class="app-group-label">database</div>
+          <div class="app-group-label">postgres</div>
           <div class="resource">
-            <div class="resource-name">database <span class="tag tag-kind">Deployment</span></div>
-            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/database/overlays/dev/</span></div>
+            <div class="resource-name">postgres <span class="tag tag-kind">StatefulSet</span></div>
+            <div class="resource-desc">PostgreSQL 16. PVC for /var/lib/postgresql/data</div>
+            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/postgres/overlays/dev/</span></div>
           </div>
           <div class="resource">
-            <div class="resource-name">database <span class="tag tag-kind">Service</span></div>
-            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/database/base/</span></div>
+            <div class="resource-name">postgres <span class="tag tag-kind">Service</span> <span class="tag tag-kind">headless</span></div>
+            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/postgres/base/service.yaml</span></div>
           </div>
-        </div>
-
-        <div class="resource dashed">
-          <div class="resource-name">+ your resources <span class="tag tag-user">user-defined</span></div>
-          <div class="resource-desc">ConfigMaps, Secrets, PVCs, Ingress, etc.</div>
+          <div class="resource">
+            <div class="resource-name">postgres-secrets <span class="tag tag-kind">Secret</span> <span class="tag tag-sealed">sealed</span></div>
+            <div class="resource-desc">username + password</div>
+          </div>
         </div>
       </div>
     </div>
@@ -382,7 +383,6 @@
           </div>
           <div class="resource">
             <div class="resource-name">frontend <span class="tag tag-kind">Service</span></div>
-            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/frontend/base/</span></div>
           </div>
         </div>
 
@@ -394,25 +394,46 @@
           </div>
           <div class="resource">
             <div class="resource-name">backend <span class="tag tag-kind">Service</span></div>
-            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/backend/base/</span></div>
+          </div>
+          <div class="resource">
+            <div class="resource-name">backend-secrets <span class="tag tag-kind">Secret</span> <span class="tag tag-sealed">sealed</span></div>
           </div>
         </div>
 
         <div class="app-group">
-          <div class="app-group-label">database</div>
+          <div class="app-group-label">postgres</div>
           <div class="resource">
-            <div class="resource-name">database <span class="tag tag-kind">Deployment</span></div>
-            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/database/overlays/staging/</span></div>
+            <div class="resource-name">postgres <span class="tag tag-kind">StatefulSet</span></div>
+            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/postgres/overlays/staging/</span></div>
           </div>
           <div class="resource">
-            <div class="resource-name">database <span class="tag tag-kind">Service</span></div>
-            <div class="resource-source"><span class="source-arrow">&larr;</span> <span class="file">k8s/apps/database/base/</span></div>
+            <div class="resource-name">postgres <span class="tag tag-kind">Service</span> <span class="tag tag-kind">headless</span></div>
+          </div>
+          <div class="resource">
+            <div class="resource-name">postgres-secrets <span class="tag tag-kind">Secret</span> <span class="tag tag-sealed">sealed</span></div>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
 
-        <div class="resource dashed">
-          <div class="resource-name">+ your resources <span class="tag tag-user">user-defined</span></div>
-          <div class="resource-desc">ConfigMaps, Secrets, PVCs, Ingress, etc.</div>
+  <!-- Row 3: system namespaces -->
+  <div class="cluster-row cluster-row-2">
+    <div class="ns">
+      <div class="ns-header header-system">namespace: sealed-secrets <span class="ns-kind">Namespace</span></div>
+      <div class="ns-body">
+        <div class="resource">
+          <div class="resource-name">sealed-secrets-controller <span class="tag tag-kind">Deployment</span></div>
+          <div class="resource-desc">Decrypts SealedSecret resources into Secrets. Installed by secret-ctl.sh init.</div>
+        </div>
+      </div>
+    </div>
+    <div class="ns">
+      <div class="ns-header header-system">namespace: kube-system <span class="ns-kind">Namespace</span></div>
+      <div class="ns-body">
+        <div class="resource">
+          <div class="resource-name">metrics-server <span class="tag tag-kind">Deployment</span></div>
+          <div class="resource-desc">Enables kubectl top. Installed by cluster-ctl.sh init-cluster.</div>
         </div>
       </div>
     </div>
@@ -424,7 +445,7 @@
     <div class="flow-row">
       <div class="flow-step">
         <div class="flow-num flow-num-green">1</div>
-        <span class="flow-desc">You push a change to Git (e.g., update image tag in</span>
+        <span class="flow-desc">Push a change to Git (e.g., update image tag in</span>
         <span class="flow-box flow-git">k8s/apps/backend/overlays/dev/</span>
         <span class="flow-desc">)</span>
       </div>
@@ -453,7 +474,9 @@
   <!-- Legend -->
   <div class="legend">
     <div class="legend-item"><div class="legend-dot" style="background:#9b6dff"></div> ArgoCD control plane</div>
-    <div class="legend-item"><div class="legend-dot" style="background:#1a6eff"></div> App workloads</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#1a6eff"></div> Dev workloads</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#da6d28"></div> Staging workloads</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#f48fb1"></div> Sealed Secret</div>
     <div class="legend-item"><span style="font-family: 'JetBrains Mono'; font-size: 10px; color: #6e7681;">&larr; file</span> Source in repo</div>
   </div>
 
