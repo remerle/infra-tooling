@@ -247,9 +247,9 @@ The application lives at [github.com/remerle/k8s-practice-app](https://github.co
 ### 1. Create the cluster and initialize the repo
 
 ```bash
-# Create a local k3d cluster with ArgoCD
+# Create a local k3d cluster with ArgoCD and Kargo
 cluster-ctl.sh init-cluster
-# Answer: expose ports 80/443? yes, install ArgoCD? yes
+# Answer: expose ports 80/443? yes, install ArgoCD? yes, install Kargo? yes
 
 # Initialize the GitOps repo structure
 infra-ctl.sh init
@@ -271,17 +271,20 @@ This creates namespace manifests and sets up the overlay directories that will h
 # Backend API (Deployment, port 3000)
 infra-ctl.sh add-app backend
 # Choose: Deployment, port 3000
+# Kargo: accept default image ghcr.io/remerle/k8s-practice-backend
 
 # Frontend (Deployment, port 3000)
 infra-ctl.sh add-app frontend
 # Choose: Deployment, port 3000
+# Kargo: accept default image ghcr.io/remerle/k8s-practice-frontend
 
 # PostgreSQL (StatefulSet, port 5432)
 infra-ctl.sh add-app postgres
 # Choose: StatefulSet, port 5432
+# Kargo: not applicable (postgres uses a public upstream image, not built by CI)
 ```
 
-Each command generates a Kustomize base, per-env overlays, and ArgoCD Application manifests.
+Each command generates a Kustomize base, per-env overlays, and ArgoCD Application manifests. For backend and frontend, Kargo resources are also generated: a Warehouse (watches the container registry for new tags) and Stages (one per environment in the promotion pipeline). Postgres doesn't get Kargo resources because it uses `postgres:16-alpine` directly rather than a CI-built image.
 
 ### 4. Write the actual Kubernetes manifests
 
@@ -458,7 +461,29 @@ kubectl create secret generic backend-secrets -n dev \
   --from-literal=database-url=postgresql://appuser:devpassword@postgres:5432/app
 ```
 
-### 6. Commit and push
+### 6. Configure repository credentials
+
+For a private GitOps repo, ArgoCD needs read access and Kargo needs read+write access. Both commands prompt for a GitHub Personal Access Token.
+
+```bash
+# ArgoCD: repo read access (one-time, cluster-wide)
+cluster-ctl.sh add-repo-creds
+# Enter a GitHub PAT with repo read access
+
+# Kargo: Git write + optional registry read (per app)
+cluster-ctl.sh add-kargo-creds backend
+# Enter a GitHub PAT with repo read+write access
+# Answer: is the container registry private? (yes if ghcr.io repo is private)
+
+cluster-ctl.sh add-kargo-creds frontend
+# Same PAT works, same registry answer
+```
+
+Postgres doesn't need Kargo credentials because it has no Kargo resources (no Warehouse or Stages were generated for it).
+
+For a public repo, skip this step entirely. ArgoCD can read public repos without credentials, and Kargo only needs credentials for private repos and registries.
+
+### 7. Commit and push
 
 ```bash
 git add -A
@@ -468,17 +493,24 @@ git push
 
 ArgoCD detects the changes and deploys everything. The parent app watches `argocd/apps/`, sees the Application manifests, and each Application syncs its overlay to the cluster.
 
-### 7. Verify
+### 8. Verify
 
 ```bash
 # Check ArgoCD sync status
 kubectl get applications -n argocd
+
+# Check Kargo stages
+kubectl get stages -n backend
+kubectl get stages -n frontend
 
 # Check running pods
 kubectl get pods -n dev
 
 # Open the frontend (no port-forward needed)
 open http://app.localhost
+
+# Open Kargo dashboard
+open http://kargo.localhost
 ```
 
 ### What you end up with
