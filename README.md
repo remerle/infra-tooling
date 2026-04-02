@@ -435,7 +435,7 @@ kubectl create secret generic backend-secrets -n dev \
   --from-literal=database-url=postgresql://appuser:devpassword@postgres:5432/app
 ```
 
-### 7. Commit and push
+### 6. Commit and push
 
 ```bash
 git add -A
@@ -445,7 +445,7 @@ git push
 
 ArgoCD detects the changes and deploys everything. The parent app watches `argocd/apps/`, sees the Application manifests, and each Application syncs its overlay to the cluster.
 
-### 8. Verify
+### 7. Verify
 
 ```bash
 # Check ArgoCD sync status
@@ -464,3 +464,53 @@ kubectl port-forward svc/frontend -n dev 3000:3000
 ![Cluster View](docs/cluster-view.png)
 
 Every resource in the cluster traces back to a file in the repo. ArgoCD watches Git and keeps the cluster in sync automatically: push a change, and the cluster converges to match.
+
+## How GitOps Works
+
+Once your application is deployed, two systems keep the cluster in sync with your Git repository: ArgoCD handles continuous deployment, and Kargo (if enabled) handles image promotion between environments.
+
+### ArgoCD: Continuous Deployment
+
+ArgoCD is the engine that turns Git commits into running workloads. It doesn't build anything; it watches your repository for changes and applies them to the cluster.
+
+![ArgoCD Sync Flow](docs/argocd-flow.png)
+
+The `parent-app` Application is the entry point. It watches the `argocd/apps/` directory and automatically discovers every Application manifest in it. Each Application manifest (e.g., `backend-dev.yaml`) tells ArgoCD: "take the Kustomize overlay at `k8s/apps/backend/overlays/dev/`, build it, and deploy the result to the `dev` namespace."
+
+When you push a change, ArgoCD detects the drift within its polling interval (default 3 minutes), re-renders the manifests via `kustomize build`, and applies the diff. Two policies enforce GitOps discipline: `selfHeal` reverts any manual `kubectl` edits back to match Git, and `prune` deletes resources that have been removed from the repo. Git is the single source of truth; the cluster converges to match it.
+
+To access the ArgoCD dashboard:
+
+```bash
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+# Open https://localhost:8080 (username: admin)
+# Get the password:
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
+```
+
+### Kargo: Image Promotion (Optional)
+
+If Kargo is enabled, it automates the process of promoting new container images through your environment pipeline. Without Kargo, you'd manually edit the `newTag` field in each overlay's `kustomization.yaml` and commit; Kargo does this for you.
+
+![Kargo Promotion Flow](docs/kargo-flow.png)
+
+The promotion pipeline is defined in `kargo/promotion-order.txt` (default: dev, staging, production). Each app gets a Warehouse that watches the container registry for new image tags. When CI pushes a new image, the Warehouse creates a Freight object, and the first Stage (dev) picks it up.
+
+Each Stage promotion is a four-step process: clear the git worktree, update the overlay's image tag via `kustomize-set-image`, commit and push to the GitOps repo, then trigger an ArgoCD sync. The next Stage in the chain won't promote until the previous one succeeds, so images are verified in dev before reaching staging, and in staging before reaching production.
+
+Kargo doesn't replace ArgoCD; it feeds it. Kargo writes to Git, ArgoCD reads from Git and deploys. They work together but can operate independently.
+
+To access the Kargo dashboard:
+
+```bash
+kubectl port-forward svc/kargo-api -n kargo 8443:443
+# Open https://localhost:8443
+```
+
+### Local Access URLs
+
+| Service | URL | Port-forward command |
+|---------|-----|---------------------|
+| ArgoCD UI | https://localhost:8080 | `kubectl port-forward svc/argocd-server -n argocd 8080:443` |
+| Kargo UI | https://localhost:8443 | `kubectl port-forward svc/kargo-api -n kargo 8443:443` |
+| Frontend app | http://localhost:3000 | `kubectl port-forward svc/frontend -n dev 3000:3000` |

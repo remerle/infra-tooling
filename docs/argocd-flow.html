@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: transparent;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #c9d1d9;
+    padding: 0;
+  }
+
+  .root {
+    width: 1100px;
+    padding: 24px;
+    background: rgba(10, 14, 20, 0.97);
+    border: 1px solid rgba(48, 54, 61, 0.8);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #e6edf3;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    text-align: center;
+  }
+
+  /* ── Flow pipeline ── */
+  .pipeline {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  .stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+  }
+
+  .stage-box {
+    border-radius: 10px;
+    border: 1px solid rgba(48, 54, 61, 0.6);
+    background: rgba(13, 17, 23, 0.95);
+    padding: 16px;
+    width: 100%;
+    text-align: center;
+  }
+
+  .stage-icon {
+    font-size: 28px;
+    margin-bottom: 8px;
+  }
+
+  .stage-label {
+    font-size: 12px;
+    font-weight: 700;
+    color: #e6edf3;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+
+  .stage-detail {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    color: #7d8590;
+    line-height: 1.6;
+  }
+
+  .stage-detail .highlight {
+    color: #d2a8ff;
+    font-weight: 500;
+  }
+
+  .stage-detail .file {
+    color: #79c0ff;
+  }
+
+  .stage-detail .action {
+    color: #3fb950;
+  }
+
+  /* ── Arrow connectors ── */
+  .arrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 60px;
+    flex-shrink: 0;
+    position: relative;
+  }
+
+  .arrow-line {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .arrow-symbol {
+    font-size: 22px;
+    color: #484f58;
+    font-weight: 600;
+  }
+
+  .arrow-text {
+    font-size: 9px;
+    color: #6e7681;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    white-space: nowrap;
+  }
+
+  /* ── Stage colors ── */
+  .stage-git .stage-box { border-color: rgba(35, 134, 54, 0.5); }
+  .stage-git .stage-label { color: #3fb950; }
+
+  .stage-argocd .stage-box { border-color: rgba(137, 87, 229, 0.5); }
+  .stage-argocd .stage-label { color: #d2a8ff; }
+
+  .stage-kustomize .stage-box { border-color: rgba(31, 111, 235, 0.5); }
+  .stage-kustomize .stage-label { color: #58a6ff; }
+
+  .stage-cluster .stage-box { border-color: rgba(218, 109, 40, 0.5); }
+  .stage-cluster .stage-label { color: #ffa657; }
+
+  /* ── Detail rows below pipeline ── */
+  .detail-section {
+    border: 1px solid rgba(48, 54, 61, 0.6);
+    border-radius: 10px;
+    background: rgba(13, 17, 23, 0.95);
+    padding: 14px 18px;
+  }
+
+  .detail-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #e6edf3;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 10px;
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 24px;
+  }
+
+  .detail-item {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .detail-num {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    flex-shrink: 0;
+    background: rgba(137, 87, 229, 0.2);
+    color: #d2a8ff;
+    border: 1px solid rgba(137, 87, 229, 0.4);
+  }
+
+  .detail-text {
+    color: #7d8590;
+  }
+
+  .detail-text .mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10.5px;
+    color: #8b949e;
+  }
+
+  .detail-text strong {
+    color: #e6edf3;
+    font-weight: 600;
+  }
+
+  /* ── Access info ── */
+  .access-bar {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    padding: 8px 0 0;
+  }
+
+  .access-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+  }
+
+  .access-label {
+    color: #7d8590;
+  }
+
+  .access-url {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: #58a6ff;
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+<div class="root">
+
+  <div class="title">ArgoCD Sync Flow</div>
+
+  <!-- Pipeline -->
+  <div class="pipeline">
+    <div class="stage stage-git">
+      <div class="stage-box">
+        <div class="stage-label">Git Repository</div>
+        <div class="stage-detail">
+          <span class="file">argocd/apps/*.yaml</span><br>
+          <span class="file">k8s/apps/*/overlays/*/</span><br>
+          <span class="file">k8s/apps/*/base/</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow">
+      <div class="arrow-line">
+        <span class="arrow-text">polls</span>
+        <span class="arrow-symbol">&rarr;</span>
+      </div>
+    </div>
+
+    <div class="stage stage-argocd">
+      <div class="stage-box">
+        <div class="stage-label">ArgoCD</div>
+        <div class="stage-detail">
+          <span class="highlight">parent-app</span> watches<br>
+          <span class="file">argocd/apps/</span> directory<br>
+          finds <span class="highlight">Application</span> manifests
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow">
+      <div class="arrow-line">
+        <span class="arrow-text">builds</span>
+        <span class="arrow-symbol">&rarr;</span>
+      </div>
+    </div>
+
+    <div class="stage stage-kustomize">
+      <div class="stage-box">
+        <div class="stage-label">Kustomize</div>
+        <div class="stage-detail">
+          Merges <span class="file">base/</span> +<br>
+          <span class="file">overlays/&lt;env&gt;/</span><br>
+          Sets <span class="action">image tag</span>, <span class="action">replicas</span>, <span class="action">config</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow">
+      <div class="arrow-line">
+        <span class="arrow-text">applies</span>
+        <span class="arrow-symbol">&rarr;</span>
+      </div>
+    </div>
+
+    <div class="stage stage-cluster">
+      <div class="stage-box">
+        <div class="stage-label">Cluster</div>
+        <div class="stage-detail">
+          Deploys to <span class="action">namespace</span><br>
+          <span class="action">selfHeal</span>: reverts manual changes<br>
+          <span class="action">prune</span>: deletes removed resources
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- What ArgoCD does step by step -->
+  <div class="detail-section">
+    <div class="detail-title">What ArgoCD does on every sync</div>
+    <div class="detail-grid">
+      <div class="detail-item">
+        <div class="detail-num">1</div>
+        <div class="detail-text"><strong>Poll Git</strong> for changes to <span class="mono">argocd/apps/</span> and the overlay paths each Application references (default: every 3 minutes)</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-num">2</div>
+        <div class="detail-text"><strong>Detect drift</strong> by comparing the rendered manifests against what's running in the cluster</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-num">3</div>
+        <div class="detail-text"><strong>Render manifests</strong> by running <span class="mono">kustomize build</span> on the overlay path specified in each Application</div>
+      </div>
+      <div class="detail-item">
+        <div class="detail-num">4</div>
+        <div class="detail-text"><strong>Apply changes</strong> to the target namespace. Create new resources, update changed ones, delete removed ones</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Access URLs -->
+  <div class="access-bar">
+    <div class="access-item">
+      <span class="access-label">ArgoCD UI:</span>
+      <span class="access-url">https://localhost:8080</span>
+    </div>
+    <div class="access-item">
+      <span class="access-label">Port-forward:</span>
+      <span class="access-url">kubectl port-forward svc/argocd-server -n argocd 8080:443</span>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
