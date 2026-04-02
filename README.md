@@ -75,7 +75,10 @@ These scripts are designed to be run from a separate GitOps repository, not from
 ```bash
 # Add to your shell profile (~/.zshrc, ~/.bashrc, etc.)
 # Run this from the directory that you cloned the project to
-echo "export PATH=\"$(pwd):$PATH\"" >> ~/.zshrc
+echo "export PATH=\"$(pwd):\$PATH\"  # infra-tooling" >> ~/.zshrc
+
+# Optional: enable tab completions for all commands
+echo "source $(pwd)/completions.zsh  # infra-tooling" >> ~/.zshrc
 ```
 
 Then from any GitOps repo:

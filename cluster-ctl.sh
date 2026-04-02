@@ -97,12 +97,7 @@ cmd_init_cluster() {
                 --wait --timeout 120s
 
         print_success "ArgoCD installed via Helm."
-
-        echo ""
-        print_info "ArgoCD UI: http://argocd.localhost (username: admin)"
-        print_info "Get the admin password with:"
-        print_info "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
-        print_info "If your GitOps repo is private, run: cluster-ctl.sh add-repo-creds"
+        local argocd_installed=true
     fi
 
     # Prompt for Kargo installation
@@ -154,9 +149,7 @@ KARGOINGRESS
             print_info "Set KARGO_ENABLED=true in .infra-ctl.conf"
         fi
 
-        echo ""
-        print_info "Kargo UI: http://kargo.localhost"
-        print_info "If your repo or registry is private, run: cluster-ctl.sh add-kargo-creds <app> (after adding apps)"
+        local kargo_installed=true
     fi
 
     # Summary
@@ -167,6 +160,29 @@ KARGOINGRESS
     print_info "Cluster:  ${cluster_name}"
     print_info "Context:  ${context}"
     print_info "Agents:   ${agents}"
+
+    if [[ "${argocd_installed:-}" == true ]]; then
+        echo ""
+        print_info "ArgoCD UI: http://argocd.localhost (username: admin)"
+        print_info "Get the admin password with:"
+        print_info "  kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d"
+    fi
+
+    if [[ "${kargo_installed:-}" == true ]]; then
+        echo ""
+        print_info "Kargo UI: http://kargo.localhost"
+    fi
+
+    # Next steps
+    echo ""
+    print_header "Next Steps"
+    print_info "1. Initialize your GitOps repo:  infra-ctl.sh init"
+    if [[ "${argocd_installed:-}" == true ]]; then
+        print_info "2. If your repo is private:      cluster-ctl.sh add-repo-creds"
+    fi
+    if [[ "${kargo_installed:-}" == true ]]; then
+        print_info "   If your registry is private:  cluster-ctl.sh add-kargo-creds <app>"
+    fi
     echo ""
 }
 
