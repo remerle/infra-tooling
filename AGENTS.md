@@ -124,7 +124,7 @@ Permission presets (selected during `add-role`):
 
 Kargo progressive delivery is optional, gated behind `KARGO_ENABLED=true` in `.infra-ctl.conf`. When enabled, `infra-ctl.sh add-app` and `add-env` generate Kargo resources alongside ArgoCD + Kustomize files.
 
-The Kargo admin account password (bcrypt hash) and token signing key are generated at install time and passed via `--set` flags -- nothing is persisted to a values file.
+The Kargo admin account password and token signing key are auto-generated at install time and passed via `--set` flags as a bcrypt hash -- nothing is persisted to a values file. The plaintext password is shown in the init-cluster summary output.
 
 Kargo requires cert-manager as a dependency. Kargo uses Kubernetes admission webhooks to validate its custom resources (Stages, Warehouses, Freight, etc.) before they are persisted. The Kubernetes API server requires TLS for all admission webhook endpoints, and Kargo uses cert-manager to generate self-signed certificates for these webhook servers. There is no way to disable this; the chart will fail to install without cert-manager CRDs present. `cluster-ctl.sh` installs cert-manager automatically before Kargo if it is not already present.
 

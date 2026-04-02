@@ -603,7 +603,7 @@ The `parent-app` Application is the entry point. It watches the `argocd/apps/` d
 
 When you push a change, ArgoCD detects the drift within its polling interval (default 3 minutes), re-renders the manifests via `kustomize build`, and applies the diff. Two policies enforce GitOps discipline: `selfHeal` reverts any manual `kubectl` edits back to match Git, and `prune` deletes resources that have been removed from the repo. Git is the single source of truth; the cluster converges to match it.
 
-ArgoCD is accessible at `http://argocd.localhost` (username: `admin`). Get the initial password with:
+ArgoCD is accessible at `https://argocd.localhost` (or `http://` if HTTPS was not enabled). Username: `admin`. Get the initial password with:
 
 ```bash
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
@@ -621,7 +621,7 @@ Each Stage promotion is a four-step process: clear the git worktree, update the 
 
 Kargo doesn't replace ArgoCD; it feeds it. Kargo writes to Git, ArgoCD reads from Git and deploys. They work together but can operate independently.
 
-The Kargo dashboard is accessible at `http://kargo.localhost`.
+The Kargo dashboard is accessible at `https://kargo.localhost` (or `http://` if HTTPS was not enabled).
 
 ### Local Access URLs
 
@@ -632,6 +632,8 @@ All services are accessible via Ingress on `.localhost` domains (requires ports 
 
 | Service | URL | Notes |
 |---------|-----|-------|
-| ArgoCD UI | http://argocd.localhost | username: `admin`, password: shown during `cluster-ctl.sh init-cluster` |
-| Kargo UI | http://kargo.localhost | username: `admin`, password: set during `cluster-ctl.sh init-cluster` |
-| Frontend app | http://app.localhost | Requires Ingress in `k8s/apps/frontend/base/ingress.yaml` |
+| ArgoCD UI | https://argocd.localhost | username: `admin`, password: shown during `cluster-ctl.sh init-cluster` |
+| Kargo UI | https://kargo.localhost | username: `admin`, password: auto-generated, shown during `cluster-ctl.sh init-cluster` |
+| Frontend app | https://app.localhost | Requires Ingress in `k8s/apps/frontend/base/ingress.yaml` |
+
+When HTTPS is enabled, the mkcert certificate includes explicit SANs for `argocd.localhost`, `kargo.localhost`, and `app.localhost` (wildcard `*.localhost` is unreliable on macOS). If you add other `.localhost` services, add their hostnames to the `mkcert` command in `cluster-ctl.sh`.
