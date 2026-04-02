@@ -2,6 +2,21 @@
 
 CLI tools for managing an ArgoCD GitOps infrastructure repository and local Kubernetes clusters.
 
+This is a **learning tool**. It intentionally does not leverage existing out-of-the-box automation. The goal is to understand how ArgoCD, Kargo, Kustomize, and Kubernetes RBAC fit together by building the scaffolding yourself, following one opinionated setup rather than adopting someone else's abstractions. The scripts are simple bash, the templates are plain YAML with placeholder substitution, and every generated file is meant to be read and understood.
+
+Designed for **macOS** with Homebrew-installed dependencies. It may work elsewhere, but that's not a goal.
+
+### Why not use an existing tool?
+
+Several projects in the ArgoCD ecosystem solve the same problems with more automation. If you want production infrastructure rather than a learning exercise, consider these:
+
+| Tool | What it does | Link |
+|------|-------------|------|
+| [ArgoCD Autopilot](https://github.com/argoproj-labs/argocd-autopilot) | Official CLI that bootstraps an ArgoCD repo structure and installs ArgoCD the GitOps way. Closest analog to `infra-ctl.sh init` + `cluster-ctl.sh init-cluster`. | [Docs](https://argocd-autopilot.readthedocs.io/) |
+| [ArgoCD ApplicationSets](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/) | Built-in ArgoCD feature that auto-generates Application manifests from templates (Git directory, cluster, SCM provider generators). Replaces hand-written per-app-per-env YAML files. | [Generators](https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators/) |
+| [Argo Rollouts](https://github.com/argoproj/argo-rollouts) | Progressive delivery within a single environment: canary, blue-green, traffic splitting, metric-driven rollback. Complements Kargo (which handles cross-environment promotion). | [Docs](https://argoproj.github.io/rollouts/) |
+| [Kubefirst](https://github.com/konstructio/kubefirst) | Full platform bootstrap: ArgoCD + Vault + Terraform + Atlantis, wired together in a generated GitOps repo. Supports multiple cloud providers. | [Docs](https://kubefirst.konstruct.io/) |
+
 ## Structure Overview
 
 ![Infrastructure Tooling Structure](docs/infra-tooling-structure.png)
@@ -240,7 +255,7 @@ Kubernetes-level RBAC (restricting what humans can do with `kubectl`) is a separ
 
 ## Example: Deploying an Application
 
-This walkthrough deploys a two-service e-commerce app (SvelteKit frontend + Fastify backend) with PostgreSQL, from zero to a running local cluster.
+This walkthrough deploys a two-service e-commerce app (SvelteKit frontend + Fastify backend) with PostgreSQL, from zero to a running local cluster. The tooling itself is generic, but **this specific example** requires the [k8s-practice-app](https://github.com/remerle/k8s-practice-app) repository and its Docker images hosted on `ghcr.io`. You can follow the same steps with your own applications; the commands and repo structure are the same.
 
 The application lives at [github.com/remerle/k8s-practice-app](https://github.com/remerle/k8s-practice-app). CI workflows build and push images to `ghcr.io/remerle/k8s-practice-frontend` and `ghcr.io/remerle/k8s-practice-backend`, tagged as `YY.M.<buildNum>`.
 
@@ -310,22 +325,22 @@ spec:
     spec:
       containers:
         - name: backend
-          image: ghcr.io/remerle/k8s-practice-backend:26.4.9
+          image: ghcr.io/remerle/k8s-practice-backend:26.4.9  # 👈 Your container image and tag from CI
           ports:
-            - containerPort: 3000
+            - containerPort: 3000  # 👈 Port your app listens on
           env:
-            - name: DATABASE_URL
+            - name: DATABASE_URL  # 👈 Injected from a Secret (see step 5)
               valueFrom:
                 secretKeyRef:
-                  name: backend-secrets
+                  name: backend-secrets  # 👈 Must match the Secret name in step 5
                   key: database-url
           livenessProbe:
             httpGet:
-              path: /api/health
+              path: /api/health  # 👈 Your app's health check endpoint
               port: 3000
           readinessProbe:
             httpGet:
-              path: /api/health
+              path: /api/health  # 👈 Can differ from liveness if needed
               port: 3000
 ```
 
@@ -351,12 +366,12 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: ghcr.io/remerle/k8s-practice-frontend:26.4.8
+          image: ghcr.io/remerle/k8s-practice-frontend:26.4.8  # 👈 Your container image and tag from CI
           ports:
-            - containerPort: 3000
+            - containerPort: 3000  # 👈 Port your app listens on
           env:
             - name: API_URL
-              value: "http://backend:3000"
+              value: "http://backend:3000"  # 👈 "backend" resolves via the K8s Service from add-app
 ```
 
 `API_URL` tells the frontend's server-side proxy where to forward API requests. The `backend` hostname resolves via the Kubernetes Service created by `add-app`. Firebase config is only needed for admin auth. The image tag in the base manifest is a starting point; per-environment overlays control which version actually runs (via the `images` field in `kustomization.yaml`).
@@ -370,16 +385,16 @@ metadata:
   name: frontend
 spec:
   rules:
-    - host: app.localhost
+    - host: app.localhost  # 👈 Hostname for local access (*.localhost resolves to 127.0.0.1)
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: frontend
+                name: frontend  # 👈 Must match the Service name from add-app
                 port:
-                  number: 3000
+                  number: 3000  # 👈 Must match the Service port
 ```
 
 This makes the frontend accessible at `http://app.localhost` via k3d's built-in Traefik ingress controller (requires ports 80/443 exposed during `cluster-ctl.sh init-cluster`).
@@ -394,8 +409,8 @@ metadata:
   labels:
     app: postgres
 spec:
-  serviceName: postgres
-  replicas: 1
+  serviceName: postgres  # 👈 Must match the headless Service name from add-app
+  replicas: 1  # 👈 Single instance for local dev; increase for HA
   selector:
     matchLabels:
       app: postgres
@@ -406,25 +421,25 @@ spec:
     spec:
       containers:
         - name: postgres
-          image: postgres:16-alpine
+          image: postgres:16-alpine  # 👈 Public upstream image, not CI-built (no Kargo promotion)
           ports:
-            - containerPort: 5432
+            - containerPort: 5432  # 👈 Default PostgreSQL port
           env:
             - name: POSTGRES_DB
-              value: app
-            - name: POSTGRES_USER
+              value: app  # 👈 Database name created on first start
+            - name: POSTGRES_USER  # 👈 Injected from a Secret (see step 5)
               valueFrom:
                 secretKeyRef:
-                  name: postgres-secrets
+                  name: postgres-secrets  # 👈 Must match the Secret name in step 5
                   key: username
-            - name: POSTGRES_PASSWORD
+            - name: POSTGRES_PASSWORD  # 👈 Injected from a Secret (see step 5)
               valueFrom:
                 secretKeyRef:
                   name: postgres-secrets
                   key: password
           volumeMounts:
             - name: data
-              mountPath: /var/lib/postgresql/data
+              mountPath: /var/lib/postgresql/data  # 👈 Where PostgreSQL stores data files
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -432,7 +447,7 @@ spec:
         accessModes: ["ReadWriteOnce"]
         resources:
           requests:
-            storage: 1Gi
+            storage: 1Gi  # 👈 Adjust for your data size; 1Gi is fine for local dev
 ```
 
 ### 5. Create secrets
