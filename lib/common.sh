@@ -356,26 +356,46 @@ extract_repo_owner() {
     fi
 }
 
-# --- Styled output (gum wrappers) ---
+# --- Styled output (gum wrappers with fallback) ---
 
 print_header() {
-    gum style --bold --foreground 212 "$1"
+    if command -v gum &>/dev/null; then
+        gum style --bold --foreground 212 "$1"
+    else
+        echo "=== $1 ==="
+    fi
 }
 
 print_success() {
-    gum style --foreground 78 "  ✓ $1"
+    if command -v gum &>/dev/null; then
+        gum style --foreground 78 "  ✓ $1"
+    else
+        echo "  OK: $1"
+    fi
 }
 
 print_warning() {
-    gum style --foreground 214 "  ⚠ $1"
+    if command -v gum &>/dev/null; then
+        gum style --foreground 214 "  ⚠ $1"
+    else
+        echo "  WARN: $1" >&2
+    fi
 }
 
 print_error() {
-    gum style --bold --foreground 196 "  ✗ $1"
+    if command -v gum &>/dev/null; then
+        gum style --bold --foreground 196 "  ✗ $1"
+    else
+        echo "  ERROR: $1" >&2
+    fi
 }
 
 print_info() {
-    gum style --foreground 75 "  $1"
+    if command -v gum &>/dev/null; then
+        gum style --foreground 75 "  $1"
+    else
+        echo "  $1"
+    fi
 }
 
 # Prints a summary of created files.
