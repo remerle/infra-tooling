@@ -107,6 +107,17 @@ PROMOEOF
     save_conf "$repo_url" "$repo_owner"
     created_files+=("${TARGET_DIR}/.infra-ctl.conf")
 
+    # Detect Kargo in the cluster and enable it in the conf.
+    # This covers the case where cluster-ctl installed Kargo before init ran
+    # (so the conf file didn't exist yet when the flag would have been written).
+    if kubectl get namespace kargo &>/dev/null 2>&1; then
+        local conf_file="${TARGET_DIR}/.infra-ctl.conf"
+        if ! grep -q '^KARGO_ENABLED=true' "$conf_file"; then
+            echo "KARGO_ENABLED=true" >>"$conf_file"
+            print_info "Detected Kargo in cluster, enabled in .infra-ctl.conf"
+        fi
+    fi
+
     print_summary "${created_files[@]}"
     print_info "Repository initialized. Next steps:"
     print_info "  1. Add environments and apps:    infra-ctl.sh add-env / add-app"
