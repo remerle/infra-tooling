@@ -9,6 +9,7 @@ cmd_init_cluster() {
     require_gum
     require_cmd "k3d" "brew install k3d  (or visit https://k3d.io)"
     require_cmd "kubectl" "brew install kubectl"
+    require_cmd "jq" "brew install jq"
     require_helm
 
     print_header "Initialize k3d Cluster"
@@ -26,7 +27,7 @@ cmd_init_cluster() {
     fi
 
     # Check if cluster already exists
-    if k3d cluster list -o json 2>/dev/null | grep -q "\"name\":\"${cluster_name}\""; then
+    if k3d cluster list -o json 2>/dev/null | jq -e --arg name "$cluster_name" '.[] | select(.name == $name)' &>/dev/null; then
         print_error "Cluster '${cluster_name}' already exists."
         print_info "Run 'cluster-ctl.sh delete-cluster' to remove it first."
         exit 1
@@ -172,13 +173,14 @@ KARGOINGRESS
 cmd_delete_cluster() {
     require_gum
     require_cmd "k3d" "brew install k3d"
+    require_cmd "jq" "brew install jq"
 
     print_header "Delete k3d Cluster"
     echo ""
 
     # Get list of clusters
     local clusters
-    clusters="$(k3d cluster list -o json 2>/dev/null | grep '"name"' | sed 's/.*"name":"\([^"]*\)".*/\1/')"
+    clusters="$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name')"
 
     if [[ -z "$clusters" ]]; then
         print_warning "No k3d clusters found."
