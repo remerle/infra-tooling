@@ -62,6 +62,7 @@ Templates are in `templates/`, organized to mirror the output directory structur
 | `{{PROJECT_DESCRIPTION}}` | User input (`add-project`) | `appproject.yaml` |
 | `{{SOURCE_REPOS}}` | Generated YAML list (`add-project`) | `appproject.yaml` |
 | `{{DESTINATIONS}}` | Generated YAML list (`add-project`) | `appproject.yaml` |
+| `{{CLUSTER_RESOURCES}}` | Generated YAML list (`add-project`, `edit-project`) | `appproject.yaml` |
 | `{{PORT}}` | User input (`add-app`, default `8080`) | `service.yaml`, `service-headless.yaml` |
 | `{{IMAGE_REPO}}` | User input or default (`ghcr.io/REPO_OWNER/APP_NAME`) | `warehouse.yaml`, `stage-direct.yaml`, `stage-promoted.yaml` |
 | `{{UPSTREAM_STAGE}}` | Derived from promotion order (`<app>-<prev-env>`) | `stage-promoted.yaml` |
