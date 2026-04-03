@@ -116,6 +116,18 @@ _cluster_ctl() {
         '--target-dir[Directory context]:directory:_directories' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
+
+    case "$state" in
+        args)
+            case "${words[1]}" in
+                delete-cluster)
+                    local -a cluster_names
+                    cluster_names=(${(f)"$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name' 2>/dev/null)"})
+                    compadd -a cluster_names
+                    ;;
+            esac
+            ;;
+    esac
 }
 
 _secret_ctl() {

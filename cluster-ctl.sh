@@ -312,21 +312,25 @@ cmd_delete_cluster() {
     require_cmd "k3d" "brew install k3d"
     require_cmd "jq" "brew install jq"
 
-    print_header "Delete k3d Cluster"
-    echo ""
+    local cluster_name="${1:-}"
 
-    # Get list of clusters
-    local clusters
-    clusters="$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name')"
+    if [[ -z "$cluster_name" ]]; then
+        print_header "Delete k3d Cluster"
+        echo ""
 
-    if [[ -z "$clusters" ]]; then
-        print_warning "No k3d clusters found."
-        exit 0
+        local clusters
+        clusters="$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name')"
+
+        if [[ -z "$clusters" ]]; then
+            print_warning "No k3d clusters found."
+            exit 0
+        fi
+
+        cluster_name="$(echo "$clusters" | gum choose --header "Select cluster to delete:")"
+    else
+        print_header "Delete k3d Cluster: ${cluster_name}"
+        echo ""
     fi
-
-    # Choose cluster
-    local cluster_name
-    cluster_name="$(echo "$clusters" | gum choose)"
 
     echo ""
     if ! gum confirm --prompt.foreground 196 "Delete cluster '${cluster_name}'? This cannot be undone."; then
@@ -662,7 +666,7 @@ Usage: cluster-ctl.sh <command> [options]
 
 Commands:
   init-cluster        Create a local k3d cluster and optionally install ArgoCD
-  delete-cluster      Tear down a k3d cluster
+  delete-cluster [name]  Tear down a k3d cluster
   add-repo-creds      Configure ArgoCD access to a private Git repository
   add-kargo-creds     Configure Kargo access to a private Git repo and container registry
   upgrade-argocd      Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
