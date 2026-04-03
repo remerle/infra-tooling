@@ -11,7 +11,6 @@ cmd_init() {
     require_cmd "kubeseal" "brew install kubeseal"
 
     print_header "Initialize Sealed Secrets"
-    echo ""
 
     local key_backup="${TARGET_DIR}/.sealed-secrets-key.json"
     local cert_file="${TARGET_DIR}/.sealed-secrets-cert.pem"
@@ -25,7 +24,6 @@ cmd_init() {
                 kubectl apply -f "$key_backup"
 
             print_success "Key restored from backup."
-            echo ""
         fi
     fi
 
@@ -45,7 +43,6 @@ cmd_init() {
         print_warning "Controller not ready yet. It may need a moment to stabilize."
         print_info "  kubectl get pods -n kube-system -l name=sealed-secrets-controller"
     fi
-    echo ""
 
     # Export the public cert for offline encryption
     run_cmd_sh "Exporting public cert..." \
@@ -67,12 +64,10 @@ cmd_init() {
         print_success "Added .sealed-secrets-key.json to .gitignore"
     fi
 
-    echo ""
     print_header "Sealed Secrets Ready"
     print_info "Encrypt secrets with: secret-ctl.sh add <app> <env>"
     print_info "Public cert: .sealed-secrets-cert.pem (safe to commit)"
     print_info "Key backup:  .sealed-secrets-key.json (gitignored)"
-    echo ""
 }
 
 cmd_add() {
@@ -139,12 +134,10 @@ cmd_add() {
     local sealed_file="${overlay_dir}/sealed-secret.yaml"
 
     print_header "Add Secrets: ${app_name} / ${env_name}"
-    echo ""
 
     # Show existing keys if sealed-secret.yaml already exists
     if [[ -f "$sealed_file" ]]; then
         print_info "Existing sealed secret found. New keys will be merged."
-        echo ""
 
         # Extract existing encrypted keys from the encryptedData section only
         local existing_keys
@@ -153,7 +146,6 @@ cmd_add() {
 
         if [[ -n "$existing_keys" ]]; then
             print_info "Existing keys: $(echo "$existing_keys" | tr '\n' ' ')"
-            echo ""
         fi
     fi
 
@@ -203,7 +195,6 @@ cmd_add() {
         print_info "Merging with existing sealed secret..."
     fi
 
-    echo ""
 
     # Attempt merge-into if the file already exists; fall back to fresh seal otherwise
     if [[ -f "$sealed_file" ]]; then
@@ -230,7 +221,6 @@ cmd_add() {
         print_success "Added sealed-secret.yaml to overlay kustomization.yaml"
     fi
 
-    echo ""
     print_summary "$sealed_file"
 }
 
@@ -241,7 +231,6 @@ cmd_list() {
     local filter_env="${2:-}"
 
     print_header "Sealed Secrets"
-    echo ""
 
     local apps_dir="${TARGET_DIR}/k8s/apps"
     if [[ ! -d "$apps_dir" ]]; then
@@ -289,7 +278,6 @@ cmd_list() {
     if [[ "$found" == false ]]; then
         print_warning "No sealed secrets found."
     fi
-    echo ""
 }
 
 cmd_remove() {
@@ -342,9 +330,7 @@ cmd_remove() {
     fi
 
     print_header "Remove Sealed Secret: ${app_name} / ${env_name}"
-    echo ""
     print_info "Delete file: ${sealed_file}"
-    echo ""
 
     if ! gum confirm "Remove sealed secret for '${app_name}' in '${env_name}'?"; then
         print_warning "Aborted."
@@ -368,9 +354,7 @@ cmd_remove() {
 # --- Usage ---
 
 cmd_preflight_check() {
-    echo ""
     echo "  secret-ctl.sh dependencies:"
-    echo ""
     preflight_check \
         "gum:brew install gum" \
         "kubectl:brew install kubectl" \

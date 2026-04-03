@@ -28,7 +28,6 @@ cmd_add_role() {
     fi
 
     print_header "Add Role: ${role_name}"
-    echo ""
 
     # Choose preset
     local preset
@@ -168,7 +167,6 @@ cmd_add_role() {
     echo "$preset" >"${platform_dir}/${role_name}.preset"
 
     # Apply k8s manifests
-    echo ""
     local f
     for f in "${created_files[@]}"; do
         run_cmd "Applying $(basename "$f")..." \
@@ -183,13 +181,11 @@ cmd_add_role() {
 
     upgrade_argocd_if_installed "$VALUES_FILE"
 
-    echo ""
     print_summary "${created_files[@]}"
     print_info "ArgoCD policy for role '${role_name}' (${preset}):"
     echo "$argocd_policy" | while IFS= read -r line; do
         print_info "  $line"
     done
-    echo ""
 }
 
 cmd_list_roles() {
@@ -197,7 +193,6 @@ cmd_list_roles() {
     require_yq
 
     print_header "Configured Roles"
-    echo ""
 
     # Extract roles from ArgoCD policy
     local policy
@@ -205,7 +200,6 @@ cmd_list_roles() {
 
     if [[ -z "$policy" ]]; then
         print_warning "No roles configured."
-        echo ""
         return
     fi
 
@@ -215,7 +209,6 @@ cmd_list_roles() {
 
     if [[ -z "$roles" ]]; then
         print_warning "No roles configured."
-        echo ""
         return
     fi
 
@@ -230,7 +223,6 @@ cmd_list_roles() {
 
         print_info "${role}  (${policy_count} ArgoCD policies, ${k8s_files} k8s manifests)"
     done <<<"$roles"
-    echo ""
 }
 
 cmd_remove_role() {
@@ -259,7 +251,6 @@ cmd_remove_role() {
     fi
 
     print_header "Remove Role: ${role_name}"
-    echo ""
 
     if ! gum confirm --prompt.foreground 196 "Remove role '${role_name}'? This removes ArgoCD policy and k8s RBAC."; then
         print_warning "Aborted."
@@ -291,9 +282,7 @@ cmd_remove_role() {
 
     upgrade_argocd_if_installed "$VALUES_FILE"
 
-    echo ""
     print_success "Role '${role_name}' removed."
-    echo ""
 }
 
 cmd_add() {
@@ -327,7 +316,6 @@ cmd_add() {
     fi
 
     print_header "Add User: ${username} (group: ${group})"
-    echo ""
 
     local users_dir="${TARGET_DIR}/users"
     mkdir -p "$users_dir"
@@ -409,16 +397,12 @@ EOF
     # Clean up CSR file
     rm -f "$csr_file"
 
-    echo ""
     print_header "User Created"
     print_info "Kubeconfig: ${kubeconfig_file}"
-    echo ""
     print_info "To use kubectl:"
     print_info "  export KUBECONFIG=${kubeconfig_file}"
-    echo ""
     print_info "To set ArgoCD password (first login):"
     print_info "  argocd account update-password --account ${username}"
-    echo ""
 }
 
 cmd_remove() {
@@ -446,7 +430,6 @@ cmd_remove() {
     fi
 
     print_header "Remove User: ${username}"
-    echo ""
 
     if ! gum confirm --prompt.foreground 196 "Remove user '${username}'?"; then
         print_warning "Aborted."
@@ -481,9 +464,7 @@ cmd_remove() {
         "${users_dir}/${username}.csr" "${users_dir}/${username}.kubeconfig"
     print_success "Local files cleaned up."
 
-    echo ""
     print_success "User '${username}' removed."
-    echo ""
 }
 
 cmd_list() {
@@ -491,7 +472,6 @@ cmd_list() {
     require_yq
 
     print_header "Users and Service Accounts"
-    echo ""
 
     local policy
     policy="$(yq '.configs.rbac."policy.csv" // ""' "$VALUES_FILE")" || true
@@ -503,7 +483,6 @@ cmd_list() {
 
     if [[ -z "$accounts" ]]; then
         print_warning "No users or service accounts configured."
-        echo ""
         return
     fi
 
@@ -540,7 +519,6 @@ cmd_list() {
 
         print_info "${account}  [${type_label}]  group: ${group}${expiry_info}"
     done <<<"$accounts"
-    echo ""
 }
 
 cmd_add_sa() {
@@ -593,7 +571,6 @@ cmd_add_sa() {
     fi
 
     print_header "Add Service Account: ${sa_name} (group: ${group})"
-    echo ""
 
     local users_dir="${TARGET_DIR}/users"
     mkdir -p "$users_dir"
@@ -741,17 +718,13 @@ EOF
 
     upgrade_argocd_if_installed "$VALUES_FILE"
 
-    echo ""
     print_header "Service Account Created"
     print_info "Kubeconfig:   ${kubeconfig_file}"
     print_info "Token expiry: ${expiry_date}"
-    echo ""
     print_info "To use kubectl:"
     print_info "  export KUBECONFIG=${kubeconfig_file}"
-    echo ""
     print_info "To set ArgoCD password (first login):"
     print_info "  argocd account update-password --account ${sa_name}"
-    echo ""
 }
 
 cmd_refresh_sa() {
@@ -812,7 +785,6 @@ cmd_refresh_sa() {
     fi
 
     print_header "Refresh Token: ${sa_name}"
-    echo ""
 
     local token
     token="$(kubectl create token "$sa_name" --namespace kube-system --duration "$duration")"
@@ -829,7 +801,6 @@ cmd_refresh_sa() {
     print_success "Token refreshed."
     print_info "Kubeconfig:   ${kubeconfig_file}"
     print_info "Token expiry: ${expiry_date}"
-    echo ""
 }
 
 cmd_remove_sa() {
@@ -861,7 +832,6 @@ cmd_remove_sa() {
     fi
 
     print_header "Remove Service Account: ${sa_name}"
-    echo ""
 
     if ! gum confirm --prompt.foreground 196 "Remove service account '${sa_name}'?"; then
         print_warning "Aborted."
@@ -894,17 +864,13 @@ cmd_remove_sa() {
     rm -f "${users_dir}/${sa_name}.kubeconfig" "${users_dir}/${sa_name}.expiry"
     print_success "Local files cleaned up."
 
-    echo ""
     print_success "Service account '${sa_name}' removed."
-    echo ""
 }
 
 # --- Usage ---
 
 cmd_preflight_check() {
-    echo ""
     echo "  user-ctl.sh dependencies:"
-    echo ""
     preflight_check \
         "gum:brew install gum" \
         "kubectl:brew install kubectl" \

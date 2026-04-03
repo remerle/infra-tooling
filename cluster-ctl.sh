@@ -59,7 +59,6 @@ cmd_init_cluster() {
     fi
 
     print_header "Initialize k3d Cluster"
-    echo ""
 
     # Prompt for cluster name
     local default_name
@@ -95,7 +94,6 @@ cmd_init_cluster() {
     # localhost:8080, which doesn't exist on agent nodes, and spams errors.
     # The @agent:* suffix is k3d's node filter syntax: apply this env var to
     # all agent nodes only (server nodes already have API access on localhost).
-    echo ""
     run_cmd "Creating k3d cluster '${cluster_name}'..." \
         --explain "k3d creates a lightweight Kubernetes cluster by running k3s inside Docker containers. --agents sets the number of worker nodes. --env patches agent nodes with a working KUBECONFIG path so the k3d entrypoint's 'kubectl uncordon' loop can reach the API server -- without it, kubectl defaults to localhost:8080 which doesn't exist on agent nodes. --wait blocks until all nodes are Ready." \
         k3d cluster create "$cluster_name" \
@@ -120,7 +118,6 @@ cmd_init_cluster() {
     local tls_enabled=false
 
     # Prompt for local HTTPS
-    echo ""
     if command -v mkcert &>/dev/null; then
         if gum confirm "Enable HTTPS with trusted local certs? (via mkcert)"; then
             apply_local_tls
@@ -130,7 +127,6 @@ cmd_init_cluster() {
     fi
 
     # Prompt for ArgoCD installation
-    echo ""
     if gum confirm "Install ArgoCD?"; then
         local values_file="${SCRIPT_DIR}/helm/argocd-values.yaml"
         if [[ ! -f "$values_file" ]]; then
@@ -174,7 +170,6 @@ cmd_init_cluster() {
     fi
 
     # Prompt for Kargo installation
-    echo ""
     if gum confirm "Install Kargo?"; then
         # Kargo requires cert-manager for webhook server TLS certificates
         # (Kubernetes API server requires TLS for admission webhooks, and
@@ -276,7 +271,6 @@ KARGOINGRESS"
     fi
 
     # Summary
-    echo ""
     print_header "Cluster Summary"
     local context
     context="$(kubectl config current-context)"
@@ -293,7 +287,6 @@ KARGOINGRESS"
     fi
 
     if [[ "${argocd_installed:-}" == true ]]; then
-        echo ""
         local argocd_password
         argocd_password="$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)"
         print_info "ArgoCD UI: ${proto}://argocd.localhost (username: admin)"
@@ -301,15 +294,12 @@ KARGOINGRESS"
     fi
 
     if [[ "${kargo_installed:-}" == true ]]; then
-        echo ""
         print_info "Kargo UI: ${proto}://kargo.localhost (username: admin)"
     fi
 
     # Next steps
-    echo ""
     print_header "Next Steps"
     print_info "1. Initialize your GitOps repo:  infra-ctl.sh init"
-    echo ""
 }
 
 cmd_delete_cluster() {
@@ -321,7 +311,6 @@ cmd_delete_cluster() {
 
     if [[ -z "$cluster_name" ]]; then
         print_header "Delete k3d Cluster"
-        echo ""
 
         local clusters
         clusters="$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name')"
@@ -334,10 +323,8 @@ cmd_delete_cluster() {
         cluster_name="$(echo "$clusters" | gum choose --header "Select cluster to delete:")"
     else
         print_header "Delete k3d Cluster: ${cluster_name}"
-        echo ""
     fi
 
-    echo ""
     if ! gum confirm --prompt.foreground 196 "Delete cluster '${cluster_name}'? This cannot be undone."; then
         print_warning "Aborted."
         exit 0
@@ -348,7 +335,6 @@ cmd_delete_cluster() {
         k3d cluster delete "$cluster_name"
 
     print_success "Cluster '${cluster_name}' deleted."
-    echo ""
 }
 
 cmd_status() {
@@ -357,7 +343,6 @@ cmd_status() {
     require_cmd "kubectl" "brew install kubectl"
 
     print_header "Cluster Status"
-    echo ""
 
     # k3d clusters
     local clusters
@@ -367,13 +352,11 @@ cmd_status() {
     else
         print_warning "No k3d clusters found."
     fi
-    echo ""
 
     # Current context
     local context
     context="$(kubectl config current-context 2>/dev/null)" || context="(none)"
     print_info "Current kubectl context: ${context}"
-    echo ""
 
     # ArgoCD status
     if kubectl get namespace argocd &>/dev/null; then
@@ -382,7 +365,6 @@ cmd_status() {
             print_info "$line"
         done
 
-        echo ""
         if helm status argocd -n argocd &>/dev/null; then
             local helm_status
             helm_status="$(helm status argocd -n argocd -o json 2>/dev/null | jq -r '.info.status' 2>/dev/null)" || true
@@ -401,7 +383,6 @@ cmd_status() {
             print_info "$line"
         done
 
-        echo ""
         if helm status kargo -n kargo &>/dev/null; then
             local kargo_helm_status
             kargo_helm_status="$(helm status kargo -n kargo -o json 2>/dev/null | jq -r '.info.status' 2>/dev/null)" || true
@@ -412,7 +393,6 @@ cmd_status() {
     else
         print_info "Kargo is not installed in the current cluster."
     fi
-    echo ""
 }
 
 cmd_add_repo_creds() {
@@ -421,7 +401,6 @@ cmd_add_repo_creds() {
     load_conf
 
     print_header "Configure ArgoCD Repository Credentials"
-    echo ""
 
     # Verify ArgoCD is installed
     if ! kubectl get namespace argocd &>/dev/null; then
@@ -431,7 +410,6 @@ cmd_add_repo_creds() {
     fi
 
     print_info "Repository: ${REPO_URL}"
-    echo ""
 
     # Check for existing credential
     local existing
@@ -442,7 +420,6 @@ cmd_add_repo_creds() {
             print_warning "Aborted."
             exit 0
         fi
-        echo ""
     fi
 
     # Prompt for PAT
@@ -451,7 +428,6 @@ cmd_add_repo_creds() {
     print_info ""
     print_info "Required permissions on the GitOps repository:"
     print_info "  Contents:  Read-only"
-    echo ""
     local pat
     pat="$(gum input --password --prompt "GitHub PAT: ")"
     if [[ -z "$pat" ]]; then
@@ -474,9 +450,7 @@ cmd_add_repo_creds() {
             | kubectl apply -f -
     '
 
-    echo ""
     print_success "ArgoCD repository credentials configured for ${REPO_URL}"
-    echo ""
 }
 
 cmd_add_kargo_creds() {
@@ -513,7 +487,6 @@ cmd_add_kargo_creds() {
     validate_k8s_name "$app_name" "App name"
 
     print_header "Configure Kargo Credentials: ${app_name}"
-    echo ""
 
     # Verify Kargo app directory exists
     local kargo_app_dir="${TARGET_DIR}/kargo/${app_name}"
@@ -535,7 +508,6 @@ cmd_add_kargo_creds() {
 
     print_info "Repository:       ${REPO_URL}"
     print_info "Container image:  ${image_repo}"
-    echo ""
 
     # Verify namespace exists in cluster
     if ! kubectl get namespace "$app_name" &>/dev/null; then
@@ -554,7 +526,6 @@ cmd_add_kargo_creds() {
     print_info "Required permissions on the GitOps repository:"
     print_info "  Contents:  Read and write"
     print_info "  Packages:  Read (only if the container registry is private)"
-    echo ""
     local pat
     pat="$(gum input --password --prompt "GitHub PAT: ")"
     if [[ -z "$pat" ]]; then
@@ -580,7 +551,6 @@ cmd_add_kargo_creds() {
     print_success "Git credentials configured for ${REPO_URL}"
 
     # Optionally create registry credential
-    echo ""
     if gum confirm "Is the container registry private?"; then
         run_cmd_sh "Configuring registry credentials..." \
             --explain "Kargo's Warehouse polls the container registry to detect new image tags. For private registries it needs pull credentials, stored as a Secret labeled 'kargo.akuity.io/cred-type=image' in the app namespace. The repoURL field scopes the credential to a specific registry/repository prefix." \
@@ -599,7 +569,6 @@ cmd_add_kargo_creds() {
         print_success "Registry credentials configured for ${image_repo}"
     fi
 
-    echo ""
 }
 
 cmd_upgrade_argocd() {
@@ -608,7 +577,6 @@ cmd_upgrade_argocd() {
     require_helm
 
     print_header "Upgrade ArgoCD"
-    echo ""
 
     # Verify ArgoCD is installed
     if ! helm status argocd -n argocd &>/dev/null; then
@@ -631,7 +599,6 @@ cmd_upgrade_argocd() {
         --wait --timeout 120s
 
     print_success "ArgoCD upgraded."
-    echo ""
 }
 
 cmd_upgrade_kargo() {
@@ -640,7 +607,6 @@ cmd_upgrade_kargo() {
     require_helm
 
     print_header "Upgrade Kargo"
-    echo ""
 
     if ! helm status kargo -n kargo &>/dev/null; then
         print_error "Kargo Helm release not found in namespace 'kargo'."
@@ -656,7 +622,6 @@ cmd_upgrade_kargo() {
         --wait --timeout 120s
 
     print_success "Kargo upgraded."
-    echo ""
 }
 
 cmd_renew_tls() {
@@ -665,7 +630,6 @@ cmd_renew_tls() {
     require_cmd "mkcert" "brew install mkcert"
 
     print_header "Renew Local TLS Certificates"
-    echo ""
 
     # Verify a cluster is reachable
     if ! kubectl cluster-info &>/dev/null; then
@@ -676,15 +640,12 @@ cmd_renew_tls() {
 
     apply_local_tls
     print_success "TLS certificates renewed."
-    echo ""
 }
 
 # --- Usage ---
 
 cmd_preflight_check() {
-    echo ""
     echo "  cluster-ctl.sh dependencies:"
-    echo ""
     preflight_check \
         "gum:brew install gum" \
         "k3d:brew install k3d" \
@@ -693,7 +654,6 @@ cmd_preflight_check() {
         "helm:brew install helm" \
         "docker:https://docs.docker.com/get-docker/"
 
-    echo ""
     if command -v docker &>/dev/null; then
         if docker info &>/dev/null; then
             printf "  ✓ %-12s %s\n" "docker" "daemon running"

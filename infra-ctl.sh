@@ -16,7 +16,6 @@ cmd_init() {
     fi
 
     print_header "Initialize GitOps Repository"
-    echo ""
 
     # Detect repo URL from git remote, prompt with it as default.
     # Convert SSH URLs to HTTPS since ArgoCD uses HTTPS for repo access.
@@ -40,7 +39,6 @@ cmd_init() {
     local repo_owner
     repo_owner="$(extract_repo_owner "$repo_url")"
     print_info "Detected repo owner: ${repo_owner}"
-    echo ""
 
     if ! gum confirm "Proceed with repo URL '${repo_url}' and owner '${repo_owner}'?"; then
         print_warning "Aborted."
@@ -169,7 +167,6 @@ cmd_add_app() {
 
     # Preview what will be created
     print_header "Add Application: ${app_name}"
-    echo ""
     print_info "Project: ${project}"
     print_info "Workload: ${workload_type}"
     print_info "Port: ${port}"
@@ -195,7 +192,6 @@ cmd_add_app() {
             done
         fi
     fi
-    echo ""
 
     if ! gum confirm "Create these files?"; then
         print_warning "Aborted."
@@ -346,7 +342,6 @@ cmd_add_env() {
 
     # Preview
     print_header "Add Environment: ${env_name}"
-    echo ""
     print_info "Namespace: k8s/namespaces/${env_name}.yaml"
     if [[ ${#apps[@]} -gt 0 ]]; then
         local app
@@ -368,7 +363,6 @@ cmd_add_env() {
             done
         fi
     fi
-    echo ""
 
     if ! gum confirm "Create these files?"; then
         print_warning "Aborted."
@@ -442,7 +436,6 @@ cmd_add_env() {
         # Re-read the (possibly updated) order
         read_promotion_order
 
-        echo ""
         print_info "Promotion order:"
         for i in "${!PROMOTION_ORDER[@]}"; do
             print_info "  $((i + 1)). ${PROMOTION_ORDER[$i]}"
@@ -566,7 +559,6 @@ cmd_add_project() {
     fi
 
     print_header "Add Project: ${project_name}"
-    echo ""
 
     # Prompt for description
     local description
@@ -673,7 +665,6 @@ cmd_edit_project() {
     fi
 
     print_header "Edit Project: ${project_name}"
-    echo ""
 
     # Parse current values from the existing file
     local current_description
@@ -784,7 +775,6 @@ cmd_edit_project() {
         "CLUSTER_RESOURCES=${cluster_resources_block}"
 
     print_success "Project '${project_name}' updated."
-    echo ""
 }
 
 cmd_enable_kargo() {
@@ -797,7 +787,6 @@ cmd_enable_kargo() {
     fi
 
     print_header "Enable Kargo"
-    echo ""
 
     # Set KARGO_ENABLED in conf
     local conf_file="${TARGET_DIR}/.infra-ctl.conf"
@@ -824,7 +813,6 @@ cmd_enable_kargo() {
         for i in "${!PROMOTION_ORDER[@]}"; do
             print_info "  $((i + 1)). ${PROMOTION_ORDER[$i]}"
         done
-        echo ""
 
         if ! gum confirm "Use this order? (Edit kargo/promotion-order.txt after to change)"; then
             print_warning "Aborted. Set KARGO_ENABLED=false in .infra-ctl.conf to disable."
@@ -897,7 +885,6 @@ cmd_list_apps() {
     load_conf
 
     print_header "Applications"
-    echo ""
 
     local apps=()
     while IFS= read -r app; do
@@ -906,7 +893,6 @@ cmd_list_apps() {
 
     if [[ ${#apps[@]} -eq 0 ]]; then
         print_warning "No applications found."
-        echo ""
         return
     fi
 
@@ -932,7 +918,6 @@ cmd_list_apps() {
             print_info "${app}  (project: ${project}, no overlays)"
         fi
     done
-    echo ""
 }
 
 cmd_list_envs() {
@@ -940,7 +925,6 @@ cmd_list_envs() {
     load_conf
 
     print_header "Environments"
-    echo ""
 
     local envs=()
     while IFS= read -r env; do
@@ -949,7 +933,6 @@ cmd_list_envs() {
 
     if [[ ${#envs[@]} -eq 0 ]]; then
         print_warning "No environments found."
-        echo ""
         return
     fi
 
@@ -960,10 +943,8 @@ cmd_list_envs() {
 
     if is_kargo_enabled && [[ -f "${TARGET_DIR}/kargo/promotion-order.txt" ]]; then
         read_promotion_order
-        echo ""
         print_info "Promotion order: ${PROMOTION_ORDER[*]}"
     fi
-    echo ""
 }
 
 cmd_list_projects() {
@@ -971,7 +952,6 @@ cmd_list_projects() {
     load_conf
 
     print_header "Projects"
-    echo ""
 
     local projects=()
     while IFS= read -r proj; do
@@ -980,7 +960,6 @@ cmd_list_projects() {
 
     if [[ ${#projects[@]} -eq 0 ]]; then
         print_warning "No projects found. Apps use the 'default' project."
-        echo ""
         return
     fi
 
@@ -999,7 +978,6 @@ cmd_list_projects() {
             print_info "${proj}"
         fi
     done
-    echo ""
 }
 
 cmd_remove_project() {
@@ -1047,17 +1025,14 @@ cmd_remove_project() {
 
     # Preview
     print_header "Remove Project: ${project_name}"
-    echo ""
     print_info "Delete file: ${project_file}"
 
     if [[ ${#assigned_apps[@]} -gt 0 ]]; then
-        echo ""
         print_warning "These apps are assigned to project '${project_name}':"
         local app
         for app in "${assigned_apps[@]}"; do
             print_info "  ${app}"
         done
-        echo ""
 
         # Build reassignment choices: other projects + default
         local other_projects=("default")
@@ -1071,7 +1046,6 @@ cmd_remove_project() {
 
         print_info "Apps will be reassigned to project '${reassign_to}'"
     fi
-    echo ""
 
     if ! gum confirm "Remove project '${project_name}'?"; then
         print_warning "Aborted."
@@ -1171,7 +1145,6 @@ cmd_remove_app() {
 
     # Preview
     print_header "Remove Application: ${app_name}"
-    echo ""
     local item
     for item in "${to_remove[@]}"; do
         if [[ -d "$item" ]]; then
@@ -1180,7 +1153,6 @@ cmd_remove_app() {
             print_info "Delete file: ${item}"
         fi
     done
-    echo ""
 
     if ! gum confirm "Remove application '${app_name}' and all its resources?"; then
         print_warning "Aborted."
@@ -1300,7 +1272,6 @@ cmd_remove_env() {
 
     # Preview
     print_header "Remove Environment: ${env_name}"
-    echo ""
     local item
     for item in "${to_remove[@]}"; do
         if [[ -d "$item" ]]; then
@@ -1314,7 +1285,6 @@ cmd_remove_env() {
     done
 
     if [[ "$kargo_repair" == true ]]; then
-        echo ""
         print_info "Kargo chain repair:"
         if [[ -z "$upstream_env" ]]; then
             print_info "  ${downstream_env} stage will become first in chain (direct from warehouse)"
@@ -1326,7 +1296,6 @@ cmd_remove_env() {
     if is_kargo_enabled && [[ -f "${TARGET_DIR}/kargo/promotion-order.txt" ]]; then
         print_info "Update: kargo/promotion-order.txt (remove '${env_name}')"
     fi
-    echo ""
 
     if ! gum confirm "Remove environment '${env_name}' and all its resources?"; then
         print_warning "Aborted."
@@ -1414,13 +1383,11 @@ cmd_remove_env() {
     print_removed "${removed_files[@]}"
 
     if [[ ${#regenerated_files[@]} -gt 0 ]]; then
-        echo ""
         print_header "Regenerated (Kargo chain repair):"
         local f
         for f in "${regenerated_files[@]}"; do
             print_success "$f"
         done
-        echo ""
     fi
 }
 
@@ -1428,7 +1395,6 @@ cmd_reset() {
     require_gum
 
     print_header "Reset GitOps Repository"
-    echo ""
 
     local targets=()
     local target
@@ -1455,7 +1421,6 @@ cmd_reset() {
     for t in "${targets[@]}"; do
         print_info "  ${t#"${TARGET_DIR}/"}"
     done
-    echo ""
 
     if ! gum confirm --prompt.foreground 196 "Reset this GitOps repository? This cannot be undone."; then
         print_warning "Aborted."
@@ -1468,15 +1433,12 @@ cmd_reset() {
 
     print_removed "${targets[@]}"
     print_info "Run 'infra-ctl.sh init' to start fresh."
-    echo ""
 }
 
 # --- Usage ---
 
 cmd_preflight_check() {
-    echo ""
     echo "  infra-ctl.sh dependencies:"
-    echo ""
     preflight_check \
         "gum:brew install gum"
 }
