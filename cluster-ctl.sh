@@ -61,16 +61,16 @@ cmd_init_cluster() {
     print_success "Cluster '${cluster_name}' created."
     echo ""
 
-    # Install Metrics Server via Helm (required for kubectl top)
-    helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ >/dev/null 2>&1
-    helm repo update metrics-server >/dev/null 2>&1
+    # Patch Metrics Server for k3d (k3s bundles it, but it needs --kubelet-insecure-tls)
+    run_cmd "Patching Metrics Server for k3d..." \
+        --explain "k3s bundles Metrics Server (which collects CPU/memory usage from kubelets for 'kubectl top' and HPA). However, k3d generates self-signed kubelet certificates that Metrics Server rejects by default. This patch adds --kubelet-insecure-tls to skip that TLS verification." \
+        kubectl patch deployment metrics-server -n kube-system \
+        --type=json \
+        -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
 
-    if run_cmd "Installing Metrics Server via Helm..." \
-        --explain "Metrics Server collects CPU and memory usage from each node's kubelet. It powers 'kubectl top nodes/pods' and is required by the Horizontal Pod Autoscaler (HPA). k3s does not bundle it, so it must be installed separately. --kubelet-insecure-tls is needed because k3d generates self-signed kubelet certificates that Metrics Server would otherwise reject." \
-        helm install metrics-server metrics-server/metrics-server \
-        --namespace kube-system \
-        --set 'args[0]=--kubelet-insecure-tls' \
-        --wait --timeout 60s; then
+    if run_cmd "Waiting for Metrics Server to be ready..." \
+        --explain "The patch triggers a rolling restart. This waits for the new pod to pass readiness probes, ensuring 'kubectl top' works before proceeding." \
+        kubectl wait --for=condition=available deployment/metrics-server -n kube-system --timeout=60s; then
         print_success "Metrics Server is ready (kubectl top enabled)."
     else
         print_warning "Metrics Server not ready yet. It may need a moment to stabilize."
