@@ -415,6 +415,7 @@ infra-ctl.sh add-app backend
 # SECRET_NAME: backend-secrets
 #   Secret key name: DATABASE_URL
 # PROBE_PATH: /api/health
+# Config entry: (skip)
 # Manage with Kargo? Yes
 # Image repo for Kargo: ghcr.io/remerle/k8s-practice-backend
 
