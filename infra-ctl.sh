@@ -579,12 +579,21 @@ cmd_add_project() {
 cmd_edit_project() {
     require_gum
 
-    if [[ $# -eq 0 ]]; then
-        print_error "Usage: infra-ctl.sh edit-project <project-name>"
-        exit 1
+    local project_name="${1:-}"
+
+    if [[ -z "$project_name" ]]; then
+        load_conf
+        local projects=()
+        while IFS= read -r proj; do
+            projects+=("$proj")
+        done < <(detect_projects)
+        if [[ ${#projects[@]} -eq 0 ]]; then
+            print_warning "No projects to edit."
+            exit 0
+        fi
+        project_name="$(printf '%s\n' "${projects[@]}" | gum choose --header "Select project to edit:")"
     fi
 
-    local project_name="$1"
     load_conf
 
     local project_file="${TARGET_DIR}/argocd/projects/${project_name}.yaml"
@@ -1367,7 +1376,7 @@ Commands:
   add-app <name>        Scaffold a new application across all environments
   add-env <name>        Scaffold a new environment across all applications
   add-project <name>    Create an ArgoCD AppProject
-  edit-project <name>   Modify an existing ArgoCD AppProject
+  edit-project [name]   Modify an existing ArgoCD AppProject
   list-apps             List all applications
   list-envs             List all environments
   list-projects         List all ArgoCD AppProjects

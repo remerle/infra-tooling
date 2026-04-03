@@ -77,13 +77,34 @@ cmd_add() {
     require_cmd "kubeseal" "brew install kubeseal"
     require_cmd "jq" "brew install jq"
 
-    if [[ $# -lt 2 ]]; then
-        print_error "Usage: secret-ctl.sh add <app> <env>"
-        exit 1
+    local app_name="${1:-}"
+    local env_name="${2:-}"
+
+    if [[ -z "$app_name" ]]; then
+        load_conf
+        local apps=()
+        while IFS= read -r app; do
+            apps+=("$app")
+        done < <(detect_apps)
+        if [[ ${#apps[@]} -eq 0 ]]; then
+            print_warning "No applications found. Run 'infra-ctl.sh add-app' first."
+            exit 0
+        fi
+        app_name="$(printf '%s\n' "${apps[@]}" | gum choose --header "Select application:")"
     fi
 
-    local app_name="$1"
-    local env_name="$2"
+    if [[ -z "$env_name" ]]; then
+        [[ -z "${REPO_URL:-}" ]] && load_conf
+        local envs=()
+        while IFS= read -r env; do
+            envs+=("$env")
+        done < <(detect_envs)
+        if [[ ${#envs[@]} -eq 0 ]]; then
+            print_warning "No environments found. Run 'infra-ctl.sh add-env' first."
+            exit 0
+        fi
+        env_name="$(printf '%s\n' "${envs[@]}" | gum choose --header "Select environment:")"
+    fi
     validate_k8s_name "$app_name" "App name"
     validate_k8s_name "$env_name" "Environment name"
 
@@ -360,7 +381,7 @@ Usage: secret-ctl.sh <command> [options]
 
 Commands:
   init                Install Sealed Secrets controller and set up key material
-  add <app> <env>     Create or update a SealedSecret for an app/environment
+  add [app] [env]     Create or update a SealedSecret for an app/environment
   list [app] [env]    List app/environment pairs that have sealed secrets
   remove [app] [env]  Remove a SealedSecret for an app/environment
   preflight-check     Verify all required tools are installed

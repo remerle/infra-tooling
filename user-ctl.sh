@@ -238,12 +238,19 @@ cmd_remove_role() {
     require_yq
     require_helm
 
-    if [[ $# -lt 1 ]]; then
-        print_error "Usage: user-ctl.sh remove-role <name>"
-        exit 1
-    fi
+    local role_name="${1:-}"
 
-    local role_name="$1"
+    if [[ -z "$role_name" ]]; then
+        local policy
+        policy="$(yq '.configs.rbac."policy.csv" // ""' "$VALUES_FILE")" || true
+        local roles
+        roles="$(echo "$policy" | grep -oE 'role:[^,[:space:]]+' | sed 's/^role://' | sort -u)" || true
+        if [[ -z "$roles" ]]; then
+            print_warning "No roles to remove."
+            exit 0
+        fi
+        role_name="$(echo "$roles" | gum choose --header "Select role to remove:")"
+    fi
 
     if ! role_exists "$role_name" "$VALUES_FILE"; then
         print_error "Role '${role_name}' not found."
@@ -413,12 +420,18 @@ cmd_remove() {
     require_yq
     require_helm
 
-    if [[ $# -lt 1 ]]; then
-        print_error "Usage: user-ctl.sh remove <username>"
-        exit 1
-    fi
+    local username="${1:-}"
 
-    local username="$1"
+    if [[ -z "$username" ]]; then
+        local accounts
+        accounts="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
+            | grep '^accounts\.' | sed 's/^accounts\.//')" || true
+        if [[ -z "$accounts" ]]; then
+            print_warning "No users to remove."
+            exit 0
+        fi
+        username="$(echo "$accounts" | gum choose --header "Select user to remove:")"
+    fi
 
     if ! account_exists "$username" "$VALUES_FILE"; then
         print_error "Account '${username}' not found."
@@ -735,15 +748,15 @@ cmd_refresh_sa() {
     require_gum
     require_cmd "kubectl" "brew install kubectl"
 
-    if [[ $# -lt 1 ]]; then
-        print_error "Usage: user-ctl.sh refresh-sa <name> [--duration <hours>h]"
-        exit 1
+    local sa_name=""
+    local duration="2160h"
+
+    # Parse: first non-flag arg is the SA name
+    if [[ $# -gt 0 && "$1" != --* ]]; then
+        sa_name="$1"
+        shift
     fi
 
-    local sa_name="$1"
-    shift
-
-    local duration="2160h"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --duration)
@@ -760,6 +773,27 @@ cmd_refresh_sa() {
                 ;;
         esac
     done
+
+    # Interactive selection if name not provided
+    if [[ -z "$sa_name" ]]; then
+        require_yq
+        local users_dir="${TARGET_DIR}/users"
+        local sa_names=()
+        local accounts
+        accounts="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
+            | grep '^accounts\.' | sed 's/^accounts\.//')" || true
+        while IFS= read -r acct; do
+            [[ -z "$acct" ]] && continue
+            if [[ -f "${users_dir}/${acct}.kubeconfig" && ! -f "${users_dir}/${acct}.crt" ]]; then
+                sa_names+=("$acct")
+            fi
+        done <<<"$accounts"
+        if [[ ${#sa_names[@]} -eq 0 ]]; then
+            print_warning "No service accounts found."
+            exit 0
+        fi
+        sa_name="$(printf '%s\n' "${sa_names[@]}" | gum choose --header "Select service account to refresh:")"
+    fi
 
     # Verify SA exists
     if ! kubectl get serviceaccount "$sa_name" -n kube-system &>/dev/null; then
@@ -794,12 +828,27 @@ cmd_remove_sa() {
     require_yq
     require_helm
 
-    if [[ $# -lt 1 ]]; then
-        print_error "Usage: user-ctl.sh remove-sa <name>"
-        exit 1
-    fi
+    local sa_name="${1:-}"
 
-    local sa_name="$1"
+    if [[ -z "$sa_name" ]]; then
+        local users_dir="${TARGET_DIR}/users"
+        local sa_names=()
+        local accounts
+        accounts="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
+            | grep '^accounts\.' | sed 's/^accounts\.//')" || true
+        while IFS= read -r acct; do
+            [[ -z "$acct" ]] && continue
+            # SA accounts have a kubeconfig but no cert
+            if [[ -f "${users_dir}/${acct}.kubeconfig" && ! -f "${users_dir}/${acct}.crt" ]]; then
+                sa_names+=("$acct")
+            fi
+        done <<<"$accounts"
+        if [[ ${#sa_names[@]} -eq 0 ]]; then
+            print_warning "No service accounts to remove."
+            exit 0
+        fi
+        sa_name="$(printf '%s\n' "${sa_names[@]}" | gum choose --header "Select service account to remove:")"
+    fi
 
     print_header "Remove Service Account: ${sa_name}"
     echo ""
@@ -858,16 +907,16 @@ Usage: user-ctl.sh <command> [options]
 
 Commands:
   add-role <name>               Create an RBAC role (ArgoCD + Kubernetes)
-  remove-role <name>            Remove an RBAC role
+  remove-role [name]            Remove an RBAC role
   list-roles                    List configured roles
 
   add <username> <group>        Create a human user with x509 cert
-  remove <username>             Remove a human user
+  remove [username]             Remove a human user
   list                          List all users and service accounts
 
   add-sa <name> <group>         Create a service account with token
-  remove-sa <name>              Remove a service account
-  refresh-sa <name>             Regenerate a service account token
+  remove-sa [name]              Remove a service account
+  refresh-sa [name]             Regenerate a service account token
 
   preflight-check               Verify all required tools are installed
 
