@@ -80,6 +80,7 @@ _infra_ctl() {
         'remove-env:Remove an environment and all its resources'
         'remove-project:Remove an ArgoCD AppProject'
         'enable-kargo:Enable Kargo progressive delivery'
+        'reset:Remove all generated files (inverse of init)'
         'preflight-check:Validate repository structure'
     )
 

@@ -1424,6 +1424,53 @@ cmd_remove_env() {
     fi
 }
 
+cmd_reset() {
+    require_gum
+
+    print_header "Reset GitOps Repository"
+    echo ""
+
+    local targets=()
+    local target
+    for target in \
+        "${TARGET_DIR}/k8s" \
+        "${TARGET_DIR}/argocd" \
+        "${TARGET_DIR}/kargo" \
+        "${TARGET_DIR}/helm" \
+        "${TARGET_DIR}/.infra-ctl.conf" \
+        "${TARGET_DIR}/.sealed-secrets-cert.pem" \
+        "${TARGET_DIR}/.sealed-secrets-key.json"; do
+        if [[ -e "$target" ]]; then
+            targets+=("$target")
+        fi
+    done
+
+    if [[ ${#targets[@]} -eq 0 ]]; then
+        print_warning "Nothing to reset in ${TARGET_DIR}"
+        exit 0
+    fi
+
+    print_info "This will remove:"
+    local t
+    for t in "${targets[@]}"; do
+        print_info "  ${t#"${TARGET_DIR}/"}"
+    done
+    echo ""
+
+    if ! gum confirm --prompt.foreground 196 "Reset this GitOps repository? This cannot be undone."; then
+        print_warning "Aborted."
+        exit 0
+    fi
+
+    for t in "${targets[@]}"; do
+        rm -rf "$t"
+    done
+
+    print_removed "${targets[@]}"
+    print_info "Run 'infra-ctl.sh init' to start fresh."
+    echo ""
+}
+
 # --- Usage ---
 
 cmd_preflight_check() {
@@ -1451,6 +1498,7 @@ Commands:
   remove-env [name]     Remove an environment and all its resources
   remove-project [name] Remove an ArgoCD AppProject
   enable-kargo          Enable Kargo and generate resources for existing apps
+  reset                 Remove all generated files (inverse of init)
   preflight-check       Verify all required tools are installed
 
 Global options:
@@ -1488,6 +1536,7 @@ main() {
         remove-env) cmd_remove_env "$@" ;;
         remove-project) cmd_remove_project "$@" ;;
         enable-kargo) cmd_enable_kargo "$@" ;;
+        reset) cmd_reset "$@" ;;
         preflight-check) cmd_preflight_check "$@" ;;
         -h | --help) usage ;;
         *)
