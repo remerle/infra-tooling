@@ -18,6 +18,9 @@ TARGET_DIR="${PWD}"
 # When EXPLAIN=1 (or --explain flag), also print explanations for each command.
 # Implies SHOW_ME=1.
 : "${EXPLAIN:=0}"
+if [[ "$EXPLAIN" == "1" ]]; then
+    SHOW_ME=1
+fi
 
 # Runs a command with a gum spinner, or prints and runs it directly if SHOW_ME=1.
 # Usage: run_cmd "Installing ArgoCD..." helm install argocd ...
