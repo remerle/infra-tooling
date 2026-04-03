@@ -574,9 +574,9 @@ discover_presets() {
     local file
     for file in $pattern; do
         [[ -f "$file" ]] || continue
-        local basename
-        basename="$(basename "$file" .yaml)"
-        echo "${basename#"${workload_type}-"}"
+        local preset_name
+        preset_name="$(basename "$file" .yaml)"
+        echo "${preset_name#"${workload_type}-"}"
     done
 }
 

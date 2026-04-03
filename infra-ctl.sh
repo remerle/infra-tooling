@@ -246,9 +246,11 @@ cmd_add_app() {
             print_error "IMAGE is required."
             exit 1
         fi
-        if [[ -n "$port" ]]; then
-            validate_port "$port"
+        if [[ -z "$port" ]]; then
+            print_error "PORT is required."
+            exit 1
         fi
+        validate_port "$port"
 
         # Collect config entries from preset defaults
         while IFS= read -r line; do

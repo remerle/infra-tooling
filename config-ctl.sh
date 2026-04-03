@@ -77,7 +77,7 @@ cmd_add() {
     local has_cmg
     has_cmg="$(yq eval '.configMapGenerator | length' "$kust_file")"
     if [[ "$has_cmg" == "0" || "$has_cmg" == "null" ]]; then
-        yq eval -i '.configMapGenerator = [{"name": "'"$app_name"'", "literals": []}]' "$kust_file"
+        APP_NAME="$app_name" yq eval -i '.configMapGenerator = [{"name": env(APP_NAME), "literals": []}]' "$kust_file"
     fi
 
     # Ensure literals array exists on the first generator
@@ -90,7 +90,7 @@ cmd_add() {
     # Append each entry
     local entry
     for entry in "${entries[@]}"; do
-        yq eval -i '.configMapGenerator[0].literals += ["'"$entry"'"]' "$kust_file"
+        YQ_ENTRY="$entry" yq eval -i '.configMapGenerator[0].literals += [env(YQ_ENTRY)]' "$kust_file"
     done
 
     # Clean up null/empty entries from literals
@@ -259,7 +259,7 @@ cmd_remove() {
     # Remove selected entries
     while IFS= read -r entry; do
         [[ -z "$entry" ]] && continue
-        yq eval -i '(.configMapGenerator[0].literals) -= ["'"$entry"'"]' "$kust_file"
+        YQ_ENTRY="$entry" yq eval -i '(.configMapGenerator[0].literals) -= [env(YQ_ENTRY)]' "$kust_file"
         print_success "Removed: ${entry}"
     done <<<"$selected"
 
@@ -305,14 +305,24 @@ cmd_verify() {
         [[ -d "$base_dir" ]] || continue
 
         local configmap_refs=()
-        while IFS= read -r ref; do
-            [[ -n "$ref" ]] && configmap_refs+=("$ref")
-        done < <(grep -rh 'configMapRef' "$base_dir" 2>/dev/null \
-            | grep 'name:' \
-            | sed 's/.*name:\s*//' \
-            | tr -d '"' \
-            | tr -d "'" \
-            | sort -u || true)
+        local yaml_file
+        for yaml_file in "$base_dir"/*.yaml; do
+            [[ -f "$yaml_file" ]] || continue
+            while IFS= read -r ref; do
+                [[ -n "$ref" && "$ref" != "null" ]] && configmap_refs+=("$ref")
+            done < <(yq eval '.. | select(has("configMapRef")) | .configMapRef.name' "$yaml_file" 2>/dev/null || true)
+        done
+        # Deduplicate
+        local -A seen_refs=()
+        local unique_refs=()
+        local r
+        for r in "${configmap_refs[@]}"; do
+            if [[ ! -v "seen_refs[$r]" ]]; then
+                seen_refs["$r"]=1
+                unique_refs+=("$r")
+            fi
+        done
+        configmap_refs=("${unique_refs[@]}")
 
         if [[ ${#configmap_refs[@]} -eq 0 ]]; then
             continue

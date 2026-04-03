@@ -211,9 +211,9 @@ _config_ctl() {
     )
 
     _arguments -s \
-        '--target-dir[Operate on a specific directory]:directory:_directories' \
-        '--show-me[Print commands instead of running them]' \
-        '--explain[Print commands with explanations]' \
+        '--target-dir[Directory to operate on]:directory:_directories' \
+        '--show-me[Print commands instead of hiding behind spinners]' \
+        '--explain[Print commands with explanations (learning mode)]' \
         '--debug[Show full command output]' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'

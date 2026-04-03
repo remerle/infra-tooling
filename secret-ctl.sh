@@ -325,6 +325,7 @@ cmd_remove() {
 # --- Usage ---
 
 cmd_verify() {
+    require_gum
     require_yq
     load_conf
 
@@ -344,7 +345,7 @@ cmd_verify() {
 
         # Find all secretKeyRef entries in workload manifests
         local workload_file
-        for workload_file in "${app_dir}base/deployment.yaml" "${app_dir}base/statefulset.yaml"; do
+        for workload_file in "${app_dir}base/"*.yaml; do
             [[ -f "$workload_file" ]] || continue
 
             # Extract secret name + key pairs using yq
