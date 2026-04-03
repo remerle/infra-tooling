@@ -40,10 +40,7 @@ cmd_init() {
     repo_owner="$(extract_repo_owner "$repo_url")"
     print_info "Detected repo owner: ${repo_owner}"
 
-    if ! gum confirm "Proceed with repo URL '${repo_url}' and owner '${repo_owner}'?"; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_or_abort "Proceed with repo URL '${repo_url}' and owner '${repo_owner}'?"
 
     local created_files=()
 
@@ -193,10 +190,7 @@ cmd_add_app() {
         fi
     fi
 
-    if ! gum confirm "Create these files?"; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_or_abort "Create these files?"
 
     local created_files=()
 
@@ -364,10 +358,7 @@ cmd_add_env() {
         fi
     fi
 
-    if ! gum confirm "Create these files?"; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_or_abort "Create these files?"
 
     local created_files=()
 
@@ -645,15 +636,7 @@ cmd_edit_project() {
 
     if [[ -z "$project_name" ]]; then
         load_conf
-        local projects=()
-        while IFS= read -r proj; do
-            projects+=("$proj")
-        done < <(detect_projects)
-        if [[ ${#projects[@]} -eq 0 ]]; then
-            print_warning "No projects to edit."
-            exit 0
-        fi
-        project_name="$(printf '%s\n' "${projects[@]}" | gum choose --header "Select project to edit:")"
+        project_name="$(detect_projects | choose_from "Select project to edit:" "No projects to edit.")" || exit 0
     fi
 
     load_conf
@@ -814,10 +797,7 @@ cmd_enable_kargo() {
             print_info "  $((i + 1)). ${PROMOTION_ORDER[$i]}"
         done
 
-        if ! gum confirm "Use this order? (Edit kargo/promotion-order.txt after to change)"; then
-            print_warning "Aborted. Set KARGO_ENABLED=false in .infra-ctl.conf to disable."
-            exit 0
-        fi
+        confirm_or_abort "Use this order? (Edit kargo/promotion-order.txt after to change)"
     else
         mkdir -p "${TARGET_DIR}/kargo"
         touch "${TARGET_DIR}/kargo/promotion-order.txt"
@@ -987,15 +967,7 @@ cmd_remove_project() {
 
     if [[ -z "$project_name" ]]; then
         load_conf
-        local projects=()
-        while IFS= read -r proj; do
-            projects+=("$proj")
-        done < <(detect_projects)
-        if [[ ${#projects[@]} -eq 0 ]]; then
-            print_warning "No projects to remove."
-            exit 0
-        fi
-        project_name="$(printf '%s\n' "${projects[@]}" | gum choose --header "Select project to remove:")"
+        project_name="$(detect_projects | choose_from "Select project to remove:" "No projects to remove.")" || exit 0
     fi
 
     validate_k8s_name "$project_name" "Project name"
@@ -1047,10 +1019,7 @@ cmd_remove_project() {
         print_info "Apps will be reassigned to project '${reassign_to}'"
     fi
 
-    if ! gum confirm "Remove project '${project_name}'?"; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_or_abort "Remove project '${project_name}'?"
 
     # Reassign apps if needed
     if [[ ${#assigned_apps[@]} -gt 0 ]]; then
@@ -1098,15 +1067,7 @@ cmd_remove_app() {
 
     if [[ -z "$app_name" ]]; then
         load_conf
-        local apps=()
-        while IFS= read -r app; do
-            apps+=("$app")
-        done < <(detect_apps)
-        if [[ ${#apps[@]} -eq 0 ]]; then
-            print_warning "No applications to remove."
-            exit 0
-        fi
-        app_name="$(printf '%s\n' "${apps[@]}" | gum choose --header "Select application to remove:")"
+        app_name="$(detect_apps | choose_from "Select application to remove:" "No applications to remove.")" || exit 0
     fi
     validate_k8s_name "$app_name" "App name"
     load_conf
@@ -1154,10 +1115,7 @@ cmd_remove_app() {
         fi
     done
 
-    if ! gum confirm "Remove application '${app_name}' and all its resources?"; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_or_abort "Remove application '${app_name}' and all its resources?"
 
     # Execute removal
     local removed_files=()
@@ -1187,15 +1145,7 @@ cmd_remove_env() {
 
     if [[ -z "$env_name" ]]; then
         load_conf
-        local envs=()
-        while IFS= read -r env; do
-            envs+=("$env")
-        done < <(detect_envs)
-        if [[ ${#envs[@]} -eq 0 ]]; then
-            print_warning "No environments to remove."
-            exit 0
-        fi
-        env_name="$(printf '%s\n' "${envs[@]}" | gum choose --header "Select environment to remove:")"
+        env_name="$(detect_envs | choose_from "Select environment to remove:" "No environments to remove.")" || exit 0
     fi
     validate_k8s_name "$env_name" "Environment name"
     load_conf
@@ -1297,10 +1247,7 @@ cmd_remove_env() {
         print_info "Update: kargo/promotion-order.txt (remove '${env_name}')"
     fi
 
-    if ! gum confirm "Remove environment '${env_name}' and all its resources?"; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_or_abort "Remove environment '${env_name}' and all its resources?"
 
     # Execute removal
     local removed_files=()
@@ -1422,10 +1369,7 @@ cmd_reset() {
         print_info "  ${t#"${TARGET_DIR}/"}"
     done
 
-    if ! gum confirm --prompt.foreground 196 "Reset this GitOps repository? This cannot be undone."; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_destructive_or_abort "Reset this GitOps repository? This cannot be undone."
 
     for t in "${targets[@]}"; do
         rm -rf "$t"
