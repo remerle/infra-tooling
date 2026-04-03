@@ -305,6 +305,14 @@ EOF
 
 # --- Kubeconfig generation ---
 
+# Fetches current cluster connection info into caller-scoped variables.
+# Sets: _cluster_name, _server, _ca_data
+_fetch_cluster_info() {
+    _cluster_name="$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')"
+    _server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
+    _ca_data="$(kubectl config view --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+}
+
 # Generates a kubeconfig file for a user with client certificate auth.
 # Usage: generate_cert_kubeconfig <username> <cert_file> <key_file> <output_file>
 generate_cert_kubeconfig() {
@@ -313,25 +321,23 @@ generate_cert_kubeconfig() {
     local key_file="$3"
     local output_file="$4"
 
-    local cluster_name server ca_data
-    cluster_name="$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')"
-    server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
-    ca_data="$(kubectl config view --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+    local _cluster_name _server _ca_data
+    _fetch_cluster_info
 
     cat >"$output_file" <<EOF
 apiVersion: v1
 kind: Config
 clusters:
   - cluster:
-      certificate-authority-data: ${ca_data}
-      server: ${server}
-    name: ${cluster_name}
+      certificate-authority-data: ${_ca_data}
+      server: ${_server}
+    name: ${_cluster_name}
 contexts:
   - context:
-      cluster: ${cluster_name}
+      cluster: ${_cluster_name}
       user: ${username}
-    name: ${username}@${cluster_name}
-current-context: ${username}@${cluster_name}
+    name: ${username}@${_cluster_name}
+current-context: ${username}@${_cluster_name}
 users:
   - name: ${username}
     user:
@@ -348,25 +354,23 @@ generate_token_kubeconfig() {
     local token="$2"
     local output_file="$3"
 
-    local cluster_name server ca_data
-    cluster_name="$(kubectl config view --minify -o jsonpath='{.clusters[0].name}')"
-    server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
-    ca_data="$(kubectl config view --minify --flatten -o jsonpath='{.clusters[0].cluster.certificate-authority-data}')"
+    local _cluster_name _server _ca_data
+    _fetch_cluster_info
 
     cat >"$output_file" <<EOF
 apiVersion: v1
 kind: Config
 clusters:
   - cluster:
-      certificate-authority-data: ${ca_data}
-      server: ${server}
-    name: ${cluster_name}
+      certificate-authority-data: ${_ca_data}
+      server: ${_server}
+    name: ${_cluster_name}
 contexts:
   - context:
-      cluster: ${cluster_name}
+      cluster: ${_cluster_name}
       user: ${sa_name}
-    name: ${sa_name}@${cluster_name}
-current-context: ${sa_name}@${cluster_name}
+    name: ${sa_name}@${_cluster_name}
+current-context: ${sa_name}@${_cluster_name}
 users:
   - name: ${sa_name}
     user:
@@ -392,32 +396,23 @@ calculate_expiry_date() {
         return
     fi
 
+    local date_flag date_unit
     case "$unit" in
-        h)
-            if date -v+"${amount}"H "+%Y-%m-%d %H:%M" &>/dev/null; then
-                date -v+"${amount}"H "+%Y-%m-%d %H:%M"
-            else
-                date -d "+${amount} hours" "+%Y-%m-%d %H:%M"
-            fi
-            ;;
-        m)
-            if date -v+"${amount}"M "+%Y-%m-%d %H:%M" &>/dev/null; then
-                date -v+"${amount}"M "+%Y-%m-%d %H:%M"
-            else
-                date -d "+${amount} minutes" "+%Y-%m-%d %H:%M"
-            fi
-            ;;
-        s)
-            if date -v+"${amount}"S "+%Y-%m-%d %H:%M" &>/dev/null; then
-                date -v+"${amount}"S "+%Y-%m-%d %H:%M"
-            else
-                date -d "+${amount} seconds" "+%Y-%m-%d %H:%M"
-            fi
-            ;;
+        h) date_flag="H"; date_unit="hours" ;;
+        m) date_flag="M"; date_unit="minutes" ;;
+        s) date_flag="S"; date_unit="seconds" ;;
         *)
             echo "(unknown expiry: unsupported unit '${unit}')"
+            return
             ;;
     esac
+
+    # macOS date vs GNU date
+    if date -v+1S "+%s" &>/dev/null 2>&1; then
+        date -v+"${amount}${date_flag}" "+%Y-%m-%d %H:%M"
+    else
+        date -d "+${amount} ${date_unit}" "+%Y-%m-%d %H:%M"
+    fi
 }
 
 # --- Helm operations ---
