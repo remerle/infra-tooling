@@ -458,6 +458,61 @@ detect_app_project() {
 
 # --- Kargo support ---
 
+# Well-known environment names in conventional promotion order.
+# Environments not in this list sort alphabetically after all known ones.
+KNOWN_ENV_ORDER=(
+    dev develop development local
+    qa qat
+    test testing
+    int integration
+    stage staging stg
+    preprod pre-prod preproduction pre-production
+    uat
+    perf performance load loadtest
+    prod production prd
+)
+
+# Sorts environment names by conventional promotion order.
+# Known names (dev, qa, staging, production, etc.) are sorted by their
+# position in KNOWN_ENV_ORDER. Unknown names sort alphabetically after.
+# Usage: sort_envs_by_convention env1 env2 env3 ...
+#   Prints sorted names, one per line.
+sort_envs_by_convention() {
+    local -A rank=()
+    local i
+    for i in "${!KNOWN_ENV_ORDER[@]}"; do
+        rank["${KNOWN_ENV_ORDER[$i]}"]=$i
+    done
+
+    local known=()
+    local unknown=()
+    local env
+    for env in "$@"; do
+        if [[ -n "${rank[$env]+x}" ]]; then
+            known+=("${rank[$env]}:${env}")
+        else
+            unknown+=("$env")
+        fi
+    done
+
+    # Sort known by rank, unknown alphabetically
+    if [[ ${#known[@]} -gt 0 ]]; then
+        printf '%s\n' "${known[@]}" | sort -t: -k1 -n | cut -d: -f2
+    fi
+    if [[ ${#unknown[@]} -gt 0 ]]; then
+        printf '%s\n' "${unknown[@]}" | sort
+    fi
+}
+
+# Rebuilds promotion-order.txt from the given list of env names, sorted
+# by convention. Creates the file if it doesn't exist.
+# Usage: rebuild_promotion_order env1 env2 env3 ...
+rebuild_promotion_order() {
+    local promo_file="${TARGET_DIR}/kargo/promotion-order.txt"
+    mkdir -p "${TARGET_DIR}/kargo"
+    sort_envs_by_convention "$@" >"$promo_file"
+}
+
 # Checks if Kargo is enabled in the project configuration.
 # Returns 0 if KARGO_ENABLED=true in .infra-ctl.conf, 1 otherwise.
 is_kargo_enabled() {
@@ -468,6 +523,7 @@ is_kargo_enabled() {
 
 # Reads the Kargo promotion order into the PROMOTION_ORDER array.
 # Fails if kargo/promotion-order.txt is missing.
+# Sets PROMOTION_ORDER to an empty array if the file is empty.
 # Usage: read_promotion_order
 #   Sets global array: PROMOTION_ORDER
 read_promotion_order() {
@@ -486,11 +542,6 @@ read_promotion_order() {
         line="$(echo "$line" | xargs)" # trim whitespace
         PROMOTION_ORDER+=("$line")
     done <"$order_file"
-
-    if [[ ${#PROMOTION_ORDER[@]} -eq 0 ]]; then
-        print_error "kargo/promotion-order.txt is empty."
-        exit 1
-    fi
 }
 
 # Generates Kargo Stage resources for a single app across all existing environments

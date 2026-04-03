@@ -75,14 +75,11 @@ cmd_init() {
         created_files+=("${gk_dir}/.gitkeep")
     done
 
-    # Create Kargo promotion order file if enabled
+    # Create Kargo promotion order file if enabled (empty initially;
+    # add-env populates it as environments are created, sorted by convention)
     if is_kargo_enabled; then
         local promo_file="${TARGET_DIR}/kargo/promotion-order.txt"
-        cat >"$promo_file" <<'PROMOEOF'
-dev
-staging
-production
-PROMOEOF
+        touch "$promo_file"
         rm -f "${TARGET_DIR}/kargo/.gitkeep"
         created_files+=("$promo_file")
     fi
@@ -426,7 +423,7 @@ cmd_add_env() {
     if is_kargo_enabled; then
         read_promotion_order
 
-        # Check if env already exists in the promotion order
+        # Add env to promotion order (sorted by convention) if not already present
         local env_in_order=false
         local i
         for i in "${!PROMOTION_ORDER[@]}"; do
@@ -436,34 +433,31 @@ cmd_add_env() {
             fi
         done
 
+        if [[ "$env_in_order" == false ]]; then
+            # Rebuild the file with the new env inserted in conventional order
+            local all_envs=("${PROMOTION_ORDER[@]}" "$env_name")
+            rebuild_promotion_order "${all_envs[@]}"
+        fi
+
+        # Re-read the (possibly updated) order
+        read_promotion_order
+
         echo ""
-        print_info "Current promotion order:"
+        print_info "Promotion order:"
         for i in "${!PROMOTION_ORDER[@]}"; do
             print_info "  $((i + 1)). ${PROMOTION_ORDER[$i]}"
         done
 
+        # Find the upstream env (the one before this env in the order)
         local upstream_env=""
-        if [[ "$env_in_order" == true ]]; then
-            print_info "Environment '${env_name}' is already in the promotion order."
-            # Find the upstream env (the one before this env in the order)
-            for i in "${!PROMOTION_ORDER[@]}"; do
-                if [[ "${PROMOTION_ORDER[$i]}" == "$env_name" ]]; then
-                    if [[ $i -gt 0 ]]; then
-                        upstream_env="${PROMOTION_ORDER[$((i - 1))]}"
-                    fi
-                    break
+        for i in "${!PROMOTION_ORDER[@]}"; do
+            if [[ "${PROMOTION_ORDER[$i]}" == "$env_name" ]]; then
+                if [[ $i -gt 0 ]]; then
+                    upstream_env="${PROMOTION_ORDER[$((i - 1))]}"
                 fi
-            done
-        else
-            print_info "Environment '${env_name}' will be appended to the promotion chain."
-            print_info "To insert elsewhere, edit kargo/promotion-order.txt first, then re-run."
-
-            # Append to promotion-order.txt
-            echo "$env_name" >>"${TARGET_DIR}/kargo/promotion-order.txt"
-
-            # Upstream is the last env before the new one
-            upstream_env="${PROMOTION_ORDER[${#PROMOTION_ORDER[@]}-1]}"
-        fi
+                break
+            fi
+        done
 
         # Generate stages for each existing app
         if [[ ${#apps[@]} -gt 0 ]]; then
@@ -762,33 +756,30 @@ cmd_enable_kargo() {
     fi
     print_success "Set KARGO_ENABLED=true in .infra-ctl.conf"
 
-    # Create promotion-order.txt
-    local promo_file="${TARGET_DIR}/kargo/promotion-order.txt"
-    mkdir -p "${TARGET_DIR}/kargo"
-
+    # Create promotion-order.txt from existing environments, sorted by convention
     local envs=()
     while IFS= read -r env; do
         envs+=("$env")
     done < <(detect_envs)
 
     if [[ ${#envs[@]} -gt 0 ]]; then
-        print_info "Detected environments: ${envs[*]}"
-        print_info "These will be used as the promotion order."
+        rebuild_promotion_order "${envs[@]}"
+        print_info "Detected environments, sorted by convention:"
+        read_promotion_order
+        local i
+        for i in "${!PROMOTION_ORDER[@]}"; do
+            print_info "  $((i + 1)). ${PROMOTION_ORDER[$i]}"
+        done
         echo ""
 
         if ! gum confirm "Use this order? (Edit kargo/promotion-order.txt after to change)"; then
             print_warning "Aborted. Set KARGO_ENABLED=false in .infra-ctl.conf to disable."
             exit 0
         fi
-
-        printf '%s\n' "${envs[@]}" >"$promo_file"
     else
-        cat >"$promo_file" <<'PROMOEOF'
-dev
-staging
-production
-PROMOEOF
-        print_info "No environments detected. Using defaults: dev, staging, production"
+        mkdir -p "${TARGET_DIR}/kargo"
+        touch "${TARGET_DIR}/kargo/promotion-order.txt"
+        print_info "No environments detected. Promotion order will be built as you add environments."
     fi
     rm -f "${TARGET_DIR}/kargo/.gitkeep"
     print_success "Created kargo/promotion-order.txt"

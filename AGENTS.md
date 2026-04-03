@@ -130,7 +130,7 @@ Kargo requires cert-manager as a dependency. Kargo uses Kubernetes admission web
 
 TLS termination for the Kargo API server (the user-facing dashboard/API, separate from the webhooks) is handled by Traefik, not by Kargo itself. Two Helm values control this: `api.tls.enabled=false` disables TLS on the Kargo API server, and `api.tls.terminatedUpstream=true` tells Kargo that an upstream proxy already terminated TLS. Both are required; without `terminatedUpstream`, Kargo doesn't know the connection was secured.
 
-The promotion pipeline is defined in `kargo/promotion-order.txt` (one env per line, default: dev, staging, production). The first environment sources images directly from a Warehouse (container registry watcher). Each subsequent environment promotes only images verified in the previous stage.
+The promotion pipeline is defined in `kargo/promotion-order.txt` (one env per line). The file starts empty and is built incrementally as environments are added via `add-env`. Environments are automatically sorted by a conventional promotion order (dev, qa, test, integration, staging, preprod, uat, perf, production, and common aliases). Unknown environment names sort alphabetically after all known ones. The first environment sources images directly from a Warehouse (container registry watcher). Each subsequent environment promotes only images verified in the previous stage.
 
 Kargo resources live under `kargo/<app>/` (one directory per application), mirroring `k8s/apps/<app>/`. Each app gets its own Kargo Project (isolation boundary), Warehouse, and one Stage per environment.
 
@@ -221,6 +221,8 @@ Commands follow these naming patterns:
 - `detect_app_project(app_name)` -- finds which project an app belongs to by grepping existing manifests
 - `is_kargo_enabled()` -- returns 0 if `KARGO_ENABLED=true` in `.infra-ctl.conf`
 - `read_promotion_order()` -- reads `kargo/promotion-order.txt` into the `PROMOTION_ORDER` array
+- `sort_envs_by_convention(env...)` -- sorts environment names by conventional promotion order (dev before staging before production, etc.); unknown names sort alphabetically after known ones
+- `rebuild_promotion_order(env...)` -- rewrites `kargo/promotion-order.txt` with the given envs sorted by convention
 
 **Repo URL parsing:**
 - `extract_repo_owner(url)` -- extracts the GitHub owner from an HTTPS or SSH repo URL
