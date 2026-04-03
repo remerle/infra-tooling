@@ -144,6 +144,8 @@ cmd_add() {
             break
         fi
 
+        validate_secret_key "$key"
+
         # Warn if key exists in current sealed secret
         if [[ -f "$sealed_file" ]] && grep -q "^\s*${key}:" "$sealed_file"; then
             if ! gum confirm "Key '${key}' already exists. Overwrite?"; then
