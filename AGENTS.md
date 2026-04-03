@@ -163,13 +163,34 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 
 ## When modifying these scripts
 
-- Adding a new command: add a `cmd_<name>` function and a case in the `main()` dispatcher. Also add the command to `completions.zsh`.
+### Command conventions
+
+Every resource type MUST have the full add/list/remove triad. This is mandatory, not optional. When adding a new `add-*` command, include the corresponding `list-*` and `remove-*` commands in the same changeset.
+
+Commands follow these naming patterns:
+
+| Verb | Pattern | Creates new? | Arg required? |
+|------|---------|-------------|---------------|
+| `add-*` | `add-app <name>` | Yes | Yes (new name needed) |
+| `list-*` | `list-apps` | No | No |
+| `remove-*` | `remove-app [name]` | No | No (chooser if omitted) |
+| `edit-*` | `edit-project [name]` | No | No (chooser if omitted) |
+
+**Interactive choosers are mandatory.** Any command that operates on an existing resource MUST present a `gum choose` picker when called without a name argument. Never show a bare usage error for commands that could list and prompt instead. The only commands that require arguments are `add-*` commands (you need a name to create something new) and commands that take non-resource arguments like `add <username> <group>`.
+
+### Checklist for adding a new command
+
+1. Add a `cmd_<name>` function following existing patterns (validate, preview, confirm, execute, summarize)
+2. Add a case in the `main()` dispatcher
+3. Add an entry in `usage()`
+4. Add the command to `completions.zsh`
+5. If the command accepts a resource name, add a dynamic completion entry in `completions.zsh` (see `_infra_complete_apps` for the pattern)
+6. If this is an `add-*` command, also add the `list-*` and `remove-*` counterparts
+
+### Other modifications
+
 - Adding a new template: place it in the appropriate `templates/` subdirectory
 - Adding a new placeholder: add it to the "Template placeholders" table above
-- **Always update `completions.zsh`** when adding, removing, or renaming commands in any script. The completions file must stay in sync with the actual command sets.
-- **Mandatory add/list/remove parity**: every resource type that has an `add-*` command MUST also have a `list-*` and `remove-*` command. This is not optional. When adding a new `add-*` command, you must also add the corresponding `list-*` and `remove-*` commands in the same changeset.
-- **Naming and behavior consistency across commands**: follow the existing patterns for command naming (`add-*`, `remove-*`, `list-*`, `edit-*`) and behavior. Commands that operate on a named resource (e.g., `remove-app <name>`) should present an interactive `gum choose` picker when called without a name argument, rather than showing usage errors.
-- **Argument completions**: when adding commands that accept resource names as arguments, add dynamic completion entries in `completions.zsh` that scan the filesystem (see `_infra_complete_apps`, `_infra_complete_envs`, `_infra_complete_projects` for examples).
 
 ### `lib/common.sh` function inventory
 
