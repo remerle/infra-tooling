@@ -1384,7 +1384,8 @@ cmd_reset() {
 cmd_preflight_check() {
     echo "  infra-ctl.sh dependencies:"
     preflight_check \
-        "gum:brew install gum"
+        "gum:brew install gum" \
+        "gh:brew install gh"
 }
 
 usage() {

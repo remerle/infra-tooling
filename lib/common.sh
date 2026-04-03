@@ -189,6 +189,7 @@ preflight_check() {
                 helm) version="$(helm version --short 2>/dev/null || true)" ;;
                 jq) version="$(jq --version 2>/dev/null || true)" ;;
                 yq) version="$(yq --version 2>/dev/null | awk '{print $NF}' || true)" ;;
+                gh) version="$(gh --version 2>/dev/null | head -1 | awk '{print $NF}' || true)" ;;
                 k3d) version="$(k3d version 2>/dev/null | head -1 | awk '{print $NF}' || true)" ;;
                 kubeseal) version="$(kubeseal --version 2>/dev/null | awk '{print $NF}' || true)" ;;
                 docker) version="$(docker --version 2>/dev/null | sed 's/Docker version //' | cut -d, -f1 || true)" ;;

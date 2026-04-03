@@ -635,6 +635,7 @@ cmd_preflight_check() {
     echo "  cluster-ctl.sh dependencies:"
     preflight_check \
         "gum:brew install gum" \
+        "gh:brew install gh" \
         "k3d:brew install k3d" \
         "kubectl:brew install kubectl" \
         "jq:brew install jq" \
