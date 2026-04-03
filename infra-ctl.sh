@@ -819,27 +819,20 @@ PROMOEOF
 cmd_remove_app() {
     require_gum
 
-    if [[ $# -eq 0 ]]; then
+    local app_name="${1:-}"
+
+    if [[ -z "$app_name" ]]; then
         load_conf
-        print_header "Applications"
-        echo ""
         local apps=()
         while IFS= read -r app; do
             apps+=("$app")
         done < <(detect_apps)
         if [[ ${#apps[@]} -eq 0 ]]; then
-            print_warning "No applications found."
-        else
-            local app
-            for app in "${apps[@]}"; do
-                print_info "  ${app}"
-            done
+            print_warning "No applications to remove."
+            exit 0
         fi
-        echo ""
-        return
+        app_name="$(printf '%s\n' "${apps[@]}" | gum choose --header "Select application to remove:")"
     fi
-
-    local app_name="$1"
     validate_k8s_name "$app_name" "App name"
     load_conf
 
@@ -917,27 +910,20 @@ cmd_remove_app() {
 cmd_remove_env() {
     require_gum
 
-    if [[ $# -eq 0 ]]; then
+    local env_name="${1:-}"
+
+    if [[ -z "$env_name" ]]; then
         load_conf
-        print_header "Environments"
-        echo ""
         local envs=()
         while IFS= read -r env; do
             envs+=("$env")
         done < <(detect_envs)
         if [[ ${#envs[@]} -eq 0 ]]; then
-            print_warning "No environments found."
-        else
-            local env
-            for env in "${envs[@]}"; do
-                print_info "  ${env}"
-            done
+            print_warning "No environments to remove."
+            exit 0
         fi
-        echo ""
-        return
+        env_name="$(printf '%s\n' "${envs[@]}" | gum choose --header "Select environment to remove:")"
     fi
-
-    local env_name="$1"
     validate_k8s_name "$env_name" "Environment name"
     load_conf
 
