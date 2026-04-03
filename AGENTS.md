@@ -94,6 +94,10 @@ One non-obvious workaround in `cluster-ctl.sh init-cluster`:
 
 All interactive prompts, confirmations, and styled output use [gum](https://github.com/charmbracelet/gum). This is a hard dependency, not optional. Both scripts check for it at startup and fail with install instructions if missing.
 
+### Why gh is required
+
+The `gh` CLI is a hard dependency for `cluster-ctl.sh` and `infra-ctl.sh`. It is used to verify GitHub repository URLs and validate GitHub PATs (authentication + scope checking). Both scripts check for it at startup via `require_gh()`, which also verifies the user is authenticated (`gh auth status`).
+
 ### Why projects are separate from the parent app
 
 The parent app (`argocd/parent-app.yaml`) watches `argocd/apps/`. A separate Application (`argocd/apps/projects.yaml`) watches `argocd/projects/`. This is because Application and AppProject are different resource types with different lifecycles and permission concerns. Mixing them in one directory would conflate deployment config with access control.
@@ -201,9 +205,16 @@ Commands follow these naming patterns:
 - `require_gum()` -- exits with an error and install instructions if `gum` is not on PATH
 - `require_yq()` -- exits with an error and install instructions if `yq` (Go version) is not on PATH
 - `require_helm()` -- exits with an error and install instructions if `helm` is not on PATH
+- `require_gh()` -- exits with an error if `gh` is not on PATH or not authenticated
 
 **Input validation:**
 - `validate_k8s_name(name, label)` -- validates a name against RFC 1123 subdomain rules (lowercase alphanumeric, hyphens, dots; max 253 chars); exits with an error if invalid
+- `validate_positive_integer(value, label)` -- validates a positive integer; returns 1 with error on failure
+- `validate_port(value)` -- validates a TCP/UDP port number (1-65535); returns 1 with error on failure
+- `validate_github_pat(pat, required_scopes...)` -- validates a GitHub PAT for authentication and required OAuth scopes; returns 1 on failure
+- `validate_github_repo(url)` -- checks GitHub repo accessibility via `gh`; prints warning on failure but returns 0
+- `validate_image_repo(ref)` -- validates OCI image reference format (returns 1) and checks registry (prints warning); must not contain a tag
+- `validate_secret_key(key)` -- warns if key doesn't match uppercase env var convention; always returns 0
 
 **Configuration:**
 - `load_conf()` -- parses `KEY=value` lines from `.infra-ctl.conf` in `TARGET_DIR`; fails if missing or malformed
