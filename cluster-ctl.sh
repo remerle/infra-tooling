@@ -250,18 +250,17 @@ spec:
 KARGOINGRESS
             print_success "Kargo Ingress created at kargo.localhost"
 
-            # Update .infra-ctl.conf if it exists
+            # Update .infra-ctl.conf (create if it doesn't exist yet).
+            # This is idempotent: appends the flag or updates an existing line.
             local conf_file="${TARGET_DIR}/.infra-ctl.conf"
-            if [[ -f "$conf_file" ]]; then
-                if grep -q '^KARGO_ENABLED=' "$conf_file"; then
-                    local tmp
-                    tmp="$(awk '/^KARGO_ENABLED=/{print "KARGO_ENABLED=true"; next}1' "$conf_file")"
-                    printf '%s\n' "$tmp" >"$conf_file"
-                else
-                    echo "KARGO_ENABLED=true" >>"$conf_file"
-                fi
-                print_info "Set KARGO_ENABLED=true in .infra-ctl.conf"
+            if [[ -f "$conf_file" ]] && grep -q '^KARGO_ENABLED=' "$conf_file"; then
+                local tmp
+                tmp="$(awk '/^KARGO_ENABLED=/{print "KARGO_ENABLED=true"; next}1' "$conf_file")"
+                printf '%s\n' "$tmp" >"$conf_file"
+            else
+                echo "KARGO_ENABLED=true" >>"$conf_file"
             fi
+            print_info "Set KARGO_ENABLED=true in .infra-ctl.conf"
 
             kargo_installed=true
         else
