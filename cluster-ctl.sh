@@ -51,6 +51,7 @@ cmd_init_cluster() {
     # all agent nodes only (server nodes already have API access on localhost).
     echo ""
     run_cmd "Creating k3d cluster '${cluster_name}'..." \
+        --explain "k3d creates a lightweight Kubernetes cluster by running k3s inside Docker containers. --agents sets the number of worker nodes. --env patches agent nodes with a working KUBECONFIG path so the k3d entrypoint's 'kubectl uncordon' loop can reach the API server -- without it, kubectl defaults to localhost:8080 which doesn't exist on agent nodes. --wait blocks until all nodes are Ready." \
         k3d cluster create "$cluster_name" \
         --agents "$agents" \
         --env "KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig@agent:*" \
@@ -63,15 +64,18 @@ cmd_init_cluster() {
     # Install Metrics Server (required for kubectl top)
     local metrics_server_version="v0.7.2"
     run_cmd "Installing Metrics Server ${metrics_server_version}..." \
+        --explain "Metrics Server collects CPU and memory usage from each node's kubelet. It powers 'kubectl top nodes/pods' and is required by the Horizontal Pod Autoscaler (HPA). k3s does not bundle it, so it must be installed separately." \
         kubectl apply -f "https://github.com/kubernetes-sigs/metrics-server/releases/download/${metrics_server_version}/components.yaml"
 
     # Metrics Server needs --kubelet-insecure-tls in k3d (self-signed kubelet certs)
     run_cmd "Patching Metrics Server for k3d..." \
+        --explain "k3d generates self-signed TLS certificates for each kubelet. Metrics Server validates these certificates by default and rejects them, causing it to fail. --kubelet-insecure-tls disables that check so Metrics Server can scrape metrics from k3d nodes." \
         kubectl patch deployment metrics-server -n kube-system \
         --type=json \
         -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
 
     if run_cmd "Waiting for Metrics Server to be ready..." \
+        --explain "The Deployment controller needs time to pull the image and pass readiness probes. This command blocks until the Deployment reports Available=true, ensuring subsequent 'kubectl top' calls will work." \
         kubectl wait --for=condition=available deployment/metrics-server -n kube-system --timeout=60s; then
         print_success "Metrics Server is ready (kubectl top enabled)."
     else
@@ -101,7 +105,9 @@ cmd_init_cluster() {
                 "*.localhost" >/dev/null 2>&1
 
             # Create TLS secret and default TLSStore in kube-system so Traefik uses it for all routes
-            run_cmd_sh "Configuring TLS..." '
+            run_cmd_sh "Configuring TLS..." \
+                --explain "The TLS Secret stores the mkcert-generated certificate and key so Kubernetes can reference them. The TLSStore (a Traefik CRD) sets this certificate as Traefik's cluster-wide default, so every Ingress route served by Traefik will use the locally-trusted cert automatically -- no per-Ingress TLS annotation needed." \
+                '
                 kubectl create secret tls localhost-tls \
                     --cert="'"${tls_dir}"'/tls.crt" --key="'"${tls_dir}"'/tls.key" \
                     --namespace kube-system --dry-run=client -o yaml | kubectl apply -f -
@@ -137,9 +143,11 @@ EOF
         fi
 
         run_cmd "Adding ArgoCD Helm repo..." \
+            --explain "Helm pulls charts from named remote repositories. This registers the official Argo project Helm repository under the alias 'argo' so subsequent helm commands can reference charts as 'argo/argo-cd'." \
             helm repo add argo https://argoproj.github.io/argo-helm
 
         run_cmd "Updating Helm repos..." \
+            --explain "Helm caches repository index files locally. This refreshes the cache so the latest chart versions and metadata are available. Without this, helm install may use stale data." \
             helm repo update
 
         local argocd_tls_args=()
@@ -157,6 +165,7 @@ EOF
             ${argocd_tls_args[*]+${argocd_tls_args[*]}} \
             --wait --timeout 120s >\"$argocd_log\" 2>&1"
         if run_cmd_sh "Installing ArgoCD via Helm (this may take a minute)..." \
+            --explain "ArgoCD is a GitOps continuous delivery tool. It watches Git repositories for Kubernetes manifests and automatically syncs the cluster state to match. Installed into its own 'argocd' namespace. --wait blocks until all ArgoCD pods are running." \
             "$argocd_cmd"; then
             print_success "ArgoCD installed via Helm."
             argocd_installed=true
@@ -177,6 +186,7 @@ EOF
         if ! kubectl get crd certificates.cert-manager.io &>/dev/null; then
             helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null 2>&1
             run_cmd_sh "Installing cert-manager (required by Kargo)..." \
+                --explain "Kargo uses admission webhooks to validate its custom resources. Kubernetes requires webhook servers to serve TLS. cert-manager automates the issuance of those TLS certificates via its Certificate and Issuer resources, which Kargo's Helm chart relies on." \
                 "helm install cert-manager jetstack/cert-manager \
                 --namespace cert-manager --create-namespace \
                 --set crds.enabled=true \
@@ -211,6 +221,7 @@ EOF
         local kargo_log
         kargo_log="$(mktemp)"
         if run_cmd_sh "Installing Kargo via Helm (this may take a minute)..." \
+            --explain "Kargo is a progressive delivery tool that promotes container images through a pipeline of stages (e.g., dev -> staging -> prod). It tracks image versions in a Warehouse and applies promotions via Git commits. TLS is terminated at Traefik, so api.tls.enabled=false turns off TLS inside Kargo itself, and api.tls.terminatedUpstream=true tells Kargo an upstream proxy already handled TLS so it sets secure cookie flags correctly." \
             "helm install kargo \
             oci://ghcr.io/akuity/kargo-charts/kargo \
             --namespace kargo --create-namespace \
@@ -228,7 +239,9 @@ EOF
     traefik.ingress.kubernetes.io/router.tls: "true"'
             fi
 
-            run_cmd_sh "Creating Kargo Ingress..." "kubectl apply -f - <<'KARGOINGRESS'
+            run_cmd_sh "Creating Kargo Ingress..." \
+                --explain "An Ingress resource tells Traefik (the cluster's ingress controller) how to route external HTTP/HTTPS traffic to an in-cluster Service. Without this, the Kargo API server is only reachable inside the cluster. The rule maps kargo.localhost to the kargo-api Service on port 80." \
+                "kubectl apply -f - <<'KARGOINGRESS'
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -339,6 +352,7 @@ cmd_delete_cluster() {
     fi
 
     run_cmd "Deleting cluster '${cluster_name}'..." \
+        --explain "k3d cluster delete stops and removes all Docker containers that make up the cluster (server, agents, load balancer) and cleans up the kubeconfig entry. This is irreversible -- all workloads and persistent volumes in the cluster are destroyed." \
         k3d cluster delete "$cluster_name"
 
     print_success "Cluster '${cluster_name}' deleted."
@@ -454,7 +468,9 @@ cmd_add_repo_creds() {
     fi
 
     # Create or replace the secret
-    run_cmd_sh "Configuring ArgoCD repo credentials..." '
+    run_cmd_sh "Configuring ArgoCD repo credentials..." \
+        --explain "ArgoCD discovers repository credentials by watching for Secrets labeled with 'argocd.argoproj.io/secret-type=repository'. The label is the signal -- ArgoCD ignores unlabeled Secrets. Piping through 'kubectl label --local' adds the label before applying, avoiding a separate patch step." \
+        '
         kubectl create secret generic repo-creds \
             --namespace argocd \
             --from-literal=type=git \
@@ -555,7 +571,9 @@ cmd_add_kargo_creds() {
     fi
 
     # Create Git credential
-    run_cmd_sh "Configuring Kargo Git credentials..." '
+    run_cmd_sh "Configuring Kargo Git credentials..." \
+        --explain "Kargo discovers Git credentials by watching for Secrets labeled 'kargo.akuity.io/cred-type=git' inside the app's namespace (its Kargo Project namespace). Kargo needs write access to the GitOps repo so it can commit image tag updates when promoting a new image version through stages." \
+        '
         kubectl create secret generic gitops-repo-creds \
             --namespace "'"$app_name"'" \
             --from-literal=type=git \
@@ -572,7 +590,9 @@ cmd_add_kargo_creds() {
     # Optionally create registry credential
     echo ""
     if gum confirm "Is the container registry private?"; then
-        run_cmd_sh "Configuring registry credentials..." '
+        run_cmd_sh "Configuring registry credentials..." \
+            --explain "Kargo's Warehouse polls the container registry to detect new image tags. For private registries it needs pull credentials, stored as a Secret labeled 'kargo.akuity.io/cred-type=image' in the app namespace. The repoURL field scopes the credential to a specific registry/repository prefix." \
+            '
             kubectl create secret generic registry-creds \
                 --namespace "'"$app_name"'" \
                 --from-literal=type=image \
@@ -612,6 +632,7 @@ cmd_upgrade_argocd() {
     fi
 
     run_cmd "Upgrading ArgoCD..." \
+        --explain "helm upgrade applies any changes made to argocd-values.yaml (custom settings like Ingress hostnames, resource limits, or plugin config) without reinstalling ArgoCD from scratch. --wait ensures the rollout completes and all pods are healthy before the command returns." \
         helm upgrade argocd argo/argo-cd \
         --namespace argocd \
         --values "$values_file" \
@@ -636,6 +657,7 @@ cmd_upgrade_kargo() {
     fi
 
     run_cmd "Upgrading Kargo..." \
+        --explain "helm upgrade pulls the latest version of the Kargo chart from the OCI registry at ghcr.io and applies it to the running installation. This is how you pick up Kargo bug fixes and new features. --wait blocks until the new pods are running and healthy." \
         helm upgrade kargo \
         oci://ghcr.io/akuity/kargo-charts/kargo \
         --namespace kargo \
@@ -677,6 +699,7 @@ Commands:
 Global options:
   --target-dir <path>   Directory context (default: current directory)
   --show-me             Print commands instead of hiding behind spinners (or set SHOW_ME=1)
+  --explain             Print commands with explanations (learning mode, implies --show-me)
 EOF
 }
 
