@@ -425,6 +425,7 @@ infra-ctl.sh add-app frontend
 # PORT: 3000
 # SECRET_NAME: (skip)
 # PROBE_PATH: /api/health
+# Config entry: API_URL=http://backend:3000
 # Image repo for Kargo: ghcr.io/remerle/k8s-practice-frontend
 
 # PostgreSQL
