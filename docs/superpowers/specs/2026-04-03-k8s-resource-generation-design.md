@@ -31,20 +31,13 @@ All templates live in `templates/k8s/` and use `{{PLACEHOLDER}}` markers.
 #### `templates/k8s/deployment.yaml`
 
 ```yaml
+# Labels and selectors (app: <name>) are injected by Kustomize commonLabels
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{APP_NAME}}
-  labels:
-    app: {{APP_NAME}}
 spec:
-  selector:
-    matchLabels:
-      app: {{APP_NAME}}
   template:
-    metadata:
-      labels:
-        app: {{APP_NAME}}
     spec:
       containers:
         - name: {{APP_NAME}}
@@ -65,22 +58,15 @@ spec:
 #### `templates/k8s/statefulset-postgres.yaml`
 
 ```yaml
+# Labels and selectors (app: <name>) are injected by Kustomize commonLabels
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: {{APP_NAME}}
-  labels:
-    app: {{APP_NAME}}
 spec:
   serviceName: {{APP_NAME}}
   replicas: 1
-  selector:
-    matchLabels:
-      app: {{APP_NAME}}
   template:
-    metadata:
-      labels:
-        app: {{APP_NAME}}
     spec:
       containers:
         - name: {{APP_NAME}}
