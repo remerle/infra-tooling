@@ -4,12 +4,13 @@ Design decisions and conventions for AI agents working in this repository.
 
 ## Architecture
 
-Four independent bash scripts at the repository root:
+Five independent bash scripts at the repository root:
 
 - **`infra-ctl.sh`** -- manages the GitOps repository structure (directories, templates, manifests). Git-only; does not interact with any cluster.
 - **`cluster-ctl.sh`** -- manages the local k3d cluster lifecycle (creation, ArgoCD Helm installation/upgrade, Kargo, teardown). Interacts with Docker, Kubernetes, and Helm.
 - **`secret-ctl.sh`** -- manages per-environment secrets using Bitnami Sealed Secrets. Interacts with the cluster (for controller install and key management) and writes encrypted SealedSecret files to the repo.
 - **`user-ctl.sh`** -- manages RBAC roles, human users (x509 certs), and service accounts (short-lived tokens). Interacts with the cluster (CSR API, RBAC bindings, Helm upgrades) and writes to `helm/argocd-values.yaml` and `k8s/platform/`.
+- **`config-ctl.sh`** -- manages configMapGenerator literals in Kustomize configurations. Manipulates kustomization.yaml files via yq. Does not interact with the cluster.
 
 All scripts share common functions via `lib/common.sh`.
 
@@ -66,6 +67,52 @@ Templates are in `templates/`, organized to mirror the output directory structur
 | `{{PORT}}` | User input (`add-app`, default `8080`) | `service.yaml`, `service-headless.yaml` |
 | `{{IMAGE_REPO}}` | User input or default (`ghcr.io/REPO_OWNER/APP_NAME`) | `warehouse.yaml`, `stage-direct.yaml`, `stage-promoted.yaml` |
 | `{{UPSTREAM_STAGE}}` | Derived from promotion order (`<app>-<prev-env>`) | `stage-promoted.yaml` |
+| `{{IMAGE}}` | Frontmatter default or user input | `deployment-web.yaml`, `statefulset-postgres.yaml` |
+| `{{SECRET_ENV_VARS}}` | Built in bash (`add-app`) | `deployment-web.yaml` |
+| `{{PROBES}}` | Built in bash (`add-app`) | `deployment-web.yaml` |
+| `{{SECRET_NAME}}` | Frontmatter default or user input | `statefulset-postgres.yaml`, `deployment-web.yaml` |
+| `{{MOUNT_PATH}}` | Frontmatter default or user input | `statefulset-postgres.yaml` |
+| `{{STORAGE_SIZE}}` | Frontmatter default or user input | `statefulset-postgres.yaml` |
+| `{{PROBE_PATH}}` | Frontmatter default or user input | Used to build `{{PROBES}}` block |
+| `{{HOST}}` | User input (`add-ingress`) | `ingress.yaml` |
+| `{{PATH}}` | User input (`add-ingress`, default `/`) | `ingress.yaml` |
+
+## Preset frontmatter system
+
+Workload templates (deployments and statefulsets) use YAML frontmatter delimited by `---` to declare a preset name, defaults, and config values. The frontmatter sits at the top of the template file; the body after the closing `---` is the standard Kubernetes manifest template.
+
+The script auto-discovers available presets by scanning `templates/k8s/deployment-*.yaml` and `templates/k8s/statefulset-*.yaml`. Adding a new preset requires only adding a new template file with frontmatter; no bash changes are needed.
+
+### Frontmatter fields
+
+| Field | Purpose |
+|-------|---------|
+| `preset` | Name shown in the preset picker (e.g., `web`, `postgres`) |
+| `description` | Human-readable description shown alongside the preset name |
+| `defaults` | Map of `PLACEHOLDER: value` pairs used as defaults when prompting the user |
+| `optional` | List of default keys that may be left empty (skipped during prompting) |
+| `config` | Map of `KEY: value` pairs added to configMapGenerator for the app |
+
+`{{APP_NAME}}` references in frontmatter defaults are resolved before prompting, so defaults like `{{APP_NAME}}-secret` expand correctly.
+
+### Example
+
+```yaml
+---
+preset: web
+description: HTTP service with probes and optional secret
+defaults:
+  IMAGE: nginx:latest
+  SECRET_NAME: "{{APP_NAME}}-secret"
+  PROBE_PATH: /healthz
+optional:
+  - SECRET_NAME
+  - PROBE_PATH
+config:
+  LOG_LEVEL: info
+---
+# ... Kubernetes manifest template body follows ...
+```
 
 ## Detection logic
 
@@ -159,6 +206,7 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 3. `infra-ctl.sh add-project <name>` -- (optional) create access control boundaries
 4. `infra-ctl.sh add-env <name>` / `infra-ctl.sh add-app <name>` -- in any order
    (If Kargo enabled, Kargo Warehouse and Stage resources are generated alongside ArgoCD Applications)
+4b. `config-ctl.sh add` -- manage configMapGenerator literals
 5. `secret-ctl.sh init` -- install Sealed Secrets controller (requires running cluster)
 6. `secret-ctl.sh add <app> <env>` -- encrypt and store per-environment secrets
 7. `user-ctl.sh add-role <name>` -- create an RBAC role with a permission preset
@@ -190,6 +238,7 @@ Commands follow these naming patterns:
 4. Add the command to `completions.zsh`
 5. If the command accepts a resource name, add a dynamic completion entry in `completions.zsh` (see `_infra_complete_apps` for the pattern)
 6. If this is an `add-*` command, also add the `list-*` and `remove-*` counterparts
+7. If adding a new preset, place the template in `templates/k8s/` with frontmatter following the format in existing presets
 
 ### Other modifications
 
@@ -224,6 +273,21 @@ Commands follow these naming patterns:
 - `render_template(template, output, KEY=value...)` -- renders a template to an output path, replacing `{{KEY}}` placeholders via bash parameter expansion
 - `safe_render_template(template, output, KEY=value...)` -- same as `render_template` but skips if the output file already exists
 - `safe_write(output, content)` -- writes content to a file only if it does not already exist
+
+**Preset frontmatter:**
+- `discover_presets(workload_type)` -- lists preset names by scanning template filenames
+- `read_preset_frontmatter(template)` -- extracts YAML frontmatter from a template file
+- `read_preset_body(template)` -- extracts the template body (after frontmatter)
+- `get_preset_field(template, field)` -- gets a single field from frontmatter using yq
+- `get_preset_defaults(template)` -- outputs defaults as KEY=value lines
+- `get_preset_config(template)` -- outputs config entries as KEY=value lines
+- `is_preset_optional(template, key)` -- checks if a default key is listed in the optional array
+- `render_preset_template(template, output, KEY=val...)` -- strips frontmatter, then renders body
+- `safe_render_preset_template(template, output, KEY=val...)` -- same but guards against overwriting
+- `build_secret_env_vars(secret_name, mappings...)` -- builds SECRET_ENV_VARS YAML block
+- `build_http_probes(path, port)` -- builds PROBES YAML block
+- `strip_blank_placeholder_lines(file)` -- post-render cleanup for empty placeholder lines
+- `detect_service_port(app_name)` -- parses port from an app's service.yaml
 
 **Detection (filesystem scanning):**
 - `detect_envs()` -- lists environments from `k8s/namespaces/*.yaml`
