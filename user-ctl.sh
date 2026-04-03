@@ -171,7 +171,9 @@ cmd_add_role() {
     echo ""
     local f
     for f in "${created_files[@]}"; do
-        run_cmd "Applying $(basename "$f")..." kubectl apply -f "$f"
+        run_cmd "Applying $(basename "$f")..." \
+            --explain "kubectl apply creates or updates the RBAC resource (ClusterRole, Role, or Binding) in the cluster, making the permissions immediately effective." \
+            kubectl apply -f "$f"
     done
     print_success "K8s RBAC applied."
 
@@ -272,7 +274,9 @@ cmd_remove_role() {
     if [[ -n "$manifest_files" ]]; then
         local f
         while IFS= read -r f; do
-            run_cmd "Removing $(basename "$f") from cluster..." kubectl delete -f "$f" --ignore-not-found
+            run_cmd "Removing $(basename "$f") from cluster..." \
+                --explain "Deleting the RBAC resource revokes the permissions immediately for all users/SAs bound to this role." \
+                kubectl delete -f "$f" --ignore-not-found
             rm "$f"
             print_success "Removed: $f"
         done <<<"$manifest_files"
@@ -334,9 +338,13 @@ cmd_add() {
     local kubeconfig_file="${users_dir}/${username}.kubeconfig"
 
     # Generate key and CSR (umask ensures key is created with 600 permissions)
-    run_cmd_sh "Generating RSA key..." "umask 077 && openssl genrsa -out '$key_file' 4096"
+    run_cmd_sh "Generating RSA key..." \
+        --explain "Kubernetes authenticates users via TLS certificates (x509 client cert auth). The private key proves identity; CN= becomes the username, O= becomes the group for RBAC matching." \
+        "umask 077 && openssl genrsa -out '$key_file' 4096"
 
-    run_cmd "Generating CSR..." openssl req -new -key "$key_file" \
+    run_cmd "Generating CSR..." \
+        --explain "The Certificate Signing Request packages the public key and identity (CN/O) fields for the Kubernetes CA to sign." \
+        openssl req -new -key "$key_file" \
         -subj "/CN=${username}/O=${group}" \
         -out "$csr_file"
 
@@ -346,7 +354,9 @@ cmd_add() {
     local csr_b64
     csr_b64="$(base64 <"$csr_file" | tr -d '\n')"
 
-    run_cmd "Submitting CSR to Kubernetes..." kubectl apply -f - <<EOF
+    run_cmd "Submitting CSR to Kubernetes..." \
+        --explain "The Kubernetes CSR API: the request is submitted to the cluster where the kube-apiserver-client signer will sign it after approval." \
+        kubectl apply -f - <<EOF
 apiVersion: certificates.k8s.io/v1
 kind: CertificateSigningRequest
 metadata:
@@ -359,7 +369,9 @@ spec:
 EOF
 
     # Approve CSR
-    run_cmd "Approving CSR..." kubectl certificate approve "$username"
+    run_cmd "Approving CSR..." \
+        --explain "Approving tells the Kubernetes CA to sign the certificate. In production, this step would be handled by a separate admin or automated approval policy." \
+        kubectl certificate approve "$username"
 
     # Wait for certificate to be issued
     local retries=10
@@ -442,7 +454,9 @@ cmd_remove() {
     fi
 
     # Delete k8s CSR if it exists
-    run_cmd_sh "Removing K8s CSR..." "kubectl delete csr '$username' --ignore-not-found 2>/dev/null || true"
+    run_cmd_sh "Removing K8s CSR..." \
+        --explain "Cleaning up the CSR resource from the cluster. Note that the issued certificate cannot be revoked -- Kubernetes has no certificate revocation mechanism." \
+        "kubectl delete csr '$username' --ignore-not-found 2>/dev/null || true"
     print_success "K8s CSR removed."
 
     # Warn about x509 certificate limitation
@@ -585,7 +599,9 @@ cmd_add_sa() {
     mkdir -p "$users_dir"
 
     # Create ServiceAccount
-    run_cmd "Creating ServiceAccount..." kubectl apply -f - <<EOF
+    run_cmd "Creating ServiceAccount..." \
+        --explain "ServiceAccounts are Kubernetes-native identities for non-human actors. Unlike x509 cert users, they live in-cluster and use short-lived tokens for authentication." \
+        kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -853,7 +869,9 @@ cmd_remove_sa() {
     fi
 
     # Delete ServiceAccount and RBAC bindings
-    run_cmd_sh "Removing ServiceAccount and RBAC bindings..." "
+    run_cmd_sh "Removing ServiceAccount and RBAC bindings..." \
+        --explain "Deleting the ServiceAccount invalidates all tokens immediately (tokens are tied to the SA). Unlike x509 cert users, SA removal is an effective instant revocation." \
+        "
         kubectl delete serviceaccount \"${sa_name}\" -n kube-system --ignore-not-found
         kubectl delete clusterrolebinding \"${sa_name}\" --ignore-not-found 2>/dev/null || true
         kubectl delete clusterrolebinding \"${sa_name}-cluster-readonly\" --ignore-not-found 2>/dev/null || true
@@ -917,6 +935,7 @@ Commands:
 Global options:
   --target-dir <path>   Directory to operate on (default: current directory)
   --show-me             Print commands instead of hiding behind spinners (or set SHOW_ME=1)
+  --explain             Print commands with explanations (learning mode, implies --show-me)
 EOF
 }
 
