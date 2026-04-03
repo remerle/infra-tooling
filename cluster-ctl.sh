@@ -48,7 +48,15 @@ cmd_init_cluster() {
     require_cmd "k3d" "brew install k3d  (or visit https://k3d.io)"
     require_cmd "kubectl" "brew install kubectl"
     require_cmd "jq" "brew install jq"
+    require_cmd "docker" "https://docs.docker.com/get-docker/"
     require_helm
+
+    # Verify Docker daemon is running (docker CLI exists but daemon may be stopped)
+    if ! docker info &>/dev/null; then
+        print_error "Docker daemon is not running."
+        print_info "Start Docker (or OrbStack) and try again."
+        exit 1
+    fi
 
     print_header "Initialize k3d Cluster"
     echo ""
@@ -694,6 +702,15 @@ cmd_preflight_check() {
         "jq:brew install jq" \
         "helm:brew install helm" \
         "docker:https://docs.docker.com/get-docker/"
+
+    echo ""
+    if command -v docker &>/dev/null; then
+        if docker info &>/dev/null; then
+            printf "  ✓ %-12s %s\n" "docker" "daemon running"
+        else
+            printf "  ✗ %-12s %s\n" "docker" "daemon NOT running (start Docker or OrbStack)"
+        fi
+    fi
 }
 
 usage() {
