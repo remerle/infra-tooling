@@ -61,22 +61,16 @@ cmd_init_cluster() {
     print_success "Cluster '${cluster_name}' created."
     echo ""
 
-    # Install Metrics Server (required for kubectl top)
-    local metrics_server_version="v0.7.2"
-    run_cmd "Installing Metrics Server ${metrics_server_version}..." \
-        --explain "Metrics Server collects CPU and memory usage from each node's kubelet. It powers 'kubectl top nodes/pods' and is required by the Horizontal Pod Autoscaler (HPA). k3s does not bundle it, so it must be installed separately." \
-        kubectl apply -f "https://github.com/kubernetes-sigs/metrics-server/releases/download/${metrics_server_version}/components.yaml"
+    # Install Metrics Server via Helm (required for kubectl top)
+    helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/ >/dev/null 2>&1
+    helm repo update metrics-server >/dev/null 2>&1
 
-    # Metrics Server needs --kubelet-insecure-tls in k3d (self-signed kubelet certs)
-    run_cmd "Patching Metrics Server for k3d..." \
-        --explain "k3d generates self-signed TLS certificates for each kubelet. Metrics Server validates these certificates by default and rejects them, causing it to fail. --kubelet-insecure-tls disables that check so Metrics Server can scrape metrics from k3d nodes." \
-        kubectl patch deployment metrics-server -n kube-system \
-        --type=json \
-        -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
-
-    if run_cmd "Waiting for Metrics Server to be ready..." \
-        --explain "The Deployment controller needs time to pull the image and pass readiness probes. This command blocks until the Deployment reports Available=true, ensuring subsequent 'kubectl top' calls will work." \
-        kubectl wait --for=condition=available deployment/metrics-server -n kube-system --timeout=60s; then
+    if run_cmd "Installing Metrics Server via Helm..." \
+        --explain "Metrics Server collects CPU and memory usage from each node's kubelet. It powers 'kubectl top nodes/pods' and is required by the Horizontal Pod Autoscaler (HPA). k3s does not bundle it, so it must be installed separately. --kubelet-insecure-tls is needed because k3d generates self-signed kubelet certificates that Metrics Server would otherwise reject." \
+        helm install metrics-server metrics-server/metrics-server \
+        --namespace kube-system \
+        --set 'args[0]=--kubelet-insecure-tls' \
+        --wait --timeout 60s; then
         print_success "Metrics Server is ready (kubectl top enabled)."
     else
         print_warning "Metrics Server not ready yet. It may need a moment to stabilize."
