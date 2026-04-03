@@ -11,6 +11,61 @@
 #   fpath=(/path/to/infra-tooling $fpath)
 #   autoload -Uz compinit && compinit
 
+# --- Shared helpers for dynamic argument completion ---
+
+# Detect the target directory from --target-dir or default to $PWD.
+_infra_target_dir() {
+    local i
+    for (( i=1; i < ${#words[@]}; i++ )); do
+        if [[ "${words[$i]}" == "--target-dir" && -n "${words[$((i+1))]}" ]]; then
+            echo "${words[$((i+1))]}"
+            return
+        fi
+    done
+    echo "$PWD"
+}
+
+_infra_complete_apps() {
+    local target_dir="$(_infra_target_dir)"
+    local apps_dir="${target_dir}/k8s/apps"
+    [[ -d "$apps_dir" ]] || return
+    local -a app_names=()
+    local d
+    for d in "$apps_dir"/*/; do
+        [[ -d "$d" ]] || continue
+        app_names+=("$(basename "$d")")
+    done
+    compadd -a app_names
+}
+
+_infra_complete_envs() {
+    local target_dir="$(_infra_target_dir)"
+    local ns_dir="${target_dir}/k8s/namespaces"
+    [[ -d "$ns_dir" ]] || return
+    local -a env_names=()
+    local f
+    for f in "$ns_dir"/*.yaml; do
+        [[ -f "$f" ]] || continue
+        env_names+=("$(basename "$f" .yaml)")
+    done
+    compadd -a env_names
+}
+
+_infra_complete_projects() {
+    local target_dir="$(_infra_target_dir)"
+    local proj_dir="${target_dir}/argocd/projects"
+    [[ -d "$proj_dir" ]] || return
+    local -a proj_names=()
+    local f
+    for f in "$proj_dir"/*.yaml; do
+        [[ -f "$f" ]] || continue
+        proj_names+=("$(basename "$f" .yaml)")
+    done
+    compadd -a proj_names
+}
+
+# --- Script completions ---
+
 _infra_ctl() {
     local -a commands=(
         'init:Bootstrap the GitOps repository structure'
@@ -32,6 +87,17 @@ _infra_ctl() {
         '--target-dir[Directory to operate on]:directory:_directories' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
+
+    case "$state" in
+        args)
+            case "${words[1]}" in
+                remove-app)      _infra_complete_apps ;;
+                remove-env)      _infra_complete_envs ;;
+                edit-project)    _infra_complete_projects ;;
+                remove-project)  _infra_complete_projects ;;
+            esac
+            ;;
+    esac
 }
 
 _cluster_ctl() {
@@ -64,6 +130,19 @@ _secret_ctl() {
         '--target-dir[Directory to operate on]:directory:_directories' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
+
+    case "$state" in
+        args)
+            case "${words[1]}" in
+                add|list)
+                    case "$CURRENT" in
+                        2) _infra_complete_apps ;;
+                        3) _infra_complete_envs ;;
+                    esac
+                    ;;
+            esac
+            ;;
+    esac
 }
 
 _user_ctl() {
