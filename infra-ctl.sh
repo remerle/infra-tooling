@@ -926,6 +926,121 @@ cmd_list_projects() {
     echo ""
 }
 
+cmd_remove_project() {
+    require_gum
+
+    local project_name="${1:-}"
+
+    if [[ -z "$project_name" ]]; then
+        load_conf
+        local projects=()
+        while IFS= read -r proj; do
+            projects+=("$proj")
+        done < <(detect_projects)
+        if [[ ${#projects[@]} -eq 0 ]]; then
+            print_warning "No projects to remove."
+            exit 0
+        fi
+        project_name="$(printf '%s\n' "${projects[@]}" | gum choose --header "Select project to remove:")"
+    fi
+
+    validate_k8s_name "$project_name" "Project name"
+    load_conf
+
+    local project_file="${TARGET_DIR}/argocd/projects/${project_name}.yaml"
+    if [[ ! -f "$project_file" ]]; then
+        print_error "Project '${project_name}' not found at ${project_file}"
+        exit 1
+    fi
+
+    # Find apps assigned to this project
+    local assigned_apps=()
+    local apps=()
+    while IFS= read -r app; do
+        apps+=("$app")
+    done < <(detect_apps)
+
+    local app
+    for app in "${apps[@]}"; do
+        local app_project
+        app_project="$(detect_app_project "$app")"
+        if [[ "$app_project" == "$project_name" ]]; then
+            assigned_apps+=("$app")
+        fi
+    done
+
+    # Preview
+    print_header "Remove Project: ${project_name}"
+    echo ""
+    print_info "Delete file: ${project_file}"
+
+    if [[ ${#assigned_apps[@]} -gt 0 ]]; then
+        echo ""
+        print_warning "These apps are assigned to project '${project_name}':"
+        local app
+        for app in "${assigned_apps[@]}"; do
+            print_info "  ${app}"
+        done
+        echo ""
+
+        # Build reassignment choices: other projects + default
+        local other_projects=("default")
+        while IFS= read -r proj; do
+            [[ "$proj" == "$project_name" ]] && continue
+            other_projects+=("$proj")
+        done < <(detect_projects)
+
+        local reassign_to
+        reassign_to="$(printf '%s\n' "${other_projects[@]}" | gum choose --header "Reassign these apps to:")"
+
+        print_info "Apps will be reassigned to project '${reassign_to}'"
+    fi
+    echo ""
+
+    if ! gum confirm "Remove project '${project_name}'?"; then
+        print_warning "Aborted."
+        exit 0
+    fi
+
+    # Reassign apps if needed
+    if [[ ${#assigned_apps[@]} -gt 0 ]]; then
+        local envs=()
+        while IFS= read -r env; do
+            envs+=("$env")
+        done < <(detect_envs)
+
+        local app
+        for app in "${assigned_apps[@]}"; do
+            local env
+            for env in "${envs[@]}"; do
+                local manifest="${TARGET_DIR}/argocd/apps/${app}-${env}.yaml"
+                [[ -f "$manifest" ]] || continue
+                # Replace the project field in the ArgoCD Application manifest
+                local tmp
+                tmp="$(sed "s/^\\(  project:\\).*/\\1 ${reassign_to}/" "$manifest")"
+                printf '%s\n' "$tmp" >"$manifest"
+            done
+        done
+        print_success "Reassigned ${#assigned_apps[@]} app(s) to project '${reassign_to}'"
+    fi
+
+    # Delete the project file
+    rm -f "$project_file"
+
+    # Restore .gitkeep if projects dir is now empty
+    local projects_dir="${TARGET_DIR}/argocd/projects"
+    local has_yaml=false
+    local f
+    for f in "$projects_dir"/*.yaml; do
+        [[ -f "$f" ]] && has_yaml=true && break
+    done
+    if [[ "$has_yaml" == false ]]; then
+        touch "${projects_dir}/.gitkeep"
+    fi
+
+    print_removed "$project_file"
+}
+
 cmd_remove_app() {
     require_gum
 
@@ -1258,6 +1373,7 @@ Commands:
   list-projects         List all ArgoCD AppProjects
   remove-app [name]     Remove an application and all its resources
   remove-env [name]     Remove an environment and all its resources
+  remove-project [name] Remove an ArgoCD AppProject
   enable-kargo          Enable Kargo and generate resources for existing apps
   preflight-check       Verify all required tools are installed
 
@@ -1291,6 +1407,7 @@ main() {
         list-projects) cmd_list_projects "$@" ;;
         remove-app) cmd_remove_app "$@" ;;
         remove-env) cmd_remove_env "$@" ;;
+        remove-project) cmd_remove_project "$@" ;;
         enable-kargo) cmd_enable_kargo "$@" ;;
         preflight-check) cmd_preflight_check "$@" ;;
         -h | --help) usage ;;

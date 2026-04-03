@@ -23,6 +23,7 @@ _infra_ctl() {
         'list-projects:List all ArgoCD AppProjects'
         'remove-app:Remove an application and all its resources'
         'remove-env:Remove an environment and all its resources'
+        'remove-project:Remove an ArgoCD AppProject'
         'enable-kargo:Enable Kargo progressive delivery'
         'preflight-check:Validate repository structure'
     )
