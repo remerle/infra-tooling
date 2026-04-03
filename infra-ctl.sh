@@ -441,7 +441,7 @@ cmd_add_app() {
 
     # Build SECRET_ENV_VARS block for deployment templates
     if [[ "$workload_prefix" == "deployment" ]]; then
-        secret_env_block="$(build_secret_env_vars "$secret_name" "${secret_keys[@]}")
+        secret_env_block="$(build_secret_env_vars "$secret_name" "${secret_keys[@]}")"
         probes_block="$(build_http_probes "$probe_path" "$port")"
     fi
 
