@@ -312,23 +312,13 @@ cmd_delete_cluster() {
     if [[ -z "$cluster_name" ]]; then
         print_header "Delete k3d Cluster"
 
-        local clusters
-        clusters="$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name')"
-
-        if [[ -z "$clusters" ]]; then
-            print_warning "No k3d clusters found."
-            exit 0
-        fi
-
-        cluster_name="$(echo "$clusters" | gum choose --header "Select cluster to delete:")"
+        cluster_name="$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name' \
+            | choose_from "Select cluster to delete:" "No k3d clusters found.")" || exit 0
     else
         print_header "Delete k3d Cluster: ${cluster_name}"
     fi
 
-    if ! gum confirm --prompt.foreground 196 "Delete cluster '${cluster_name}'? This cannot be undone."; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_destructive_or_abort "Delete cluster '${cluster_name}'? This cannot be undone."
 
     run_cmd "Deleting cluster '${cluster_name}'..." \
         --explain "k3d cluster delete stops and removes all Docker containers that make up the cluster (server, agents, load balancer) and cleans up the kubeconfig entry. This is irreversible -- all workloads and persistent volumes in the cluster are destroyed." \
@@ -416,10 +406,7 @@ cmd_add_repo_creds() {
     existing="$(kubectl get secret repo-creds -n argocd -o name 2>/dev/null)" || true
     if [[ -n "$existing" ]]; then
         print_warning "Repository credentials already exist."
-        if ! gum confirm "Overwrite existing credentials?"; then
-            print_warning "Aborted."
-            exit 0
-        fi
+        confirm_or_abort "Overwrite existing credentials?"
     fi
 
     # Prompt for PAT

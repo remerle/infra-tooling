@@ -80,28 +80,12 @@ cmd_add() {
 
     if [[ -z "$app_name" ]]; then
         load_conf
-        local apps=()
-        while IFS= read -r app; do
-            apps+=("$app")
-        done < <(detect_apps)
-        if [[ ${#apps[@]} -eq 0 ]]; then
-            print_warning "No applications found. Run 'infra-ctl.sh add-app' first."
-            exit 0
-        fi
-        app_name="$(printf '%s\n' "${apps[@]}" | gum choose --header "Select application:")"
+        app_name="$(detect_apps | choose_from "Select application:" "No applications found. Run 'infra-ctl.sh add-app' first.")" || exit 0
     fi
 
     if [[ -z "$env_name" ]]; then
         [[ -z "${REPO_URL:-}" ]] && load_conf
-        local envs=()
-        while IFS= read -r env; do
-            envs+=("$env")
-        done < <(detect_envs)
-        if [[ ${#envs[@]} -eq 0 ]]; then
-            print_warning "No environments found. Run 'infra-ctl.sh add-env' first."
-            exit 0
-        fi
-        env_name="$(printf '%s\n' "${envs[@]}" | gum choose --header "Select environment:")"
+        env_name="$(detect_envs | choose_from "Select environment:" "No environments found. Run 'infra-ctl.sh add-env' first.")" || exit 0
     fi
     validate_k8s_name "$app_name" "App name"
     validate_k8s_name "$env_name" "Environment name"
@@ -290,15 +274,8 @@ cmd_remove() {
 
     # Interactive selection if args not provided
     if [[ -z "$app_name" ]]; then
-        local apps=()
-        while IFS= read -r app; do
-            apps+=("$app")
-        done < <(detect_apps)
-        if [[ ${#apps[@]} -eq 0 ]]; then
-            print_warning "No applications found."
-            exit 0
-        fi
-        app_name="$(printf '%s\n' "${apps[@]}" | gum choose --header "Select application:")"
+        load_conf
+        app_name="$(detect_apps | choose_from "Select application:" "No applications found.")" || exit 0
     fi
 
     if [[ -z "$env_name" ]]; then
@@ -313,11 +290,7 @@ cmd_remove() {
                 available_envs+=("$(basename "$d")")
             done
         fi
-        if [[ ${#available_envs[@]} -eq 0 ]]; then
-            print_warning "No sealed secrets found for '${app_name}'."
-            exit 0
-        fi
-        env_name="$(printf '%s\n' "${available_envs[@]}" | gum choose --header "Select environment:")"
+        env_name="$(printf '%s\n' "${available_envs[@]}" | choose_from "Select environment:" "No sealed secrets found for '${app_name}'.")" || exit 0
     fi
 
     validate_k8s_name "$app_name" "App name"
@@ -332,10 +305,7 @@ cmd_remove() {
     print_header "Remove Sealed Secret: ${app_name} / ${env_name}"
     print_info "Delete file: ${sealed_file}"
 
-    if ! gum confirm "Remove sealed secret for '${app_name}' in '${env_name}'?"; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_or_abort "Remove sealed secret for '${app_name}' in '${env_name}'?"
 
     rm -f "$sealed_file"
 

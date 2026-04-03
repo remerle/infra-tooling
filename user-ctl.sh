@@ -236,13 +236,8 @@ cmd_remove_role() {
     if [[ -z "$role_name" ]]; then
         local policy
         policy="$(yq '.configs.rbac."policy.csv" // ""' "$VALUES_FILE")" || true
-        local roles
-        roles="$(echo "$policy" | grep -oE 'role:[^,[:space:]]+' | sed 's/^role://' | sort -u)" || true
-        if [[ -z "$roles" ]]; then
-            print_warning "No roles to remove."
-            exit 0
-        fi
-        role_name="$(echo "$roles" | gum choose --header "Select role to remove:")"
+        role_name="$(echo "$policy" | grep -oE 'role:[^,[:space:]]+' | sed 's/^role://' | sort -u \
+            | choose_from "Select role to remove:" "No roles to remove.")" || exit 0
     fi
 
     if ! role_exists "$role_name" "$VALUES_FILE"; then
@@ -252,10 +247,7 @@ cmd_remove_role() {
 
     print_header "Remove Role: ${role_name}"
 
-    if ! gum confirm --prompt.foreground 196 "Remove role '${role_name}'? This removes ArgoCD policy and k8s RBAC."; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_destructive_or_abort "Remove role '${role_name}'? This removes ArgoCD policy and k8s RBAC."
 
     # Remove k8s manifests
     local platform_dir="${TARGET_DIR}/k8s/platform"
@@ -414,14 +406,9 @@ cmd_remove() {
     local username="${1:-}"
 
     if [[ -z "$username" ]]; then
-        local accounts
-        accounts="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
-            | grep '^accounts\.' | sed 's/^accounts\.//')" || true
-        if [[ -z "$accounts" ]]; then
-            print_warning "No users to remove."
-            exit 0
-        fi
-        username="$(echo "$accounts" | gum choose --header "Select user to remove:")"
+        username="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
+            | grep '^accounts\.' | sed 's/^accounts\.//' \
+            | choose_from "Select user to remove:" "No users to remove.")" || exit 0
     fi
 
     if ! account_exists "$username" "$VALUES_FILE"; then
@@ -431,10 +418,7 @@ cmd_remove() {
 
     print_header "Remove User: ${username}"
 
-    if ! gum confirm --prompt.foreground 196 "Remove user '${username}'?"; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_destructive_or_abort "Remove user '${username}'?"
 
     # Delete k8s CSR if it exists
     run_cmd_sh "Removing K8s CSR..." \
@@ -805,10 +789,7 @@ cmd_remove_sa() {
 
     print_header "Remove Service Account: ${sa_name}"
 
-    if ! gum confirm --prompt.foreground 196 "Remove service account '${sa_name}'?"; then
-        print_warning "Aborted."
-        exit 0
-    fi
+    confirm_destructive_or_abort "Remove service account '${sa_name}'?"
 
     # Delete ServiceAccount and RBAC bindings
     run_cmd_sh "Removing ServiceAccount and RBAC bindings..." \
