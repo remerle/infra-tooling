@@ -71,6 +71,8 @@ cmd_init_cluster() {
         exit 1
     fi
 
+    validate_k8s_name "$cluster_name" "Cluster name"
+
     # Check if cluster already exists
     if k3d cluster list -o json 2>/dev/null | jq -e --arg name "$cluster_name" '.[] | select(.name == $name)' &>/dev/null; then
         print_error "Cluster '${cluster_name}' already exists."
@@ -80,7 +82,10 @@ cmd_init_cluster() {
 
     # Prompt for agent nodes
     local agents
-    agents="$(gum input --value "3" --prompt "Agent nodes: ")"
+    while true; do
+        agents="$(gum input --value "3" --prompt "Agent nodes: ")"
+        validate_positive_integer "$agents" "Agent nodes" && break
+    done
 
     # Prompt for port exposure
     local port_args=()
@@ -387,6 +392,7 @@ cmd_status() {
 
 cmd_add_repo_creds() {
     require_gum
+    require_gh
     require_cmd "kubectl" "brew install kubectl"
     load_conf
 
@@ -416,11 +422,17 @@ cmd_add_repo_creds() {
     print_info "Required permissions on the GitOps repository:"
     print_info "  Contents:  Read-only"
     local pat
-    pat="$(gum input --password --prompt "GitHub PAT: ")"
-    if [[ -z "$pat" ]]; then
-        print_error "A GitHub PAT is required."
-        exit 1
-    fi
+    while true; do
+        pat="$(gum input --password --prompt "GitHub PAT: ")"
+        if [[ -z "$pat" ]]; then
+            print_error "A GitHub PAT is required."
+            continue
+        fi
+        if validate_github_pat "$pat" "repo"; then
+            break
+        fi
+        print_info "Please enter a valid PAT with the required scopes."
+    done
 
     # Create or replace the secret
     run_cmd_sh "Configuring ArgoCD repo credentials..." \
@@ -442,6 +454,7 @@ cmd_add_repo_creds() {
 
 cmd_add_kargo_creds() {
     require_gum
+    require_gh
     require_cmd "kubectl" "brew install kubectl"
     load_conf
 
@@ -514,11 +527,17 @@ cmd_add_kargo_creds() {
     print_info "  Contents:  Read and write"
     print_info "  Packages:  Read (only if the container registry is private)"
     local pat
-    pat="$(gum input --password --prompt "GitHub PAT: ")"
-    if [[ -z "$pat" ]]; then
-        print_error "A GitHub PAT is required."
-        exit 1
-    fi
+    while true; do
+        pat="$(gum input --password --prompt "GitHub PAT: ")"
+        if [[ -z "$pat" ]]; then
+            print_error "A GitHub PAT is required."
+            continue
+        fi
+        if validate_github_pat "$pat" "repo" "read:packages"; then
+            break
+        fi
+        print_info "Please enter a valid PAT with the required scopes."
+    done
 
     # Create Git credential
     run_cmd_sh "Configuring Kargo Git credentials..." \
