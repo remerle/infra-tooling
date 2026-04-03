@@ -426,22 +426,44 @@ cmd_add_env() {
     if is_kargo_enabled; then
         read_promotion_order
 
-        # Show current order and inform about append
+        # Check if env already exists in the promotion order
+        local env_in_order=false
+        local i
+        for i in "${!PROMOTION_ORDER[@]}"; do
+            if [[ "${PROMOTION_ORDER[$i]}" == "$env_name" ]]; then
+                env_in_order=true
+                break
+            fi
+        done
+
         echo ""
         print_info "Current promotion order:"
-        local i
         for i in "${!PROMOTION_ORDER[@]}"; do
             print_info "  $((i + 1)). ${PROMOTION_ORDER[$i]}"
         done
-        print_info "Environment '${env_name}' will be appended to the promotion chain."
-        print_info "To insert elsewhere, edit kargo/promotion-order.txt first, then re-run."
-        echo ""
 
-        # Append to promotion-order.txt
-        echo "$env_name" >>"${TARGET_DIR}/kargo/promotion-order.txt"
+        local upstream_env=""
+        if [[ "$env_in_order" == true ]]; then
+            print_info "Environment '${env_name}' is already in the promotion order."
+            # Find the upstream env (the one before this env in the order)
+            for i in "${!PROMOTION_ORDER[@]}"; do
+                if [[ "${PROMOTION_ORDER[$i]}" == "$env_name" ]]; then
+                    if [[ $i -gt 0 ]]; then
+                        upstream_env="${PROMOTION_ORDER[$((i - 1))]}"
+                    fi
+                    break
+                fi
+            done
+        else
+            print_info "Environment '${env_name}' will be appended to the promotion chain."
+            print_info "To insert elsewhere, edit kargo/promotion-order.txt first, then re-run."
 
-        # Determine the upstream stage (last env before the new one)
-        local upstream_env="${PROMOTION_ORDER[${#PROMOTION_ORDER[@]}-1]}"
+            # Append to promotion-order.txt
+            echo "$env_name" >>"${TARGET_DIR}/kargo/promotion-order.txt"
+
+            # Upstream is the last env before the new one
+            upstream_env="${PROMOTION_ORDER[${#PROMOTION_ORDER[@]}-1]}"
+        fi
 
         # Generate stages for each existing app
         if [[ ${#apps[@]} -gt 0 ]]; then
