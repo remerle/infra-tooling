@@ -816,6 +816,116 @@ PROMOEOF
     print_summary "${created_files[@]}"
 }
 
+cmd_list_apps() {
+    require_gum
+    load_conf
+
+    print_header "Applications"
+    echo ""
+
+    local apps=()
+    while IFS= read -r app; do
+        apps+=("$app")
+    done < <(detect_apps)
+
+    if [[ ${#apps[@]} -eq 0 ]]; then
+        print_warning "No applications found."
+        echo ""
+        return
+    fi
+
+    local app
+    for app in "${apps[@]}"; do
+        # Show which envs have overlays
+        local overlay_envs=()
+        local overlay_dir="${TARGET_DIR}/k8s/apps/${app}/overlays"
+        if [[ -d "$overlay_dir" ]]; then
+            local d
+            for d in "$overlay_dir"/*/; do
+                [[ -d "$d" ]] || continue
+                overlay_envs+=("$(basename "$d")")
+            done
+        fi
+
+        local project
+        project="$(detect_app_project "$app")"
+
+        if [[ ${#overlay_envs[@]} -gt 0 ]]; then
+            print_info "${app}  (project: ${project}, envs: ${overlay_envs[*]})"
+        else
+            print_info "${app}  (project: ${project}, no overlays)"
+        fi
+    done
+    echo ""
+}
+
+cmd_list_envs() {
+    require_gum
+    load_conf
+
+    print_header "Environments"
+    echo ""
+
+    local envs=()
+    while IFS= read -r env; do
+        envs+=("$env")
+    done < <(detect_envs)
+
+    if [[ ${#envs[@]} -eq 0 ]]; then
+        print_warning "No environments found."
+        echo ""
+        return
+    fi
+
+    local env
+    for env in "${envs[@]}"; do
+        print_info "${env}"
+    done
+
+    if is_kargo_enabled && [[ -f "${TARGET_DIR}/kargo/promotion-order.txt" ]]; then
+        read_promotion_order
+        echo ""
+        print_info "Promotion order: ${PROMOTION_ORDER[*]}"
+    fi
+    echo ""
+}
+
+cmd_list_projects() {
+    require_gum
+    load_conf
+
+    print_header "Projects"
+    echo ""
+
+    local projects=()
+    while IFS= read -r proj; do
+        projects+=("$proj")
+    done < <(detect_projects)
+
+    if [[ ${#projects[@]} -eq 0 ]]; then
+        print_warning "No projects found. Apps use the 'default' project."
+        echo ""
+        return
+    fi
+
+    local proj
+    for proj in "${projects[@]}"; do
+        # Show description from the project file
+        local desc=""
+        local proj_file="${TARGET_DIR}/argocd/projects/${proj}.yaml"
+        if [[ -f "$proj_file" ]]; then
+            desc="$(grep '^\s*description:' "$proj_file" | head -1 | sed 's/.*description:\s*"\?\([^"]*\)"\?/\1/')" || true
+        fi
+
+        if [[ -n "$desc" ]]; then
+            print_info "${proj}  (${desc})"
+        else
+            print_info "${proj}"
+        fi
+    done
+    echo ""
+}
+
 cmd_remove_app() {
     require_gum
 
@@ -1143,8 +1253,11 @@ Commands:
   add-env <name>        Scaffold a new environment across all applications
   add-project <name>    Create an ArgoCD AppProject
   edit-project <name>   Modify an existing ArgoCD AppProject
-  remove-app <name>     Remove an application and all its resources
-  remove-env <name>     Remove an environment and all its resources
+  list-apps             List all applications
+  list-envs             List all environments
+  list-projects         List all ArgoCD AppProjects
+  remove-app [name]     Remove an application and all its resources
+  remove-env [name]     Remove an environment and all its resources
   enable-kargo          Enable Kargo and generate resources for existing apps
   preflight-check       Verify all required tools are installed
 
@@ -1173,6 +1286,9 @@ main() {
         add-env) cmd_add_env "$@" ;;
         add-project) cmd_add_project "$@" ;;
         edit-project) cmd_edit_project "$@" ;;
+        list-apps) cmd_list_apps "$@" ;;
+        list-envs) cmd_list_envs "$@" ;;
+        list-projects) cmd_list_projects "$@" ;;
         remove-app) cmd_remove_app "$@" ;;
         remove-env) cmd_remove_env "$@" ;;
         enable-kargo) cmd_enable_kargo "$@" ;;
