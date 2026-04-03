@@ -583,7 +583,7 @@ discover_presets() {
 # Extracts YAML frontmatter between --- delimiters from a template file.
 read_preset_frontmatter() {
     local template="$1"
-    sed -n '1{/^---$/d}; /^---$/q; p' "$template"
+    awk 'BEGIN{n=0} /^---$/{n++; next} n==1' "$template"
 }
 
 # Extracts the template body after frontmatter (everything after the second ---).
