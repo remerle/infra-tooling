@@ -8,11 +8,11 @@ defaults:
   STORAGE_SIZE: "1Gi"
   MOUNT_PATH: "/var/lib/postgresql/data"
 hints:
-  IMAGE: "postgres image with tag"
-  PORT: "port PostgreSQL listens on"
+  IMAGE: "Postgres image with tag"
+  PORT: "Port PostgreSQL listens on"
   SECRET_NAME: "Secret resource name (holds username/password)"
   STORAGE_SIZE: "PVC size for data volume"
-  MOUNT_PATH: "where data volume is mounted in container"
+  MOUNT_PATH: "Where data volume is mounted in container"
 config:
   POSTGRES_DB: "app"
 ---
