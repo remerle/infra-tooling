@@ -103,9 +103,7 @@ cmd_init_cluster() {
         --env "KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig@agent:*" \
         ${port_args[@]+"${port_args[@]}"} \
         --wait
-
     print_success "Cluster '${cluster_name}' created."
-    echo ""
 
     # k3s bundles Metrics Server (powers 'kubectl top' and HPA).
     # No patching needed -- k3s manages its own kubelet certs.
@@ -116,27 +114,24 @@ cmd_init_cluster() {
     else
         print_warning "Metrics Server not ready yet. It may need a moment to stabilize."
     fi
-    echo ""
 
     local argocd_installed=false
     local kargo_installed=false
     local tls_enabled=false
 
     # Prompt for local HTTPS
+    echo ""
     if command -v mkcert &>/dev/null; then
         if gum confirm "Enable HTTPS with trusted local certs? (via mkcert)"; then
-            echo ""
             apply_local_tls
             tls_enabled=true
             print_success "HTTPS enabled with trusted local certs."
-            echo ""
         fi
     fi
 
     # Prompt for ArgoCD installation
+    echo ""
     if gum confirm "Install ArgoCD?"; then
-        echo ""
-
         local values_file="${SCRIPT_DIR}/helm/argocd-values.yaml"
         if [[ ! -f "$values_file" ]]; then
             print_error "Helm values file not found: ${values_file}"
@@ -179,9 +174,8 @@ cmd_init_cluster() {
     fi
 
     # Prompt for Kargo installation
+    echo ""
     if gum confirm "Install Kargo?"; then
-        echo ""
-
         # Kargo requires cert-manager for webhook server TLS certificates
         # (Kubernetes API server requires TLS for admission webhooks, and
         # Kargo uses cert-manager to generate self-signed certs for them)
@@ -194,7 +188,6 @@ cmd_init_cluster() {
                 --set crds.enabled=true \
                 --wait --timeout 120s >/dev/null 2>&1"
             print_success "cert-manager installed."
-            echo ""
         fi
 
         local kargo_password kargo_password_confirm
@@ -263,8 +256,6 @@ spec:
                 port:
                   number: 80
 KARGOINGRESS"
-            print_success "Kargo Ingress created at kargo.localhost"
-
             # Update .infra-ctl.conf (create if it doesn't exist yet).
             # This is idempotent: appends the flag or updates an existing line.
             local conf_file="${TARGET_DIR}/.infra-ctl.conf"
@@ -275,7 +266,6 @@ KARGOINGRESS"
             else
                 echo "KARGO_ENABLED=true" >>"$conf_file"
             fi
-            print_info "Set KARGO_ENABLED=true in .infra-ctl.conf"
 
             kargo_installed=true
         else
