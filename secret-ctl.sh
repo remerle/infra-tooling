@@ -181,7 +181,6 @@ cmd_add() {
         print_info "Merging with existing sealed secret..."
     fi
 
-
     # Attempt merge-into if the file already exists; fall back to fresh seal otherwise
     if [[ -f "$sealed_file" ]]; then
         printf '%s' "$secret_json" | kubeseal \

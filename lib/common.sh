@@ -282,7 +282,7 @@ validate_github_pat() {
     local required_scopes=("$@")
 
     # Check authentication
-    local response headers http_code
+    local headers http_code
     headers="$(mktemp)"
     http_code="$(curl -s -o /dev/null -w '%{http_code}' -D "$headers" \
         -H "Authorization: Bearer ${pat}" \
