@@ -10,27 +10,55 @@ Currently `add-app` creates the scaffold (kustomization, service, ArgoCD apps) b
 
 ### In scope
 - Extend `add-app` to generate deployment.yaml or statefulset.yaml with prompted values
-- Postgres statefulset preset with sensible defaults and walkthrough
+- Preset system with frontmatter-driven defaults for both deployments and statefulsets
+- Web deployment preset and postgres statefulset preset
 - New `add-ingress`/`list-ingress`/`remove-ingress` commands in `infra-ctl.sh`
 - New `config-ctl.sh` script (add/list/remove/verify)
 - New `secret-ctl.sh verify` command
-- Three new templates (deployment, statefulset-postgres, ingress)
+- New templates (deployment-web, statefulset-postgres, ingress)
 - README walkthrough updated to reflect new flow
 
 ### Out of scope
 - Additional statefulset presets (Redis, MySQL, etc.) -- future work
-- Custom (non-preset) statefulset generation -- future work
+- Additional deployment presets -- future work
 - Config management for resources outside configMapGenerator
 
 ## Design
 
-### 1. New templates
+### 1. Preset frontmatter system
 
-All templates live in `templates/k8s/` and use `{{PLACEHOLDER}}` markers.
+Workload templates use YAML frontmatter (delimited by `---`) to declare their preset name, defaults, and config values. The script:
 
-#### `templates/k8s/deployment.yaml`
+1. Scans `templates/k8s/deployment-*.yaml` and `templates/k8s/statefulset-*.yaml` to auto-discover presets
+2. Reads frontmatter with `yq` to get `preset` name and `description` for the chooser
+3. Walks through each `defaults` entry with `gum input --value <default>` (user hits enter to accept or types to change)
+4. Adds each `config` entry to the base configMapGenerator (also walkable/tweakable)
+5. Strips the frontmatter, renders the template body with `render_template`
+
+`{{APP_NAME}}` references in frontmatter defaults (e.g. `SECRET_NAME: "{{APP_NAME}}-secrets"`) are resolved before prompting.
+
+Adding a new preset is just adding a new template file with frontmatter -- no bash changes required.
+
+### 2. New templates
+
+All templates live in `templates/k8s/`.
+
+#### `templates/k8s/deployment-web.yaml`
 
 ```yaml
+---
+preset: web
+description: Web application
+defaults:
+  IMAGE: ""
+  PORT: "3000"
+  SECRET_NAME: "{{APP_NAME}}-secrets"
+  PROBE_PATH: "/api/health"
+optional:
+  - SECRET_NAME
+  - PROBE_PATH
+config: {}
+---
 # Labels and selectors (app: <name>) are injected by Kustomize commonLabels
 apiVersion: apps/v1
 kind: Deployment
@@ -51,13 +79,29 @@ spec:
 {{PROBES}}
 ```
 
-- `{{SECRET_ENV_VARS}}` -- multi-line YAML block built in bash. Contains `env:` entries with `secretKeyRef` for each secret mapping. Empty string when no secrets.
-- `{{PROBES}}` -- multi-line YAML block built in bash. Contains `livenessProbe` and `readinessProbe` with HTTP GET. Empty string when no probes.
-- Both placeholders render as blank lines when empty; a post-render step strips trailing blank lines.
+- `IMAGE` has no default (empty string = required, must be provided).
+- `SECRET_NAME` and `PROBE_PATH` are listed in `optional` -- the user is asked "Add secret references?" / "Add health probes?" before being prompted for these values. If declined, the corresponding template blocks (`{{SECRET_ENV_VARS}}`, `{{PROBES}}`) render empty.
+- `config` is empty -- the user is still asked "Add config values?" and can enter key=value pairs interactively.
+
+When secrets are accepted, the script prompts for env var mappings (`ENV_NAME=secret-key`) in a loop, building the `{{SECRET_ENV_VARS}}` YAML block.
+
+When probes are accepted, the script builds the `{{PROBES}}` block using `PROBE_PATH` and `PORT`.
 
 #### `templates/k8s/statefulset-postgres.yaml`
 
 ```yaml
+---
+preset: postgres
+description: PostgreSQL database
+defaults:
+  IMAGE: "postgres:16-alpine"
+  PORT: "5432"
+  SECRET_NAME: "{{APP_NAME}}-secrets"
+  STORAGE_SIZE: "1Gi"
+  MOUNT_PATH: "/var/lib/postgresql/data"
+config:
+  POSTGRES_DB: "app"
+---
 # Labels and selectors (app: <name>) are injected by Kustomize commonLabels
 apiVersion: apps/v1
 kind: StatefulSet
@@ -110,7 +154,8 @@ spec:
             storage: {{STORAGE_SIZE}}
 ```
 
-- `POSTGRES_DB` comes from the configMapRef (added to base configMapGenerator during the prompt flow).
+- All `defaults` are pre-filled and walked through with gum input.
+- `config.POSTGRES_DB` is added to the base configMapGenerator (also tweakable during walkthrough).
 - `POSTGRES_USER` and `POSTGRES_PASSWORD` come from a secret via `secretKeyRef`.
 - Probes use `pg_isready` (baked in, not prompted).
 
@@ -135,44 +180,41 @@ spec:
                   number: {{PORT}}
 ```
 
-### 2. Extended `add-app` prompt flow
+No frontmatter -- ingress is not a preset-driven template.
 
-#### Deployment flow
+### 3. Extended `add-app` prompt flow
 
-After the existing project, workload type, and port prompts:
+#### Common flow (both workload types)
 
-1. **Image** (required): `gum input --prompt "Container image: "` -- no default, user must provide (e.g. `ghcr.io/remerle/k8s-practice-backend:latest`)
-2. **Secret references** (optional): "Add secret references?" If yes:
-   - Secret name: `gum input --prompt "Secret name: " --value "<app>-secrets"`
-   - Loop: `gum input --prompt "ENV_NAME=secret-key (empty to finish): "` -- e.g. `DATABASE_URL=database-url`
-   - Each entry becomes a `secretKeyRef` env var in the deployment template
-3. **Config values** (optional): "Add config values?" If yes:
-   - Loop: `gum input --prompt "KEY=VALUE (empty to finish): "` -- e.g. `API_URL=http://backend:3000`
-   - Each entry goes into the base `configMapGenerator.literals` array
-4. **Health probes** (optional): "Add health probes?" If yes:
-   - HTTP GET path: `gum input --prompt "Health check path: " --value "/health"`
-   - Port defaults to the app's container port
-5. **Kargo prompts** (existing) -- image repo default can be derived from the image entered in step 1 (strip tag)
+1. Project selection (existing)
+2. Workload type: Deployment or StatefulSet (existing)
+3. **Preset selection**: `gum choose` from auto-discovered presets + "custom"
+   - Deployment presets discovered from `templates/k8s/deployment-*.yaml`
+   - StatefulSet presets discovered from `templates/k8s/statefulset-*.yaml`
+   - "custom" follows a freeform flow (image, port, optional secrets/config/probes)
 
-The deployment template is rendered after confirmation, alongside the existing kustomization/service/overlay/ArgoCD generation.
+#### Preset flow
 
-#### StatefulSet flow
+4. Walk through each `defaults` entry with gum input (value pre-filled from frontmatter)
+   - Entries with empty default (e.g. `IMAGE: ""`) are required
+   - Entries listed in `optional` are gated by a yes/no question first
+5. Walk through each `config` entry with gum input (value pre-filled from frontmatter)
+6. "Add more config values?" -- additional key=value loop
+7. For deployment presets with secrets accepted: prompt for env var mappings in a loop
+8. Preview and confirm
+9. Render template body + kustomization + service + overlays + ArgoCD apps
+10. Kargo prompts (existing) -- image repo default derived from IMAGE (strip tag)
 
-After workload type = StatefulSet:
+#### Custom flow
 
-1. **Preset**: `gum choose` with "postgres" and "custom"
-   - "custom" follows the same flow as Deployment (image, secrets, config, probes)
-2. **Postgres preset walkthrough** -- each value pre-filled, user hits enter to accept or types to change:
-   - Image: `postgres:16-alpine`
-   - Port: `5432`
-   - Database name: `app` (goes into base configMapGenerator as `POSTGRES_DB=app`)
-   - Secret name: `<app>-secrets`
-   - Storage size: `1Gi`
-   - Mount path: `/var/lib/postgresql/data`
-3. The postgres template is rendered with the collected values.
-4. Kargo prompts still appear but may be skipped (postgres typically uses a public upstream image).
+Same as current deployment flow but with explicit prompts:
+- Image (required)
+- Port (default 8080)
+- Secret references (optional, loop)
+- Config values (optional, loop)
+- Health probes (optional, HTTP GET path)
 
-### 3. `add-ingress` command (infra-ctl.sh)
+### 4. `add-ingress` command (infra-ctl.sh)
 
 Three new commands following the add/list/remove convention:
 
@@ -195,7 +237,7 @@ Three new commands following the add/list/remove convention:
 - Deletes `k8s/apps/<app>/base/ingress.yaml`
 - Removes `ingress.yaml` from the base kustomization resources list via `yq`
 
-### 4. `config-ctl.sh` -- new script
+### 5. `config-ctl.sh` -- new script
 
 Standalone script for managing configMapGenerator literals in kustomization.yaml files. Follows the same patterns as other scripts (sources `lib/common.sh`, requires gum, supports `--target-dir` and global options).
 
@@ -224,7 +266,7 @@ Standalone script for managing configMapGenerator literals in kustomization.yaml
 - Flags any configmap referenced in a workload but missing from the configMapGenerator
 - Offers to walk through adding missing values via the `add` flow
 
-### 5. `secret-ctl.sh verify` -- new command
+### 6. `secret-ctl.sh verify` -- new command
 
 Added to the existing `secret-ctl.sh` script.
 
@@ -237,20 +279,21 @@ Added to the existing `secret-ctl.sh` script.
 - Lists all missing secrets/keys grouped by app
 - Offers to walk through creating each missing one via the existing `secret-ctl.sh add` flow
 
-### 6. New template placeholders
+### 7. New template placeholders
 
 | Placeholder | Source | Used in |
 |-------------|--------|---------|
-| `{{IMAGE}}` | User input (`add-app`) | `deployment.yaml`, `statefulset-postgres.yaml` |
-| `{{SECRET_ENV_VARS}}` | Built in bash (`add-app`) | `deployment.yaml` |
-| `{{PROBES}}` | Built in bash (`add-app`) | `deployment.yaml` |
-| `{{SECRET_NAME}}` | User input or preset default | `statefulset-postgres.yaml` |
-| `{{MOUNT_PATH}}` | Preset default or user input | `statefulset-postgres.yaml` |
-| `{{STORAGE_SIZE}}` | Preset default or user input | `statefulset-postgres.yaml` |
+| `{{IMAGE}}` | Frontmatter default or user input | `deployment-web.yaml`, `statefulset-postgres.yaml` |
+| `{{SECRET_ENV_VARS}}` | Built in bash (`add-app`) | `deployment-web.yaml` |
+| `{{PROBES}}` | Built in bash (`add-app`) | `deployment-web.yaml` |
+| `{{SECRET_NAME}}` | Frontmatter default or user input | `statefulset-postgres.yaml`, `deployment-web.yaml` (when secrets accepted) |
+| `{{MOUNT_PATH}}` | Frontmatter default or user input | `statefulset-postgres.yaml` |
+| `{{STORAGE_SIZE}}` | Frontmatter default or user input | `statefulset-postgres.yaml` |
+| `{{PROBE_PATH}}` | Frontmatter default or user input | Used to build `{{PROBES}}` block |
 | `{{HOST}}` | User input (`add-ingress`) | `ingress.yaml` |
 | `{{PATH}}` | User input (`add-ingress`, default `/`) | `ingress.yaml` |
 
-### 7. README walkthrough update
+### 8. README walkthrough update
 
 The current step 4 ("Write the actual Kubernetes manifests") is replaced by the prompts in `add-app`. The new walkthrough:
 
@@ -258,8 +301,8 @@ The current step 4 ("Write the actual Kubernetes manifests") is replaced by the 
 2. `infra-ctl.sh init` -- bootstrap repo skeleton
 3. `cluster-ctl.sh add-repo-creds` -- (if private repo)
 4. `infra-ctl.sh add-env dev` / `add-env staging` / `add-env prod`
-5. `infra-ctl.sh add-app backend` -- Deployment, image `ghcr.io/remerle/k8s-practice-backend:latest`, port 3000, secret `backend-secrets` with `DATABASE_URL=database-url`, probe `/api/health`
-6. `infra-ctl.sh add-app frontend` -- Deployment, image `ghcr.io/remerle/k8s-practice-frontend:latest`, port 3000, config `API_URL=http://backend:3000`, no secrets
+5. `infra-ctl.sh add-app backend` -- Deployment, web preset, image `ghcr.io/remerle/k8s-practice-backend:latest`, port 3000, secret `backend-secrets` with `DATABASE_URL=database-url`, probe `/api/health`
+6. `infra-ctl.sh add-app frontend` -- Deployment, web preset, image `ghcr.io/remerle/k8s-practice-frontend:latest`, port 3000, config `API_URL=http://backend:3000`, no secrets, no probes
 7. `infra-ctl.sh add-app postgres` -- StatefulSet, postgres preset, defaults accepted
 8. `infra-ctl.sh add-ingress frontend` -- hostname `app.localhost`
 9. `secret-ctl.sh init` -- install Sealed Secrets controller
@@ -270,21 +313,24 @@ The current step 4 ("Write the actual Kubernetes manifests") is replaced by the 
 ## File inventory
 
 ### New files
-- `templates/k8s/deployment.yaml` -- deployment template
-- `templates/k8s/statefulset-postgres.yaml` -- postgres statefulset template
+- `templates/k8s/deployment-web.yaml` -- web deployment preset template
+- `templates/k8s/statefulset-postgres.yaml` -- postgres statefulset preset template
 - `templates/k8s/ingress.yaml` -- ingress template
 - `config-ctl.sh` -- new script for config management
 - `docs/superpowers/specs/2026-04-03-k8s-resource-generation-design.md` -- this spec
 
 ### Modified files
-- `infra-ctl.sh` -- extend `cmd_add_app`, add ingress commands, update usage/dispatcher
+- `infra-ctl.sh` -- extend `cmd_add_app` with preset system, add ingress commands, update usage/dispatcher
 - `secret-ctl.sh` -- add `cmd_verify`, update usage/dispatcher
 - `completions.zsh` -- add ingress completions to infra-ctl, verify to secret-ctl, full config-ctl completions
 - `README.md` -- updated walkthrough
-- `.claude/agents.md` -- updated agent context with config-ctl documentation and new placeholders
+- `.claude/agents.md` -- updated agent context with preset system, config-ctl documentation, and new placeholders
 
 ### Unchanged files
 - `cluster-ctl.sh` -- no modifications
 - `user-ctl.sh` -- no modifications
 - `lib/common.sh` -- no modifications (existing `render_template` handles multi-line values)
 - All existing templates -- unchanged
+
+### Removed templates
+- `templates/k8s/deployment.yaml` -- replaced by `deployment-web.yaml` (preset naming convention)
