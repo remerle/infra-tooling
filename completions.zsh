@@ -1,4 +1,4 @@
-#compdef infra-ctl.sh cluster-ctl.sh secret-ctl.sh user-ctl.sh
+#compdef infra-ctl.sh cluster-ctl.sh secret-ctl.sh config-ctl.sh user-ctl.sh
 
 # Shell completions for infra-tooling scripts.
 #
@@ -79,6 +79,9 @@ _infra_ctl() {
         'remove-app:Remove an application and all its resources'
         'remove-env:Remove an environment and all its resources'
         'remove-project:Remove an ArgoCD AppProject'
+        'add-ingress:Add an Ingress resource to an application'
+        'list-ingress:List all Ingress resources'
+        'remove-ingress:Remove an Ingress resource from an application'
         'enable-kargo:Enable Kargo progressive delivery'
         'reset:Remove all generated files (inverse of init)'
         'preflight-check:Validate repository structure'
@@ -95,10 +98,11 @@ _infra_ctl() {
     case "$state" in
         args)
             case "${words[1]}" in
-                remove-app)      _infra_complete_apps ;;
-                remove-env)      _infra_complete_envs ;;
-                edit-project)    _infra_complete_projects ;;
-                remove-project)  _infra_complete_projects ;;
+                remove-app)       _infra_complete_apps ;;
+                remove-env)       _infra_complete_envs ;;
+                edit-project)     _infra_complete_projects ;;
+                remove-project)   _infra_complete_projects ;;
+                add-ingress|remove-ingress) _infra_complete_apps ;;
             esac
             ;;
     esac
@@ -144,6 +148,7 @@ _secret_ctl() {
         'add:Encrypt and store a secret for an app/env'
         'list:List sealed secrets'
         'remove:Remove a sealed secret for an app/env'
+        'verify:Check for missing secret references'
         'preflight-check:Validate sealed secrets setup'
     )
 
@@ -162,6 +167,11 @@ _secret_ctl() {
                     case "$CURRENT" in
                         2) _infra_complete_apps ;;
                         3) _infra_complete_envs ;;
+                    esac
+                    ;;
+                verify)
+                    case "$CURRENT" in
+                        2) _infra_complete_envs ;;
                     esac
                     ;;
             esac
@@ -192,7 +202,40 @@ _user_ctl() {
         '*:: :->args'
 }
 
+_config_ctl() {
+    local -a commands=(
+        'add:Add config values to an application'
+        'list:List config values for an application'
+        'remove:Remove config values from an application'
+        'verify:Check for missing config references'
+    )
+
+    _arguments -s \
+        '--target-dir[Operate on a specific directory]:directory:_directories' \
+        '--show-me[Print commands instead of running them]' \
+        '--explain[Print commands with explanations]' \
+        '--debug[Show full command output]' \
+        '1:command:(( ${commands} ))' \
+        '*:: :->args'
+
+    case "$state" in
+        args)
+            case "${words[1]}" in
+                add|list|remove)
+                    case "$CURRENT" in
+                        2) _infra_complete_apps ;;
+                        3) _infra_complete_envs ;;
+                    esac ;;
+                verify)
+                    case "$CURRENT" in
+                        2) _infra_complete_envs ;;
+                    esac ;;
+            esac ;;
+    esac
+}
+
 compdef _infra_ctl infra-ctl.sh
 compdef _cluster_ctl cluster-ctl.sh
 compdef _secret_ctl secret-ctl.sh
+compdef _config_ctl config-ctl.sh
 compdef _user_ctl user-ctl.sh
