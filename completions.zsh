@@ -111,6 +111,7 @@ _cluster_ctl() {
         'add-kargo-creds:Configure Kargo access to a private registry'
         'upgrade-argocd:Upgrade ArgoCD Helm release'
         'upgrade-kargo:Upgrade Kargo Helm release'
+        'renew-tls:Regenerate mkcert certificates'
         'status:Show cluster status'
         'preflight-check:Validate cluster prerequisites'
     )

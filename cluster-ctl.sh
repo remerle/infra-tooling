@@ -3,6 +3,44 @@ set -euo pipefail
 
 source "$(dirname "$0")/lib/common.sh"
 
+# --- Helpers ---
+
+# Generates mkcert certs and applies the TLS Secret + TLSStore to the cluster.
+# Used by init-cluster and renew-tls.
+apply_local_tls() {
+    mkcert -install 2>/dev/null
+
+    # Wildcard *.localhost doesn't work reliably -- some TLS implementations
+    # (including macOS/LibreSSL) refuse to match wildcards against single-label
+    # TLDs like .localhost. List each hostname explicitly instead.
+    local tls_dir
+    tls_dir="$(mktemp -d)"
+    mkcert -cert-file "${tls_dir}/tls.crt" -key-file "${tls_dir}/tls.key" \
+        "localhost" "argocd.localhost" "kargo.localhost" "app.localhost" \
+        "*.localhost" >/dev/null 2>&1
+
+    run_cmd_sh "Configuring TLS..." \
+        --explain "The TLS Secret stores the mkcert-generated certificate and key. The TLSStore (a Traefik CRD) sets it as Traefik's cluster-wide default, so every Ingress route uses the locally-trusted cert automatically. These are cluster-specific resources (not persisted in the GitOps repo) -- to regenerate them, run 'cluster-ctl.sh renew-tls'." \
+        '
+        kubectl create secret tls localhost-tls \
+            --cert="'"${tls_dir}"'/tls.crt" --key="'"${tls_dir}"'/tls.key" \
+            --namespace kube-system --dry-run=client -o yaml | kubectl apply -f -
+
+        kubectl apply -f - <<EOF
+apiVersion: traefik.io/v1alpha1
+kind: TLSStore
+metadata:
+  name: default
+  namespace: kube-system
+spec:
+  defaultCertificate:
+    secretName: localhost-tls
+EOF
+    '
+
+    rm -rf "$tls_dir"
+}
+
 # --- Commands ---
 
 cmd_init_cluster() {
@@ -80,40 +118,7 @@ cmd_init_cluster() {
     if command -v mkcert &>/dev/null; then
         if gum confirm "Enable HTTPS with trusted local certs? (via mkcert)"; then
             echo ""
-            # Ensure the local CA is installed
-            mkcert -install 2>/dev/null
-
-            # Generate cert for localhost domains. Wildcard *.localhost doesn't
-            # work reliably -- some TLS implementations (including macOS/LibreSSL)
-            # refuse to match wildcards against single-label TLDs like .localhost.
-            # List each hostname explicitly instead.
-            local tls_dir
-            tls_dir="$(mktemp -d)"
-            mkcert -cert-file "${tls_dir}/tls.crt" -key-file "${tls_dir}/tls.key" \
-                "localhost" "argocd.localhost" "kargo.localhost" "app.localhost" \
-                "*.localhost" >/dev/null 2>&1
-
-            # Create TLS secret and default TLSStore in kube-system so Traefik uses it for all routes
-            run_cmd_sh "Configuring TLS..." \
-                --explain "The TLS Secret stores the mkcert-generated certificate and key so Kubernetes can reference them. The TLSStore (a Traefik CRD) sets this certificate as Traefik's cluster-wide default, so every Ingress route served by Traefik will use the locally-trusted cert automatically -- no per-Ingress TLS annotation needed." \
-                '
-                kubectl create secret tls localhost-tls \
-                    --cert="'"${tls_dir}"'/tls.crt" --key="'"${tls_dir}"'/tls.key" \
-                    --namespace kube-system --dry-run=client -o yaml | kubectl apply -f -
-
-                kubectl apply -f - <<EOF
-apiVersion: traefik.io/v1alpha1
-kind: TLSStore
-metadata:
-  name: default
-  namespace: kube-system
-spec:
-  defaultCertificate:
-    secretName: localhost-tls
-EOF
-            '
-
-            rm -rf "$tls_dir"
+            apply_local_tls
             tls_enabled=true
             print_success "HTTPS enabled with trusted local certs."
             echo ""
@@ -656,6 +661,26 @@ cmd_upgrade_kargo() {
     echo ""
 }
 
+cmd_renew_tls() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    require_cmd "mkcert" "brew install mkcert"
+
+    print_header "Renew Local TLS Certificates"
+    echo ""
+
+    # Verify a cluster is reachable
+    if ! kubectl cluster-info &>/dev/null; then
+        print_error "No reachable cluster found."
+        print_info "Make sure your kubectl context points to a running cluster."
+        exit 1
+    fi
+
+    apply_local_tls
+    print_success "TLS certificates renewed."
+    echo ""
+}
+
 # --- Usage ---
 
 cmd_preflight_check() {
@@ -682,6 +707,7 @@ Commands:
   add-kargo-creds     Configure Kargo access to a private Git repo and container registry
   upgrade-argocd      Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
   upgrade-kargo       Re-apply Kargo Helm release
+  renew-tls           Regenerate mkcert certificates and update the cluster
   status              Show cluster and ArgoCD health
   preflight-check     Verify all required tools are installed
 
@@ -714,6 +740,7 @@ main() {
         add-kargo-creds) cmd_add_kargo_creds "$@" ;;
         upgrade-argocd) cmd_upgrade_argocd "$@" ;;
         upgrade-kargo) cmd_upgrade_kargo "$@" ;;
+        renew-tls) cmd_renew_tls "$@" ;;
         status) cmd_status "$@" ;;
         preflight-check) cmd_preflight_check "$@" ;;
         -h | --help) usage ;;
