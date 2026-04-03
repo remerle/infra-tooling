@@ -396,6 +396,19 @@ validate_image_repo() {
     return 0
 }
 
+# Warns if a secret key name does not follow uppercase environment variable convention.
+# Always returns 0 (warning only, never blocks).
+# Usage: validate_secret_key <key>
+validate_secret_key() {
+    local key="$1"
+
+    if ! [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
+        print_warning "Secret key '${key}' is not uppercase. Convention is uppercase with underscores (e.g., DATABASE_URL)."
+    fi
+
+    return 0
+}
+
 # --- Argument parsing ---
 
 # Extracts global flags from arguments. Sets TARGET_DIR, SHOW_ME.
