@@ -167,7 +167,9 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 - Adding a new template: place it in the appropriate `templates/` subdirectory
 - Adding a new placeholder: add it to the "Template placeholders" table above
 - **Always update `completions.zsh`** when adding, removing, or renaming commands in any script. The completions file must stay in sync with the actual command sets.
+- **Mandatory add/list/remove parity**: every resource type that has an `add-*` command MUST also have a `list-*` and `remove-*` command. This is not optional. When adding a new `add-*` command, you must also add the corresponding `list-*` and `remove-*` commands in the same changeset.
 - **Naming and behavior consistency across commands**: follow the existing patterns for command naming (`add-*`, `remove-*`, `list-*`, `edit-*`) and behavior. Commands that operate on a named resource (e.g., `remove-app <name>`) should present an interactive `gum choose` picker when called without a name argument, rather than showing usage errors.
+- **Argument completions**: when adding commands that accept resource names as arguments, add dynamic completion entries in `completions.zsh` that scan the filesystem (see `_infra_complete_apps`, `_infra_complete_envs`, `_infra_complete_projects` for examples).
 
 ### `lib/common.sh` function inventory
 

@@ -123,6 +123,7 @@ _secret_ctl() {
         'init:Install Sealed Secrets controller'
         'add:Encrypt and store a secret for an app/env'
         'list:List sealed secrets'
+        'remove:Remove a sealed secret for an app/env'
         'preflight-check:Validate sealed secrets setup'
     )
 
@@ -134,7 +135,7 @@ _secret_ctl() {
     case "$state" in
         args)
             case "${words[1]}" in
-                add|list)
+                add|list|remove)
                     case "$CURRENT" in
                         2) _infra_complete_apps ;;
                         3) _infra_complete_envs ;;

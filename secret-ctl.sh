@@ -268,6 +268,79 @@ cmd_list() {
     echo ""
 }
 
+cmd_remove() {
+    require_gum
+
+    local app_name="${1:-}"
+    local env_name="${2:-}"
+
+    load_conf
+
+    # Interactive selection if args not provided
+    if [[ -z "$app_name" ]]; then
+        local apps=()
+        while IFS= read -r app; do
+            apps+=("$app")
+        done < <(detect_apps)
+        if [[ ${#apps[@]} -eq 0 ]]; then
+            print_warning "No applications found."
+            exit 0
+        fi
+        app_name="$(printf '%s\n' "${apps[@]}" | gum choose --header "Select application:")"
+    fi
+
+    if [[ -z "$env_name" ]]; then
+        # Only show envs that have a sealed secret for this app
+        local available_envs=()
+        local overlay_dir="${TARGET_DIR}/k8s/apps/${app_name}/overlays"
+        if [[ -d "$overlay_dir" ]]; then
+            local d
+            for d in "$overlay_dir"/*/; do
+                [[ -d "$d" ]] || continue
+                [[ -f "${d}sealed-secret.yaml" ]] || continue
+                available_envs+=("$(basename "$d")")
+            done
+        fi
+        if [[ ${#available_envs[@]} -eq 0 ]]; then
+            print_warning "No sealed secrets found for '${app_name}'."
+            exit 0
+        fi
+        env_name="$(printf '%s\n' "${available_envs[@]}" | gum choose --header "Select environment:")"
+    fi
+
+    validate_k8s_name "$app_name" "App name"
+    validate_k8s_name "$env_name" "Environment name"
+
+    local sealed_file="${TARGET_DIR}/k8s/apps/${app_name}/overlays/${env_name}/sealed-secret.yaml"
+    if [[ ! -f "$sealed_file" ]]; then
+        print_error "No sealed secret found at ${sealed_file}"
+        exit 1
+    fi
+
+    print_header "Remove Sealed Secret: ${app_name} / ${env_name}"
+    echo ""
+    print_info "Delete file: ${sealed_file}"
+    echo ""
+
+    if ! gum confirm "Remove sealed secret for '${app_name}' in '${env_name}'?"; then
+        print_warning "Aborted."
+        exit 0
+    fi
+
+    rm -f "$sealed_file"
+
+    # Remove sealed-secret.yaml reference from kustomization.yaml
+    local kustomization="${TARGET_DIR}/k8s/apps/${app_name}/overlays/${env_name}/kustomization.yaml"
+    if [[ -f "$kustomization" ]] && grep -qF 'sealed-secret.yaml' "$kustomization"; then
+        local tmp
+        tmp="$(grep -vF '  - sealed-secret.yaml' "$kustomization")"
+        printf '%s\n' "$tmp" >"$kustomization"
+        print_success "Removed sealed-secret.yaml from overlay kustomization.yaml"
+    fi
+
+    print_removed "$sealed_file"
+}
+
 # --- Usage ---
 
 cmd_preflight_check() {
@@ -289,6 +362,7 @@ Commands:
   init                Install Sealed Secrets controller and set up key material
   add <app> <env>     Create or update a SealedSecret for an app/environment
   list [app] [env]    List app/environment pairs that have sealed secrets
+  remove [app] [env]  Remove a SealedSecret for an app/environment
   preflight-check     Verify all required tools are installed
 
 Global options:
@@ -314,6 +388,7 @@ main() {
         init) cmd_init "$@" ;;
         add) cmd_add "$@" ;;
         list) cmd_list "$@" ;;
+        remove) cmd_remove "$@" ;;
         preflight-check) cmd_preflight_check "$@" ;;
         -h | --help) usage ;;
         *)
