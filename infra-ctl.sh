@@ -1388,6 +1388,7 @@ Commands:
 
 Global options:
   --target-dir <path>   Directory to operate on (default: current directory)
+  --show-me             Print commands instead of hiding behind spinners (or set SHOW_ME=1)
 EOF
 }
 

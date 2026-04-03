@@ -171,8 +171,7 @@ cmd_add_role() {
     echo ""
     local f
     for f in "${created_files[@]}"; do
-        gum spin --title "Applying $(basename "$f")..." -- \
-            kubectl apply -f "$f"
+        run_cmd "Applying $(basename "$f")..." kubectl apply -f "$f"
     done
     print_success "K8s RBAC applied."
 
@@ -273,8 +272,7 @@ cmd_remove_role() {
     if [[ -n "$manifest_files" ]]; then
         local f
         while IFS= read -r f; do
-            gum spin --title "Removing $(basename "$f") from cluster..." -- \
-                kubectl delete -f "$f" --ignore-not-found
+            run_cmd "Removing $(basename "$f") from cluster..." kubectl delete -f "$f" --ignore-not-found
             rm "$f"
             print_success "Removed: $f"
         done <<<"$manifest_files"
@@ -336,11 +334,9 @@ cmd_add() {
     local kubeconfig_file="${users_dir}/${username}.kubeconfig"
 
     # Generate key and CSR (umask ensures key is created with 600 permissions)
-    gum spin --title "Generating RSA key..." -- \
-        bash -c "umask 077 && openssl genrsa -out '$key_file' 4096"
+    run_cmd_sh "Generating RSA key..." "umask 077 && openssl genrsa -out '$key_file' 4096"
 
-    gum spin --title "Generating CSR..." -- \
-        openssl req -new -key "$key_file" \
+    run_cmd "Generating CSR..." openssl req -new -key "$key_file" \
         -subj "/CN=${username}/O=${group}" \
         -out "$csr_file"
 
@@ -350,7 +346,7 @@ cmd_add() {
     local csr_b64
     csr_b64="$(base64 <"$csr_file" | tr -d '\n')"
 
-    gum spin --title "Submitting CSR to Kubernetes..." -- kubectl apply -f - <<EOF
+    run_cmd "Submitting CSR to Kubernetes..." kubectl apply -f - <<EOF
 apiVersion: certificates.k8s.io/v1
 kind: CertificateSigningRequest
 metadata:
@@ -363,8 +359,7 @@ spec:
 EOF
 
     # Approve CSR
-    gum spin --title "Approving CSR..." -- \
-        kubectl certificate approve "$username"
+    run_cmd "Approving CSR..." kubectl certificate approve "$username"
 
     # Wait for certificate to be issued
     local retries=10
@@ -447,8 +442,7 @@ cmd_remove() {
     fi
 
     # Delete k8s CSR if it exists
-    gum spin --title "Removing K8s CSR..." -- \
-        kubectl delete csr "$username" --ignore-not-found 2>/dev/null || true
+    run_cmd_sh "Removing K8s CSR..." "kubectl delete csr '$username' --ignore-not-found 2>/dev/null || true"
     print_success "K8s CSR removed."
 
     # Warn about x509 certificate limitation
@@ -591,7 +585,7 @@ cmd_add_sa() {
     mkdir -p "$users_dir"
 
     # Create ServiceAccount
-    gum spin --title "Creating ServiceAccount..." -- kubectl apply -f - <<EOF
+    run_cmd "Creating ServiceAccount..." kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -859,7 +853,7 @@ cmd_remove_sa() {
     fi
 
     # Delete ServiceAccount and RBAC bindings
-    gum spin --title "Removing ServiceAccount and RBAC bindings..." -- bash -c "
+    run_cmd_sh "Removing ServiceAccount and RBAC bindings..." "
         kubectl delete serviceaccount \"${sa_name}\" -n kube-system --ignore-not-found
         kubectl delete clusterrolebinding \"${sa_name}\" --ignore-not-found 2>/dev/null || true
         kubectl delete clusterrolebinding \"${sa_name}-cluster-readonly\" --ignore-not-found 2>/dev/null || true
@@ -922,6 +916,7 @@ Commands:
 
 Global options:
   --target-dir <path>   Directory to operate on (default: current directory)
+  --show-me             Print commands instead of hiding behind spinners (or set SHOW_ME=1)
 EOF
 }
 

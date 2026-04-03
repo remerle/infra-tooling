@@ -9,6 +9,44 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
 TEMPLATE_DIR="${SCRIPT_DIR}/templates"
 TARGET_DIR="${PWD}"
 
+# --- Command visibility ---
+
+# When SHOW_ME=1 (or --show-me flag), print commands before running them
+# instead of hiding them behind a gum spinner.
+: "${SHOW_ME:=0}"
+
+# Runs a command with a gum spinner, or prints and runs it directly if SHOW_ME=1.
+# Usage: run_cmd "Installing ArgoCD..." helm install argocd ...
+#   First arg is the human-readable description (used as spinner title).
+#   Remaining args are the command to execute.
+run_cmd() {
+    local title="$1"
+    shift
+
+    if [[ "$SHOW_ME" == "1" ]]; then
+        print_info "${title}"
+        print_info "  \$ $*"
+        "$@"
+    else
+        gum spin --title "$title" -- "$@"
+    fi
+}
+
+# Same as run_cmd but passes the command through bash -c (for pipes, heredocs, etc).
+# Usage: run_cmd_sh "Configuring TLS..." 'kubectl create secret tls ... && kubectl apply ...'
+run_cmd_sh() {
+    local title="$1"
+    local script="$2"
+
+    if [[ "$SHOW_ME" == "1" ]]; then
+        print_info "${title}"
+        print_info "  \$ ${script}"
+        bash -c "$script"
+    else
+        gum spin --title "$title" -- bash -c "$script"
+    fi
+}
+
 # --- Dependency checking ---
 
 require_cmd() {
@@ -138,7 +176,7 @@ validate_k8s_name() {
 
 # --- Argument parsing ---
 
-# Extracts --target-dir from arguments. Sets TARGET_DIR.
+# Extracts global flags from arguments. Sets TARGET_DIR, SHOW_ME.
 # Remaining args are stored in REMAINING_ARGS array.
 parse_global_args() {
     REMAINING_ARGS=()
@@ -156,6 +194,10 @@ parse_global_args() {
                 fi
                 TARGET_DIR="$(cd "$2" && pwd)"
                 shift 2
+                ;;
+            --show-me)
+                SHOW_ME=1
+                shift
                 ;;
             *)
                 REMAINING_ARGS+=("$1")

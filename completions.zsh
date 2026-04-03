@@ -85,6 +85,7 @@ _infra_ctl() {
 
     _arguments -s \
         '--target-dir[Directory to operate on]:directory:_directories' \
+        '--show-me[Print commands instead of hiding behind spinners]' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
 
@@ -114,6 +115,7 @@ _cluster_ctl() {
 
     _arguments -s \
         '--target-dir[Directory context]:directory:_directories' \
+        '--show-me[Print commands instead of hiding behind spinners]' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
 
@@ -141,6 +143,7 @@ _secret_ctl() {
 
     _arguments -s \
         '--target-dir[Directory to operate on]:directory:_directories' \
+        '--show-me[Print commands instead of hiding behind spinners]' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
 
@@ -174,6 +177,7 @@ _user_ctl() {
 
     _arguments -s \
         '--target-dir[Directory to operate on]:directory:_directories' \
+        '--show-me[Print commands instead of hiding behind spinners]' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
 }

@@ -20,7 +20,7 @@ cmd_init() {
     if [[ -f "$key_backup" ]]; then
         print_info "Found existing key backup at .sealed-secrets-key.json"
         if gum confirm "Restore this key into the cluster? (keeps existing SealedSecrets decryptable)"; then
-            gum spin --title "Restoring sealed-secrets key..." -- \
+            run_cmd "Restoring sealed-secrets key..." \
                 kubectl apply -f "$key_backup"
 
             print_success "Key restored from backup."
@@ -31,10 +31,10 @@ cmd_init() {
     # Install the Sealed Secrets controller
     local manifest_url="https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.3/controller.yaml"
 
-    gum spin --title "Installing Sealed Secrets controller..." -- \
+    run_cmd "Installing Sealed Secrets controller..." \
         kubectl apply -f "$manifest_url"
 
-    if gum spin --title "Waiting for Sealed Secrets controller to be ready..." -- \
+    if run_cmd "Waiting for Sealed Secrets controller to be ready..." \
         kubectl wait --for=condition=available deployment/sealed-secrets-controller \
         -n kube-system --timeout=90s; then
         print_success "Sealed Secrets controller is ready."
@@ -45,9 +45,8 @@ cmd_init() {
     echo ""
 
     # Export the public cert for offline encryption
-    gum spin --title "Exporting public cert..." -- \
-        kubeseal --fetch-cert --controller-name=sealed-secrets-controller \
-        --controller-namespace=kube-system >"$cert_file"
+    run_cmd_sh "Exporting public cert..." \
+        "kubeseal --fetch-cert --controller-name=sealed-secrets-controller --controller-namespace=kube-system >\"$cert_file\""
 
     print_success "Public cert saved to .sealed-secrets-cert.pem (commit this file)."
 
@@ -388,6 +387,7 @@ Commands:
 
 Global options:
   --target-dir <path>   Directory to operate on (default: current directory)
+  --show-me             Print commands instead of hiding behind spinners (or set SHOW_ME=1)
 EOF
 }
 

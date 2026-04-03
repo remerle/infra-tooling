@@ -50,7 +50,7 @@ cmd_init_cluster() {
     # The @agent:* suffix is k3d's node filter syntax: apply this env var to
     # all agent nodes only (server nodes already have API access on localhost).
     echo ""
-    gum spin --title "Creating k3d cluster '${cluster_name}'..." -- \
+    run_cmd "Creating k3d cluster '${cluster_name}'..." \
         k3d cluster create "$cluster_name" \
         --agents "$agents" \
         --env "KUBECONFIG=/var/lib/rancher/k3s/agent/kubelet.kubeconfig@agent:*" \
@@ -62,16 +62,16 @@ cmd_init_cluster() {
 
     # Install Metrics Server (required for kubectl top)
     local metrics_server_version="v0.7.2"
-    gum spin --title "Installing Metrics Server ${metrics_server_version}..." -- \
+    run_cmd "Installing Metrics Server ${metrics_server_version}..." \
         kubectl apply -f "https://github.com/kubernetes-sigs/metrics-server/releases/download/${metrics_server_version}/components.yaml"
 
     # Metrics Server needs --kubelet-insecure-tls in k3d (self-signed kubelet certs)
-    gum spin --title "Patching Metrics Server for k3d..." -- \
+    run_cmd "Patching Metrics Server for k3d..." \
         kubectl patch deployment metrics-server -n kube-system \
         --type=json \
         -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
 
-    if gum spin --title "Waiting for Metrics Server to be ready..." -- \
+    if run_cmd "Waiting for Metrics Server to be ready..." \
         kubectl wait --for=condition=available deployment/metrics-server -n kube-system --timeout=60s; then
         print_success "Metrics Server is ready (kubectl top enabled)."
     else
@@ -101,7 +101,7 @@ cmd_init_cluster() {
                 "*.localhost" >/dev/null 2>&1
 
             # Create TLS secret and default TLSStore in kube-system so Traefik uses it for all routes
-            gum spin --title "Configuring TLS..." -- bash -c '
+            run_cmd_sh "Configuring TLS..." '
                 kubectl create secret tls localhost-tls \
                     --cert="'"${tls_dir}"'/tls.crt" --key="'"${tls_dir}"'/tls.key" \
                     --namespace kube-system --dry-run=client -o yaml | kubectl apply -f -
@@ -136,10 +136,10 @@ EOF
             exit 1
         fi
 
-        gum spin --title "Adding ArgoCD Helm repo..." -- \
+        run_cmd "Adding ArgoCD Helm repo..." \
             helm repo add argo https://argoproj.github.io/argo-helm
 
-        gum spin --title "Updating Helm repos..." -- \
+        run_cmd "Updating Helm repos..." \
             helm repo update
 
         local argocd_tls_args=()
@@ -156,8 +156,8 @@ EOF
             --values \"$values_file\" \
             ${argocd_tls_args[*]+${argocd_tls_args[*]}} \
             --wait --timeout 120s >\"$argocd_log\" 2>&1"
-        if gum spin --title "Installing ArgoCD via Helm (this may take a minute)..." -- \
-            bash -c "$argocd_cmd"; then
+        if run_cmd_sh "Installing ArgoCD via Helm (this may take a minute)..." \
+            "$argocd_cmd"; then
             print_success "ArgoCD installed via Helm."
             argocd_installed=true
         else
@@ -176,8 +176,8 @@ EOF
         # Kargo uses cert-manager to generate self-signed certs for them)
         if ! kubectl get crd certificates.cert-manager.io &>/dev/null; then
             helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null 2>&1
-            gum spin --title "Installing cert-manager (required by Kargo)..." -- \
-                bash -c "helm install cert-manager jetstack/cert-manager \
+            run_cmd_sh "Installing cert-manager (required by Kargo)..." \
+                "helm install cert-manager jetstack/cert-manager \
                 --namespace cert-manager --create-namespace \
                 --set crds.enabled=true \
                 --wait --timeout 120s >/dev/null 2>&1"
@@ -210,8 +210,8 @@ EOF
         # api.tls.terminatedUpstream=true signals that an upstream proxy already terminated TLS.
         local kargo_log
         kargo_log="$(mktemp)"
-        if gum spin --title "Installing Kargo via Helm (this may take a minute)..." -- \
-            bash -c "helm install kargo \
+        if run_cmd_sh "Installing Kargo via Helm (this may take a minute)..." \
+            "helm install kargo \
             oci://ghcr.io/akuity/kargo-charts/kargo \
             --namespace kargo --create-namespace \
             --set \"api.adminAccount.passwordHash=${kargo_hash}\" \
@@ -228,7 +228,7 @@ EOF
     traefik.ingress.kubernetes.io/router.tls: "true"'
             fi
 
-            gum spin --title "Creating Kargo Ingress..." -- kubectl apply -f - <<KARGOINGRESS
+            run_cmd_sh "Creating Kargo Ingress..." "kubectl apply -f - <<'KARGOINGRESS'
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -247,7 +247,7 @@ spec:
                 name: kargo-api
                 port:
                   number: 80
-KARGOINGRESS
+KARGOINGRESS"
             print_success "Kargo Ingress created at kargo.localhost"
 
             # Update .infra-ctl.conf (create if it doesn't exist yet).
@@ -338,7 +338,7 @@ cmd_delete_cluster() {
         exit 0
     fi
 
-    gum spin --title "Deleting cluster '${cluster_name}'..." -- \
+    run_cmd "Deleting cluster '${cluster_name}'..." \
         k3d cluster delete "$cluster_name"
 
     print_success "Cluster '${cluster_name}' deleted."
@@ -454,7 +454,7 @@ cmd_add_repo_creds() {
     fi
 
     # Create or replace the secret
-    gum spin --title "Configuring ArgoCD repo credentials..." -- bash -c '
+    run_cmd_sh "Configuring ArgoCD repo credentials..." '
         kubectl create secret generic repo-creds \
             --namespace argocd \
             --from-literal=type=git \
@@ -555,7 +555,7 @@ cmd_add_kargo_creds() {
     fi
 
     # Create Git credential
-    gum spin --title "Configuring Kargo Git credentials..." -- bash -c '
+    run_cmd_sh "Configuring Kargo Git credentials..." '
         kubectl create secret generic gitops-repo-creds \
             --namespace "'"$app_name"'" \
             --from-literal=type=git \
@@ -572,7 +572,7 @@ cmd_add_kargo_creds() {
     # Optionally create registry credential
     echo ""
     if gum confirm "Is the container registry private?"; then
-        gum spin --title "Configuring registry credentials..." -- bash -c '
+        run_cmd_sh "Configuring registry credentials..." '
             kubectl create secret generic registry-creds \
                 --namespace "'"$app_name"'" \
                 --from-literal=type=image \
@@ -611,7 +611,7 @@ cmd_upgrade_argocd() {
         exit 1
     fi
 
-    gum spin --title "Upgrading ArgoCD..." -- \
+    run_cmd "Upgrading ArgoCD..." \
         helm upgrade argocd argo/argo-cd \
         --namespace argocd \
         --values "$values_file" \
@@ -635,7 +635,7 @@ cmd_upgrade_kargo() {
         exit 1
     fi
 
-    gum spin --title "Upgrading Kargo..." -- \
+    run_cmd "Upgrading Kargo..." \
         helm upgrade kargo \
         oci://ghcr.io/akuity/kargo-charts/kargo \
         --namespace kargo \
@@ -676,6 +676,7 @@ Commands:
 
 Global options:
   --target-dir <path>   Directory context (default: current directory)
+  --show-me             Print commands instead of hiding behind spinners (or set SHOW_ME=1)
 EOF
 }
 
