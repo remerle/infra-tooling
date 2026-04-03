@@ -151,6 +151,21 @@ require_helm() {
     fi
 }
 
+require_gh() {
+    if ! command -v gh &>/dev/null; then
+        echo "ERROR: 'gh' (GitHub CLI) is required but not installed." >&2
+        echo "  Install: brew install gh" >&2
+        echo "  Or visit: https://cli.github.com/" >&2
+        exit 1
+    fi
+
+    if ! gh auth status &>/dev/null; then
+        echo "ERROR: 'gh' is not authenticated." >&2
+        echo "  Run: gh auth login" >&2
+        exit 1
+    fi
+}
+
 # Checks a list of required tools and reports all missing ones at once.
 # Usage: preflight_check "cmd1:hint1" "cmd2:hint2" ...
 #   Each argument is "command:install_hint". The hint is optional.
@@ -224,6 +239,36 @@ validate_k8s_name() {
         echo "  Must match RFC 1123: lowercase alphanumeric, hyphens, or dots." >&2
         echo "  Must start and end with an alphanumeric character." >&2
         exit 1
+    fi
+}
+
+# Validates that a value is a positive integer.
+# Returns 0 on success, 1 on failure (prints error message).
+# Usage: validate_positive_integer <value> <label>
+validate_positive_integer() {
+    local value="$1"
+    local label="${2:-value}"
+
+    if ! [[ "$value" =~ ^[0-9]+$ ]] || [[ "$value" -eq 0 ]]; then
+        print_error "${label} must be a positive integer (got '${value}')."
+        return 1
+    fi
+}
+
+# Validates that a value is a valid TCP/UDP port number (1-65535).
+# Returns 0 on success, 1 on failure (prints error message).
+# Usage: validate_port <value>
+validate_port() {
+    local value="$1"
+
+    if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+        print_error "Port must be a number (got '${value}')."
+        return 1
+    fi
+
+    if [[ "$value" -lt 1 || "$value" -gt 65535 ]]; then
+        print_error "Port must be between 1 and 65535 (got '${value}')."
+        return 1
     fi
 }
 
