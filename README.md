@@ -415,6 +415,7 @@ infra-ctl.sh add-app backend
 # SECRET_NAME: backend-secrets
 #   Secret key name: DATABASE_URL
 # PROBE_PATH: /api/health
+# Manage with Kargo? Yes
 # Image repo for Kargo: ghcr.io/remerle/k8s-practice-backend
 
 # Frontend
@@ -426,6 +427,7 @@ infra-ctl.sh add-app frontend
 # SECRET_NAME: (skip)
 # PROBE_PATH: /api/health
 # Config entry: API_URL=http://backend:3000
+# Manage with Kargo? Yes
 # Image repo for Kargo: ghcr.io/remerle/k8s-practice-frontend
 
 # PostgreSQL
@@ -439,6 +441,7 @@ infra-ctl.sh add-app postgres
 # STORAGE_SIZE: 1Gi
 # MOUNT_PATH: /var/lib/postgresql/data
 # Config POSTGRES_DB: store
+# Manage with Kargo? No
 ```
 
 Each command generates a workload manifest (Deployment or StatefulSet), a Kustomize base with Service, per-env overlays, and ArgoCD Application manifests. For backend and frontend, Kargo resources are also generated: a Warehouse (watches the container registry for new tags) and Stages (one per environment in the promotion pipeline). Postgres doesn't get Kargo resources because it uses `postgres:16-alpine` directly rather than a CI-built image.

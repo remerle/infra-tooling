@@ -133,11 +133,6 @@ cmd_add_app() {
     validate_k8s_name "$app_name" "App name"
     load_conf
 
-    if is_kargo_enabled; then
-        require_gh
-        require_gh_scope "read:packages"
-    fi
-
     # Guard: app already exists
     local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
     if [[ -d "$app_dir" ]]; then
@@ -361,6 +356,20 @@ cmd_add_app() {
         workload_file="deployment.yaml"
     fi
 
+    # Ask about Kargo management before the preview
+    local kargo_managed=false
+    if is_kargo_enabled; then
+        local kargo_default
+        if [[ "$workload_type" == "Deployment" ]]; then
+            kargo_default="--default=Yes"
+        else
+            kargo_default="--default=No"
+        fi
+        if gum confirm "Manage image promotion with Kargo?" $kargo_default; then
+            kargo_managed=true
+        fi
+    fi
+
     print_header "Add Application: ${app_name}"
     print_info "Project:  ${project}"
     print_info "Workload: ${workload_type}"
@@ -392,7 +401,7 @@ cmd_add_app() {
         print_warning "No environments found. Only base/ will be created."
         print_info "Run 'infra-ctl.sh add-env <env>' to create overlays later."
     fi
-    if is_kargo_enabled; then
+    if [[ "$kargo_managed" == true ]]; then
         print_info "Kargo:   kargo/${app_name}/project.yaml"
         print_info "Kargo:   kargo/${app_name}/warehouse.yaml"
         if [[ ${#envs[@]} -gt 0 ]]; then
@@ -509,8 +518,10 @@ cmd_add_app() {
         done
     fi
 
-    # Generate Kargo resources if enabled
-    if is_kargo_enabled; then
+    # Generate Kargo resources if user opted in
+    if [[ "$kargo_managed" == true ]]; then
+        require_gh
+        require_gh_scope "read:packages"
         # Derive default image repo from the entered image (strip tag)
         local default_image_repo="${image%%:*}"
         local image_repo
@@ -569,7 +580,7 @@ cmd_add_app() {
         done
     fi
 
-    if is_kargo_enabled && [[ -d "${TARGET_DIR}/kargo/${app_name}" ]]; then
+    if [[ "$kargo_managed" == true && -d "${TARGET_DIR}/kargo/${app_name}" ]]; then
         print_info "If your repo or registry is private, configure credentials:"
         print_info "  cluster-ctl.sh add-kargo-creds"
     fi
