@@ -166,6 +166,19 @@ require_gh() {
     fi
 }
 
+# Verifies the current gh token includes a required OAuth scope.
+# Usage: require_gh_scope <scope>
+require_gh_scope() {
+    local scope="$1"
+    local scopes
+    scopes="$(gh auth status 2>&1)" || true
+    if ! echo "$scopes" | grep -q "'${scope}'"; then
+        echo "ERROR: gh token is missing the '${scope}' scope." >&2
+        echo "  Run: gh auth refresh -s ${scope}" >&2
+        exit 1
+    fi
+}
+
 # Checks a list of required tools and reports all missing ones at once.
 # Usage: preflight_check "cmd1:hint1" "cmd2:hint2" ...
 #   Each argument is "command:install_hint". The hint is optional.
@@ -377,12 +390,17 @@ validate_image_repo() {
     local repo_path="${ref#*/}"
 
     if [[ "$registry" == "ghcr.io" ]]; then
-        local tag_url="https://${registry}/v2/${repo_path}/tags/list"
-        local http_code
-        http_code="$(curl -s -o /dev/null -w '%{http_code}' \
-            -H "Authorization: Bearer $(gh auth token 2>/dev/null || true)" \
-            "$tag_url" 2>/dev/null)" || true
-        if [[ "$http_code" != "200" ]]; then
+        # ghcr.io v2 API requires a token exchange that gh auth token doesn't provide.
+        # Use the GitHub REST API (packages endpoint) instead.
+        local owner="${repo_path%%/*}"
+        local package="${repo_path#*/}"
+        # URL-encode slashes in multi-level package names (e.g., org/repo -> org%2Frepo)
+        package="${package//\//%2F}"
+        local api_response
+        api_response="$(gh api "/users/${owner}/packages/container/${package}" 2>&1)" || true
+        if [[ "$api_response" == *"read:packages"* ]]; then
+            print_warning "Cannot verify '${ref}': gh token lacks read:packages scope. Run: gh auth refresh -s read:packages"
+        elif [[ "$api_response" == *"Not Found"* || "$api_response" == *"404"* ]]; then
             print_warning "Image repository '${ref}' not found in registry. It may not exist yet."
         fi
     else

@@ -133,6 +133,11 @@ cmd_add_app() {
     validate_k8s_name "$app_name" "App name"
     load_conf
 
+    if is_kargo_enabled; then
+        require_gh
+        require_gh_scope "read:packages"
+    fi
+
     # Guard: app already exists
     local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
     if [[ -d "$app_dir" ]]; then
@@ -1160,6 +1165,8 @@ cmd_edit_project() {
 
 cmd_enable_kargo() {
     require_gum
+    require_gh
+    require_gh_scope "read:packages"
     load_conf
 
     if is_kargo_enabled; then
