@@ -191,6 +191,7 @@ Commands follow these naming patterns:
 
 - Adding a new template: place it in the appropriate `templates/` subdirectory
 - Adding a new placeholder: add it to the "Template placeholders" table above
+- **Explain mode**: every `run_cmd` / `run_cmd_sh` call MUST include an `--explain` argument that describes why the command is necessary, not just what it does. Write for someone learning Kubernetes. These explanations are shown when the user runs with `--explain` or `EXPLAIN=1`.
 
 ### `lib/common.sh` function inventory
 
