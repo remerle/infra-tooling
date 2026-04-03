@@ -320,6 +320,79 @@ validate_github_pat() {
     done
 }
 
+# Validates a GitHub repository URL by attempting to access it via gh CLI.
+# Prints a warning on failure but returns 0 (warning, not a blocker).
+# Usage: validate_github_repo <url>
+validate_github_repo() {
+    local url="$1"
+
+    # Extract owner/repo from URL
+    local owner_repo
+    if [[ "$url" =~ github\.com[:/]([^/]+/[^/.]+) ]]; then
+        owner_repo="${BASH_REMATCH[1]}"
+        # Strip .git suffix if present
+        owner_repo="${owner_repo%.git}"
+    else
+        print_warning "Could not parse GitHub owner/repo from URL: ${url}"
+        return 0
+    fi
+
+    if ! gh repo view "$owner_repo" --json name &>/dev/null; then
+        print_warning "Repository '${owner_repo}' is not accessible. It may not exist yet or may be private."
+        return 0
+    fi
+}
+
+# Validates a container image repository reference.
+# Format check is a hard failure (returns 1). Registry check is a warning (returns 0).
+# Usage: validate_image_repo <ref>
+#   Returns: 0 on valid format (with optional registry warning), 1 on invalid format.
+validate_image_repo() {
+    local ref="$1"
+
+    # Must not be empty
+    if [[ -z "$ref" ]]; then
+        print_error "Image repository cannot be empty."
+        return 1
+    fi
+
+    # Must contain at least one slash (registry/repo or registry/org/repo)
+    if [[ "$ref" != */* ]]; then
+        print_error "Image repository must include a registry prefix (e.g., ghcr.io/owner/app)."
+        return 1
+    fi
+
+    # Must not contain a tag (colon followed by an alpha char indicates a tag, not a port)
+    if [[ "$ref" =~ :[a-zA-Z] ]]; then
+        print_error "Image repository must not include a tag (got '${ref}')."
+        print_info "Kargo discovers tags automatically. Provide only the repository, e.g., ghcr.io/owner/app"
+        return 1
+    fi
+
+    # Registry check (warning only)
+    # For ghcr.io, use gh api; for others, try OCI distribution API
+    local registry="${ref%%/*}"
+    local repo_path="${ref#*/}"
+
+    if [[ "$registry" == "ghcr.io" ]]; then
+        local tag_url="https://${registry}/v2/${repo_path}/tags/list"
+        local http_code
+        http_code="$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $(gh auth token 2>/dev/null || true)" \
+            "$tag_url" 2>/dev/null)" || true
+        if [[ "$http_code" != "200" ]]; then
+            print_warning "Image repository '${ref}' not found in registry. It may not exist yet."
+        fi
+    else
+        local tag_url="https://${registry}/v2/${repo_path}/tags/list"
+        local http_code
+        http_code="$(curl -s -o /dev/null -w '%{http_code}' "$tag_url" 2>/dev/null)" || true
+        if [[ "$http_code" != "200" ]]; then
+            print_warning "Image repository '${ref}' not found in registry. It may not exist yet."
+        fi
+    fi
+}
+
 # --- Argument parsing ---
 
 # Extracts global flags from arguments. Sets TARGET_DIR, SHOW_ME.
