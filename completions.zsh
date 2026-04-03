@@ -87,6 +87,7 @@ _infra_ctl() {
         '--target-dir[Directory to operate on]:directory:_directories' \
         '--show-me[Print commands instead of hiding behind spinners]' \
         '--explain[Print commands with explanations (learning mode)]' \
+        '--debug[Show full command output]' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
 
@@ -118,6 +119,7 @@ _cluster_ctl() {
         '--target-dir[Directory context]:directory:_directories' \
         '--show-me[Print commands instead of hiding behind spinners]' \
         '--explain[Print commands with explanations (learning mode)]' \
+        '--debug[Show full command output]' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
 
@@ -147,6 +149,7 @@ _secret_ctl() {
         '--target-dir[Directory to operate on]:directory:_directories' \
         '--show-me[Print commands instead of hiding behind spinners]' \
         '--explain[Print commands with explanations (learning mode)]' \
+        '--debug[Show full command output]' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
 
@@ -182,6 +185,7 @@ _user_ctl() {
         '--target-dir[Directory to operate on]:directory:_directories' \
         '--show-me[Print commands instead of hiding behind spinners]' \
         '--explain[Print commands with explanations (learning mode)]' \
+        '--debug[Show full command output]' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
 }

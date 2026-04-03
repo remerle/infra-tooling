@@ -192,6 +192,7 @@ Commands follow these naming patterns:
 - Adding a new template: place it in the appropriate `templates/` subdirectory
 - Adding a new placeholder: add it to the "Template placeholders" table above
 - **Explain mode**: every `run_cmd` / `run_cmd_sh` call MUST include an `--explain` argument that describes why the command is necessary, not just what it does. Write for someone learning Kubernetes. These explanations are shown when the user runs with `--explain` or `EXPLAIN=1`.
+- **Command output visibility**: `run_cmd` / `run_cmd_sh` suppress command stdout/stderr in SHOW_ME mode (output shown only on failure). Set `DEBUG=1` or `--debug` to see full output. This keeps `--explain` and `--show-me` output clean.
 
 ### `lib/common.sh` function inventory
 

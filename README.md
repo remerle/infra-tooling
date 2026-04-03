@@ -210,9 +210,16 @@ infra-ctl.sh edit-project backend-team
 
 ### Global options
 
-All `infra-ctl.sh` commands accept:
+All scripts (`infra-ctl.sh`, `cluster-ctl.sh`, `secret-ctl.sh`, `user-ctl.sh`) accept these flags:
 
-- `--target-dir <path>` -- operate on a specific directory instead of the current working directory
+| Flag | Env var | Description |
+|------|---------|-------------|
+| `--target-dir <path>` | | Operate on a specific directory instead of the current working directory |
+| `--show-me` | `SHOW_ME=1` | Print commands instead of hiding them behind gum spinners |
+| `--explain` | `EXPLAIN=1` | Print commands with human-readable explanations of why each step is necessary (learning mode; implies `--show-me`) |
+| `--debug` | `DEBUG=1` | Show full command output (implies `--show-me`). Without this, `--show-me` and `--explain` suppress command output, showing it only on failure. |
+
+Flags can be combined: `--explain --debug` shows explanations and full output.
 
 ### Important behaviors
 

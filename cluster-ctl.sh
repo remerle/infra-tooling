@@ -694,6 +694,7 @@ Global options:
   --target-dir <path>   Directory context (default: current directory)
   --show-me             Print commands instead of hiding behind spinners (or set SHOW_ME=1)
   --explain             Print commands with explanations (learning mode, implies --show-me)
+  --debug               Show full command output (implies --show-me; or set DEBUG=1)
 EOF
 }
 

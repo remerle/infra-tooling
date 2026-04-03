@@ -22,6 +22,10 @@ if [[ "$EXPLAIN" == "1" ]]; then
     SHOW_ME=1
 fi
 
+# When DEBUG=1 (or --debug flag), show full command output in SHOW_ME mode.
+# Without this, SHOW_ME/EXPLAIN mode suppresses output (shown only on failure).
+: "${DEBUG:=0}"
+
 # Runs a command with a gum spinner, or prints and runs it directly if SHOW_ME=1.
 # Usage: run_cmd "Installing ArgoCD..." helm install argocd ...
 #   First arg is the human-readable description (used as spinner title).
@@ -42,7 +46,18 @@ run_cmd() {
             gum style --faint --italic "    ${explanation}"
         fi
         print_info "  \$ $*"
-        "$@"
+        if [[ "$DEBUG" == "1" ]]; then
+            "$@"
+        else
+            local _log
+            _log="$(mktemp)"
+            if ! "$@" >"$_log" 2>&1; then
+                cat "$_log" >&2
+                rm -f "$_log"
+                return 1
+            fi
+            rm -f "$_log"
+        fi
     else
         gum spin --title "$title" -- "$@"
     fi
@@ -68,7 +83,18 @@ run_cmd_sh() {
             gum style --faint --italic "    ${explanation}"
         fi
         print_info "  \$ ${script}"
-        bash -c "$script"
+        if [[ "$DEBUG" == "1" ]]; then
+            bash -c "$script"
+        else
+            local _log
+            _log="$(mktemp)"
+            if ! bash -c "$script" >"$_log" 2>&1; then
+                cat "$_log" >&2
+                rm -f "$_log"
+                return 1
+            fi
+            rm -f "$_log"
+        fi
     else
         gum spin --title "$title" -- bash -c "$script"
     fi
@@ -228,6 +254,11 @@ parse_global_args() {
                 ;;
             --explain)
                 EXPLAIN=1
+                SHOW_ME=1
+                shift
+                ;;
+            --debug)
+                DEBUG=1
                 SHOW_ME=1
                 shift
                 ;;
