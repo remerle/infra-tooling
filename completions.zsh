@@ -18,6 +18,8 @@ _infra_ctl() {
         'add-env:Add a new environment'
         'add-project:Create an ArgoCD AppProject'
         'edit-project:Edit an existing AppProject'
+        'remove-app:Remove an application and all its resources'
+        'remove-env:Remove an environment and all its resources'
         'enable-kargo:Enable Kargo progressive delivery'
         'preflight-check:Validate repository structure'
     )

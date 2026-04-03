@@ -820,8 +820,23 @@ cmd_remove_app() {
     require_gum
 
     if [[ $# -eq 0 ]]; then
-        print_error "Usage: infra-ctl.sh remove-app <app-name>"
-        exit 1
+        load_conf
+        print_header "Applications"
+        echo ""
+        local apps=()
+        while IFS= read -r app; do
+            apps+=("$app")
+        done < <(detect_apps)
+        if [[ ${#apps[@]} -eq 0 ]]; then
+            print_warning "No applications found."
+        else
+            local app
+            for app in "${apps[@]}"; do
+                print_info "  ${app}"
+            done
+        fi
+        echo ""
+        return
     fi
 
     local app_name="$1"
@@ -903,8 +918,23 @@ cmd_remove_env() {
     require_gum
 
     if [[ $# -eq 0 ]]; then
-        print_error "Usage: infra-ctl.sh remove-env <env-name>"
-        exit 1
+        load_conf
+        print_header "Environments"
+        echo ""
+        local envs=()
+        while IFS= read -r env; do
+            envs+=("$env")
+        done < <(detect_envs)
+        if [[ ${#envs[@]} -eq 0 ]]; then
+            print_warning "No environments found."
+        else
+            local env
+            for env in "${envs[@]}"; do
+                print_info "  ${env}"
+            done
+        fi
+        echo ""
+        return
     fi
 
     local env_name="$1"
