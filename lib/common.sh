@@ -629,6 +629,12 @@ get_preset_config() {
     read_preset_frontmatter "$template" | yq eval '.config // {} | to_entries | .[] | .key + "=" + .value' -
 }
 
+# Outputs required secret key names from frontmatter, one per line.
+get_preset_secrets() {
+    local template="$1"
+    read_preset_frontmatter "$template" | yq eval '.secrets // [] | .[]' -
+}
+
 # Checks if a default key is listed in the optional array in frontmatter.
 # Returns 0 if optional, 1 otherwise.
 is_preset_optional() {
@@ -678,21 +684,19 @@ safe_render_preset_template() {
 build_secret_env_vars() {
     local secret_name="$1"
     shift
-    local mappings=("$@")
-    if [[ ${#mappings[@]} -eq 0 ]]; then
+    local keys=("$@")
+    if [[ ${#keys[@]} -eq 0 ]]; then
         echo ""
         return
     fi
     local result="          env:"
-    local mapping
-    for mapping in "${mappings[@]}"; do
-        local env_name="${mapping%%=*}"
-        local secret_key="${mapping#*=}"
-        result+=$'\n'"            - name: ${env_name}"
+    local key
+    for key in "${keys[@]}"; do
+        result+=$'\n'"            - name: ${key}"
         result+=$'\n'"              valueFrom:"
         result+=$'\n'"                secretKeyRef:"
         result+=$'\n'"                  name: ${secret_name}"
-        result+=$'\n'"                  key: ${secret_key}"
+        result+=$'\n'"                  key: ${key}"
     done
     echo "$result"
 }

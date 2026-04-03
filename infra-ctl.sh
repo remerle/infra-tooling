@@ -211,7 +211,7 @@ cmd_add_app() {
     local image=""
     local secret_name=""
     local probe_path=""
-    local secret_mappings=()
+    local secret_keys=()
     local config_entries=()
     local storage_size=""
     local mount_path=""
@@ -290,16 +290,25 @@ cmd_add_app() {
             fi
         done
 
-        # Prompt for secret env var mappings if a secret name was provided
+        # Collect secret key names from preset frontmatter
         if [[ -n "$secret_name" ]]; then
-            print_info "Map environment variables to secret keys from '${secret_name}'."
-            print_info "Format: ENV_VAR=secret-key (leave empty to finish)"
-            while true; do
-                local mapping
-                mapping="$(gum input --placeholder "DB_PASSWORD=password" --prompt "Secret mapping (empty to finish): ")"
-                [[ -z "$mapping" ]] && break
-                secret_mappings+=("$mapping")
-            done
+            local preset_secrets_lines=()
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && preset_secrets_lines+=("$line")
+            done < <(get_preset_secrets "$preset_template")
+
+            if [[ ${#preset_secrets_lines[@]} -gt 0 ]]; then
+                secret_keys=("${preset_secrets_lines[@]}")
+            else
+                print_info "Enter the names of secret keys for '${secret_name}' (values are added later via secret-ctl.sh)."
+                print_info "Leave empty to finish."
+                while true; do
+                    local key
+                    key="$(gum input --placeholder "DATABASE_URL" --prompt "Secret key name (empty to finish): ")"
+                    [[ -z "$key" ]] && break
+                    secret_keys+=("$key")
+                done
+            fi
         fi
     else
         # --- Custom flow (deployment only) ---
@@ -318,13 +327,13 @@ cmd_add_app() {
         secret_name="$(gum input --placeholder "${app_name}-secrets" --prompt "Secret name (optional, empty to skip): ")"
 
         if [[ -n "$secret_name" ]]; then
-            print_info "Map environment variables to secret keys from '${secret_name}'."
-            print_info "Format: ENV_VAR=secret-key (leave empty to finish)"
+            print_info "Enter the names of secret keys for '${secret_name}' (values are added later via secret-ctl.sh)."
+            print_info "Leave empty to finish."
             while true; do
-                local mapping
-                mapping="$(gum input --placeholder "DB_PASSWORD=password" --prompt "Secret mapping (empty to finish): ")"
-                [[ -z "$mapping" ]] && break
-                secret_mappings+=("$mapping")
+                local key
+                key="$(gum input --placeholder "DATABASE_URL" --prompt "Secret key name (empty to finish): ")"
+                [[ -z "$key" ]] && break
+                secret_keys+=("$key")
             done
         fi
 
@@ -432,7 +441,7 @@ cmd_add_app() {
 
     # Build SECRET_ENV_VARS block for deployment templates
     if [[ "$workload_prefix" == "deployment" ]]; then
-        secret_env_block="$(build_secret_env_vars "$secret_name" "${secret_mappings[@]}")"
+        secret_env_block="$(build_secret_env_vars "$secret_name" "${secret_keys[@]}")
         probes_block="$(build_http_probes "$probe_path" "$port")"
     fi
 
@@ -547,6 +556,18 @@ cmd_add_app() {
     fi
 
     print_summary "${created_files[@]}"
+
+    if [[ -n "$secret_name" && ${#secret_keys[@]} -gt 0 ]]; then
+        echo ""
+        print_info "This app requires secret '${secret_name}' with keys: ${secret_keys[*]}"
+        print_info "Create it for each environment with:"
+        local env
+        for env in "${envs[@]}"; do
+            local keys_placeholder
+            keys_placeholder="$(printf ' %s=<value>' "${secret_keys[@]}")"
+            print_info "  secret-ctl.sh add ${app_name} ${env}${keys_placeholder}"
+        done
+    fi
 
     if is_kargo_enabled && [[ -d "${TARGET_DIR}/kargo/${app_name}" ]]; then
         print_info "If your repo or registry is private, configure credentials:"

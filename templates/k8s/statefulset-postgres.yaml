@@ -13,6 +13,9 @@ hints:
   SECRET_NAME: "Secret resource name (holds username/password)"
   STORAGE_SIZE: "PVC size for data volume"
   MOUNT_PATH: "Where data volume is mounted in container"
+secrets:
+  - POSTGRES_USER
+  - POSTGRES_PASSWORD
 config:
   POSTGRES_DB: "app"
 ---
@@ -39,12 +42,12 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{SECRET_NAME}}
-                  key: username
+                  key: POSTGRES_USER
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{SECRET_NAME}}
-                  key: password
+                  key: POSTGRES_PASSWORD
           livenessProbe:
             exec:
               command: ["pg_isready", "-U", "postgres"]

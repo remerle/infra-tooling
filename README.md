@@ -410,25 +410,34 @@ Each `add-app` command prompts for a workload type, a preset, and preset-specifi
 infra-ctl.sh add-app backend
 # Workload type: Deployment
 # Preset: web
-# Image: ghcr.io/remerle/k8s-practice-backend:latest
-# Port: 3000
-# Secret: backend-secrets with key DATABASE_URL=database-url
-# Probe: /api/health
+# IMAGE: ghcr.io/remerle/k8s-practice-backend:latest
+# PORT: 3000
+# SECRET_NAME: backend-secrets
+#   Secret key name: DATABASE_URL
+# PROBE_PATH: /api/health
+# Image repo for Kargo: ghcr.io/remerle/k8s-practice-backend
 
 # Frontend
 infra-ctl.sh add-app frontend
 # Workload type: Deployment
 # Preset: web
-# Image: ghcr.io/remerle/k8s-practice-frontend:latest
-# Port: 3000
-# Config: API_URL=http://backend:3000
-# No secrets, no probes
+# IMAGE: ghcr.io/remerle/k8s-practice-frontend:latest
+# PORT: 3000
+# SECRET_NAME: (skip)
+# PROBE_PATH: /api/health
+# Image repo for Kargo: ghcr.io/remerle/k8s-practice-frontend
 
 # PostgreSQL
 infra-ctl.sh add-app postgres
 # Workload type: StatefulSet
 # Preset: postgres
-# Accept defaults (image postgres:16-alpine, port 5432, volume mounts, secret references)
+# IMAGE: postgres:16-alpine
+# PORT: 5432
+# SECRET_NAME: postgres-secrets
+#   (preset provides secret keys: POSTGRES_USER, POSTGRES_PASSWORD)
+# STORAGE_SIZE: 1Gi
+# MOUNT_PATH: /var/lib/postgresql/data
+# Config POSTGRES_DB: store
 ```
 
 Each command generates a workload manifest (Deployment or StatefulSet), a Kustomize base with Service, per-env overlays, and ArgoCD Application manifests. For backend and frontend, Kargo resources are also generated: a Warehouse (watches the container registry for new tags) and Stages (one per environment in the promotion pipeline). Postgres doesn't get Kargo resources because it uses `postgres:16-alpine` directly rather than a CI-built image.
@@ -444,27 +453,26 @@ This generates `k8s/apps/frontend/base/ingress.yaml` and registers it in the bas
 
 ### 6. Create secrets
 
-The backend and postgres manifests reference Secrets for credentials. Use Sealed Secrets to create encrypted secrets that are safe to commit:
+The backend and postgres manifests reference Secrets for credentials. `add-app` prints the required `secret-ctl.sh` commands after creating each app. Use Sealed Secrets to create encrypted secrets that are safe to commit:
 
 ```bash
 # Install the Sealed Secrets controller
 secret-ctl.sh init
 
-# Verify all environments have the secrets they need, creating any that are missing
-secret-ctl.sh verify dev
-# Finds: backend-secrets (missing key: database-url), postgres-secrets (missing keys: username, password)
-# Walks you through creating each one interactively
+# Create secrets for each app (commands shown by add-app)
+secret-ctl.sh add postgres dev POSTGRES_USER=store POSTGRES_PASSWORD=store
+secret-ctl.sh add backend dev DATABASE_URL=postgresql://store:store@postgres:5432/store
 ```
 
-`verify` scans the workload manifests in the target environment, finds every `secretKeyRef`, checks which secrets and keys are missing, and prompts you to create them. This replaces manually running `secret-ctl.sh add` for each app; `verify` discovers what's needed automatically.
+You can also use `secret-ctl.sh verify dev` to scan all workload manifests and discover any missing secrets automatically.
 
 For a quick local dev setup without Sealed Secrets, you can create plain Secrets directly:
 
 ```bash
 kubectl create secret generic postgres-secrets -n dev \
-  --from-literal=username=appuser --from-literal=password=devpassword
+  --from-literal=POSTGRES_USER=store --from-literal=POSTGRES_PASSWORD=store
 kubectl create secret generic backend-secrets -n dev \
-  --from-literal=database-url=postgresql://appuser:devpassword@postgres:5432/app
+  --from-literal=DATABASE_URL=postgresql://store:store@postgres:5432/store
 ```
 
 ### 7. Configure Kargo credentials (if private repo/registry)

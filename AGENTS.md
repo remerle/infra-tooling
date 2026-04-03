@@ -91,6 +91,7 @@ The script auto-discovers available presets by scanning `templates/k8s/deploymen
 | `description` | Human-readable description shown alongside the preset name |
 | `defaults` | Map of `PLACEHOLDER: value` pairs used as defaults when prompting the user |
 | `optional` | List of default keys that may be left empty (skipped during prompting) |
+| `secrets` | List of required secret key names (e.g., `POSTGRES_USER`). Key names are used as both the Secret key and the env var name. If declared, `add-app` skips the interactive secret key prompt and prints `secret-ctl.sh` commands after creation. |
 | `config` | Map of `KEY: value` pairs added to configMapGenerator for the app |
 
 `{{APP_NAME}}` references in frontmatter defaults are resolved before prompting, so defaults like `{{APP_NAME}}-secret` expand correctly.
@@ -281,10 +282,11 @@ Commands follow these naming patterns:
 - `get_preset_field(template, field)` -- gets a single field from frontmatter using yq
 - `get_preset_defaults(template)` -- outputs defaults as KEY=value lines
 - `get_preset_config(template)` -- outputs config entries as KEY=value lines
+- `get_preset_secrets(template)` -- outputs required secret key names, one per line
 - `is_preset_optional(template, key)` -- checks if a default key is listed in the optional array
 - `render_preset_template(template, output, KEY=val...)` -- strips frontmatter, then renders body
 - `safe_render_preset_template(template, output, KEY=val...)` -- same but guards against overwriting
-- `build_secret_env_vars(secret_name, mappings...)` -- builds SECRET_ENV_VARS YAML block
+- `build_secret_env_vars(secret_name, keys...)` -- builds SECRET_ENV_VARS YAML block (key name = env var name)
 - `build_http_probes(path, port)` -- builds PROBES YAML block
 - `strip_blank_placeholder_lines(file)` -- post-render cleanup for empty placeholder lines
 - `detect_service_port(app_name)` -- parses port from an app's service.yaml
