@@ -122,6 +122,7 @@ cmd_init() {
 
 cmd_add_app() {
     require_gum
+    require_yq
 
     if [[ $# -eq 0 ]]; then
         print_error "Usage: infra-ctl.sh add-app <app-name>"
@@ -161,19 +162,190 @@ cmd_add_app() {
     local workload_type
     workload_type="$(printf "Deployment\nStatefulSet" | gum choose)"
 
-    # Container port
-    local port
+    # Discover presets for the selected workload type
+    local workload_prefix
+    if [[ "$workload_type" == "StatefulSet" ]]; then
+        workload_prefix="statefulset"
+    else
+        workload_prefix="deployment"
+    fi
+
+    local presets=()
+    while IFS= read -r preset; do
+        presets+=("$preset")
+    done < <(discover_presets "$workload_prefix")
+
+    local preset_choice="custom"
+    if [[ ${#presets[@]} -gt 0 ]]; then
+        # Build chooser with descriptions
+        local preset_labels=()
+        local preset
+        for preset in "${presets[@]}"; do
+            local template_file="${TEMPLATE_DIR}/k8s/${workload_prefix}-${preset}.yaml"
+            local desc
+            desc="$(get_preset_field "$template_file" '.description')"
+            preset_labels+=("${preset} -- ${desc}")
+        done
+        # Only add custom option for Deployments (custom StatefulSet is not yet supported)
+        if [[ "$workload_prefix" == "deployment" ]]; then
+            preset_labels+=("custom -- Configure manually")
+        fi
+
+        print_header "Select preset for '${app_name}'"
+        local chosen_label
+        chosen_label="$(printf "%s\n" "${preset_labels[@]}" | gum choose)"
+        preset_choice="${chosen_label%% -- *}"
+    elif [[ "$workload_prefix" == "statefulset" ]]; then
+        print_error "No StatefulSet presets found in templates/k8s/. Add a statefulset-*.yaml template."
+        exit 1
+    fi
+
+    # Collect configuration values based on preset or custom flow
+    local preset_template=""
+    local port=""
+    local image=""
+    local secret_name=""
+    local probe_path=""
+    local secret_mappings=()
+    local config_entries=()
+    local storage_size=""
+    local mount_path=""
+
+    if [[ "$preset_choice" != "custom" ]]; then
+        # --- Preset flow ---
+        preset_template="${TEMPLATE_DIR}/k8s/${workload_prefix}-${preset_choice}.yaml"
+
+        # Walk through each default with gum input
+        local line key default_val
+        while IFS= read -r line; do
+            key="${line%%=*}"
+            default_val="${line#*=}"
+
+            # Check if the key is optional
+            local optional_flag=""
+            if is_preset_optional "$preset_template" "$key"; then
+                optional_flag=" (optional, leave empty to skip)"
+            fi
+
+            local prompted_val
+            prompted_val="$(gum input --value "$default_val" --header "${key}${optional_flag}:")"
+
+            # Store into the appropriate variable
+            case "$key" in
+                IMAGE) image="$prompted_val" ;;
+                PORT) port="$prompted_val" ;;
+                SECRET_NAME) secret_name="$prompted_val" ;;
+                PROBE_PATH) probe_path="$prompted_val" ;;
+                STORAGE_SIZE) storage_size="$prompted_val" ;;
+                MOUNT_PATH) mount_path="$prompted_val" ;;
+            esac
+        done < <(get_preset_defaults "$preset_template")
+
+        # Validate required fields
+        if [[ -z "$image" ]]; then
+            print_error "IMAGE is required."
+            exit 1
+        fi
+        if [[ -z "$port" ]]; then
+            print_error "PORT is required."
+            exit 1
+        fi
+        validate_port "$port"
+
+        # Collect config entries from preset defaults
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            key="${line%%=*}"
+            default_val="${line#*=}"
+            local cfg_val
+            cfg_val="$(gum input --value "$default_val" --header "Config ${key}:")"
+            if [[ -n "$cfg_val" ]]; then
+                config_entries+=("${key}=${cfg_val}")
+            fi
+        done < <(get_preset_config "$preset_template")
+
+        # Prompt for secret env var mappings if a secret name was provided
+        if [[ -n "$secret_name" ]]; then
+            print_info "Map environment variables to secret keys from '${secret_name}'."
+            print_info "Format: ENV_VAR=secret-key (leave empty to finish)"
+            while true; do
+                local mapping
+                mapping="$(gum input --placeholder "DB_PASSWORD=password" --header "Secret mapping (empty to finish):")"
+                [[ -z "$mapping" ]] && break
+                secret_mappings+=("$mapping")
+            done
+        fi
+    else
+        # --- Custom flow (deployment only) ---
+        image="$(gum input --placeholder "ghcr.io/owner/app:latest" --header "Container image:")"
+        if [[ -z "$image" ]]; then
+            print_error "Container image is required."
+            exit 1
+        fi
+
+        while true; do
+            port="$(gum input --value "8080" --header "Container port:")"
+            validate_port "$port" && break
+        done
+
+        # Optional: secret name
+        secret_name="$(gum input --placeholder "${app_name}-secrets" --header "Secret name (optional, leave empty to skip):")"
+
+        if [[ -n "$secret_name" ]]; then
+            print_info "Map environment variables to secret keys from '${secret_name}'."
+            print_info "Format: ENV_VAR=secret-key (leave empty to finish)"
+            while true; do
+                local mapping
+                mapping="$(gum input --placeholder "DB_PASSWORD=password" --header "Secret mapping (empty to finish):")"
+                [[ -z "$mapping" ]] && break
+                secret_mappings+=("$mapping")
+            done
+        fi
+
+        # Optional: probe path
+        probe_path="$(gum input --placeholder "/api/health" --header "Health probe path (optional, leave empty to skip):")"
+
+        # Use the web template as the base for custom deployments
+        preset_template="${TEMPLATE_DIR}/k8s/deployment-web.yaml"
+    fi
+
+    # Prompt for additional config values
+    print_info "Add config values for configMapGenerator (leave empty to finish)."
     while true; do
-        port="$(gum input --value "8080" --prompt "Container port: ")"
-        validate_port "$port" && break
+        local cfg_entry
+        cfg_entry="$(gum input --placeholder "KEY=value" --header "Config entry (empty to finish):")"
+        [[ -z "$cfg_entry" ]] && break
+        config_entries+=("$cfg_entry")
     done
 
     # Preview what will be created
+    local workload_file
+    if [[ "$workload_type" == "StatefulSet" ]]; then
+        workload_file="statefulset.yaml"
+    else
+        workload_file="deployment.yaml"
+    fi
+
     print_header "Add Application: ${app_name}"
-    print_info "Project: ${project}"
+    print_info "Project:  ${project}"
     print_info "Workload: ${workload_type}"
-    print_info "Port: ${port}"
+    print_info "Preset:   ${preset_choice}"
+    print_info "Image:    ${image}"
+    print_info "Port:     ${port}"
+    if [[ -n "$secret_name" ]]; then
+        print_info "Secret:   ${secret_name}"
+    fi
+    if [[ -n "$probe_path" ]]; then
+        print_info "Probes:   ${probe_path}"
+    fi
+    if [[ ${#config_entries[@]} -gt 0 ]]; then
+        local entry
+        for entry in "${config_entries[@]}"; do
+            print_info "Config:   ${entry}"
+        done
+    fi
     print_info "Base: k8s/apps/${app_name}/base/kustomization.yaml"
+    print_info "Base: k8s/apps/${app_name}/base/${workload_file}"
     print_info "Base: k8s/apps/${app_name}/base/service.yaml"
     if [[ ${#envs[@]} -gt 0 ]]; then
         local env
@@ -227,6 +399,52 @@ cmd_add_app() {
         created_files+=("$base_service")
     fi
 
+    # Render workload manifest
+    local workload_output="${app_dir}/base/${workload_file}"
+    local secret_env_block=""
+    local probes_block=""
+
+    # Build SECRET_ENV_VARS block for deployment templates
+    if [[ "$workload_prefix" == "deployment" ]]; then
+        secret_env_block="$(build_secret_env_vars "$secret_name" "${secret_mappings[@]}")"
+        probes_block="$(build_http_probes "$probe_path" "$port")"
+    fi
+
+    local render_args=(
+        "APP_NAME=${app_name}"
+        "IMAGE=${image}"
+        "PORT=${port}"
+    )
+    if [[ -n "$secret_name" ]]; then
+        render_args+=("SECRET_NAME=${secret_name}")
+    fi
+    if [[ -n "$storage_size" ]]; then
+        render_args+=("STORAGE_SIZE=${storage_size}")
+    fi
+    if [[ -n "$mount_path" ]]; then
+        render_args+=("MOUNT_PATH=${mount_path}")
+    fi
+    if [[ "$workload_prefix" == "deployment" ]]; then
+        render_args+=("SECRET_ENV_VARS=${secret_env_block}")
+        render_args+=("PROBES=${probes_block}")
+    fi
+
+    if safe_render_preset_template "$preset_template" "$workload_output" \
+        "${render_args[@]}"; then
+        strip_blank_placeholder_lines "$workload_output"
+        created_files+=("$workload_output")
+    fi
+
+    # Append config entries to base configMapGenerator via yq
+    if [[ ${#config_entries[@]} -gt 0 ]]; then
+        local entry
+        for entry in "${config_entries[@]}"; do
+            yq eval -i \
+                ".configMapGenerator[0].literals += [\"${entry}\"]" \
+                "$base_kustomization"
+        done
+    fi
+
     # Create overlays and ArgoCD apps per env
     if [[ ${#envs[@]} -gt 0 ]]; then
         local env
@@ -258,10 +476,11 @@ cmd_add_app() {
 
     # Generate Kargo resources if enabled
     if is_kargo_enabled; then
-        # Prompt for container image repository (no tag -- Kargo discovers tags automatically)
+        # Derive default image repo from the entered image (strip tag)
+        local default_image_repo="${image%%:*}"
         local image_repo
         while true; do
-            image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app_name}" --header "Container image repository for Kargo (no tag):")"
+            image_repo="$(gum input --value "${default_image_repo}" --header "Container image repository for Kargo (no tag):")"
             validate_image_repo "$image_repo" && break
         done
 
@@ -307,6 +526,153 @@ cmd_add_app() {
         print_info "If your repo or registry is private, configure credentials:"
         print_info "  cluster-ctl.sh add-kargo-creds"
     fi
+}
+
+cmd_add_ingress() {
+    require_gum
+    require_yq
+    load_conf
+
+    local app_name="${1:-}"
+    if [[ -z "$app_name" ]]; then
+        app_name="$(detect_apps | choose_from "Select application:" "No applications found. Run 'add-app' first.")" || exit 0
+    fi
+    validate_k8s_name "$app_name" "App name"
+
+    # Guard: app must exist
+    local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
+    if [[ ! -d "$app_dir" ]]; then
+        print_error "Application '${app_name}' not found at ${app_dir}"
+        exit 1
+    fi
+
+    # Guard: ingress must not already exist
+    local ingress_file="${app_dir}/base/ingress.yaml"
+    if [[ -f "$ingress_file" ]]; then
+        print_error "Ingress already exists at ${ingress_file}"
+        exit 1
+    fi
+
+    # Auto-detect port from service.yaml
+    local port
+    port="$(detect_service_port "$app_name")"
+    if [[ -z "$port" ]]; then
+        print_error "Could not detect port from ${app_dir}/base/service.yaml"
+        exit 1
+    fi
+
+    # Prompts
+    local host
+    host="$(gum input --placeholder "app.localhost" --prompt "Hostname: ")"
+    if [[ -z "$host" ]]; then
+        print_error "Hostname is required."
+        exit 1
+    fi
+
+    local path
+    path="$(gum input --value "/" --prompt "Path: ")"
+
+    # Preview
+    print_header "Add Ingress: ${app_name}"
+    print_info "Hostname: ${host}"
+    print_info "Path: ${path}"
+    print_info "Service: ${app_name}:${port}"
+    print_info "File: k8s/apps/${app_name}/base/ingress.yaml"
+
+    confirm_or_abort "Create ingress?"
+
+    local created_files=()
+
+    # Render ingress template
+    if safe_render_template "${TEMPLATE_DIR}/k8s/ingress.yaml" "$ingress_file" \
+        "APP_NAME=${app_name}" \
+        "HOST=${host}" \
+        "PATH=${path}" \
+        "PORT=${port}"; then
+        created_files+=("$ingress_file")
+    fi
+
+    # Add ingress.yaml to base kustomization resources
+    local base_kustomization="${app_dir}/base/kustomization.yaml"
+    yq eval -i '.resources += ["ingress.yaml"]' "$base_kustomization"
+
+    print_summary "${created_files[@]}"
+}
+
+cmd_list_ingress() {
+    load_conf
+
+    local found=0
+    local app_dir
+    for app_dir in "${TARGET_DIR}/k8s/apps"/*/; do
+        [[ -d "$app_dir" ]] || continue
+        local ingress_file="${app_dir}base/ingress.yaml"
+        [[ -f "$ingress_file" ]] || continue
+
+        local app_name
+        app_name="$(basename "$app_dir")"
+        local host
+        host="$(yq eval '.spec.rules[0].host' "$ingress_file")"
+        local path
+        path="$(yq eval '.spec.rules[0].http.paths[0].path' "$ingress_file")"
+
+        print_info "${app_name}  (host: ${host}, path: ${path})"
+        found=1
+    done
+
+    if [[ "$found" -eq 0 ]]; then
+        print_warning "No ingress resources found."
+        print_info "Run 'infra-ctl.sh add-ingress <app>' to create one."
+    fi
+}
+
+cmd_remove_ingress() {
+    require_gum
+    require_yq
+    load_conf
+
+    local app_name="${1:-}"
+    if [[ -z "$app_name" ]]; then
+        # Build list of apps that have ingress
+        local apps_with_ingress=()
+        local app_dir
+        for app_dir in "${TARGET_DIR}/k8s/apps"/*/; do
+            [[ -d "$app_dir" ]] || continue
+            [[ -f "${app_dir}base/ingress.yaml" ]] || continue
+            apps_with_ingress+=("$(basename "$app_dir")")
+        done
+        if [[ ${#apps_with_ingress[@]} -eq 0 ]]; then
+            print_warning "No ingress resources found."
+            return
+        fi
+        app_name="$(printf "%s\n" "${apps_with_ingress[@]}" | gum choose --header "Select application:")"
+    fi
+    validate_k8s_name "$app_name" "App name"
+
+    local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
+    local ingress_file="${app_dir}/base/ingress.yaml"
+    if [[ ! -f "$ingress_file" ]]; then
+        print_error "No ingress found for '${app_name}'"
+        exit 1
+    fi
+
+    # Preview
+    local host
+    host="$(yq eval '.spec.rules[0].host' "$ingress_file")"
+    print_header "Remove Ingress: ${app_name}"
+    print_info "Host: ${host}"
+    print_info "File: ${ingress_file}"
+
+    confirm_destructive_or_abort "Remove ingress for '${app_name}'?"
+
+    # Remove file
+    rm -f "$ingress_file"
+
+    # Remove from kustomization resources
+    local base_kustomization="${app_dir}/base/kustomization.yaml"
+    yq eval -i '.resources -= ["ingress.yaml"]' "$base_kustomization"
+
+    print_removed "$ingress_file"
 }
 
 cmd_add_env() {
@@ -1415,6 +1781,9 @@ Commands:
   list-apps             List all applications
   list-envs             List all environments
   list-projects         List all ArgoCD AppProjects
+  add-ingress [app]       Add an Ingress resource to an application
+  list-ingress            List all Ingress resources
+  remove-ingress [app]    Remove an Ingress resource from an application
   remove-app [name]     Remove an application and all its resources
   remove-env [name]     Remove an environment and all its resources
   remove-project [name] Remove an ArgoCD AppProject
@@ -1448,6 +1817,9 @@ main() {
         list-apps) cmd_list_apps "$@" ;;
         list-envs) cmd_list_envs "$@" ;;
         list-projects) cmd_list_projects "$@" ;;
+        add-ingress) cmd_add_ingress "$@" ;;
+        list-ingress) cmd_list_ingress ;;
+        remove-ingress) cmd_remove_ingress "$@" ;;
         remove-app) cmd_remove_app "$@" ;;
         remove-env) cmd_remove_env "$@" ;;
         remove-project) cmd_remove_project "$@" ;;

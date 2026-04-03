@@ -282,7 +282,7 @@ validate_github_pat() {
     local required_scopes=("$@")
 
     # Check authentication
-    local response headers http_code
+    local headers http_code
     headers="$(mktemp)"
     http_code="$(curl -s -o /dev/null -w '%{http_code}' -D "$headers" \
         -H "Authorization: Bearer ${pat}" \
@@ -562,6 +562,156 @@ safe_render_template() {
 
     render_template "$template" "$output" "$@"
     return 0
+}
+
+# --- Preset Frontmatter ---
+
+# Scans template filenames to find available presets for a workload type.
+# Outputs one preset name per line.
+discover_presets() {
+    local workload_type="$1"
+    local pattern="${TEMPLATE_DIR}/k8s/${workload_type}-*.yaml"
+    local file
+    for file in $pattern; do
+        [[ -f "$file" ]] || continue
+        local preset_name
+        preset_name="$(basename "$file" .yaml)"
+        echo "${preset_name#"${workload_type}-"}"
+    done
+}
+
+# Extracts YAML frontmatter between --- delimiters from a template file.
+read_preset_frontmatter() {
+    local template="$1"
+    awk 'BEGIN{n=0} /^---$/{n++; next} n==1' "$template"
+}
+
+# Extracts the template body after frontmatter (everything after the second ---).
+read_preset_body() {
+    local template="$1"
+    awk 'BEGIN{n=0} /^---$/{n++; next} n>=2' "$template"
+}
+
+# Gets a single field value from template frontmatter using yq.
+get_preset_field() {
+    local template="$1"
+    local field="$2"
+    read_preset_frontmatter "$template" | yq eval "$field" -
+}
+
+# Outputs defaults from frontmatter as KEY=value lines.
+get_preset_defaults() {
+    local template="$1"
+    read_preset_frontmatter "$template" | yq eval '.defaults // {} | to_entries | .[] | .key + "=" + .value' -
+}
+
+# Outputs config entries from frontmatter as KEY=value lines.
+get_preset_config() {
+    local template="$1"
+    read_preset_frontmatter "$template" | yq eval '.config // {} | to_entries | .[] | .key + "=" + .value' -
+}
+
+# Checks if a default key is listed in the optional array in frontmatter.
+# Returns 0 if optional, 1 otherwise.
+is_preset_optional() {
+    local template="$1"
+    local key="$2"
+    local optionals
+    optionals="$(read_preset_frontmatter "$template" | yq eval '.optional // [] | .[]' -)"
+    echo "$optionals" | grep -qx "$key"
+}
+
+# Strips frontmatter from a template and renders the body using render_template.
+render_preset_template() {
+    local template="$1"
+    local output="$2"
+    shift 2
+    local tmp_body
+    tmp_body="$(mktemp)"
+    read_preset_body "$template" >"$tmp_body"
+    render_template "$tmp_body" "$output" "$@"
+    rm -f "$tmp_body"
+}
+
+# Same as render_preset_template but guards against overwriting existing files.
+# Returns 0 if written, 1 if skipped.
+safe_render_preset_template() {
+    local template="$1"
+    local output="$2"
+    shift 2
+    if [[ -f "$output" ]]; then
+        print_warning "Skipping existing file: ${output}"
+        return 1
+    fi
+    render_preset_template "$template" "$output" "$@"
+}
+
+# Builds a SECRET_ENV_VARS YAML block from a secret name and env=key mappings.
+build_secret_env_vars() {
+    local secret_name="$1"
+    shift
+    local mappings=("$@")
+    if [[ ${#mappings[@]} -eq 0 ]]; then
+        echo ""
+        return
+    fi
+    local result="          env:"
+    local mapping
+    for mapping in "${mappings[@]}"; do
+        local env_name="${mapping%%=*}"
+        local secret_key="${mapping#*=}"
+        result+=$'\n'"            - name: ${env_name}"
+        result+=$'\n'"              valueFrom:"
+        result+=$'\n'"                secretKeyRef:"
+        result+=$'\n'"                  name: ${secret_name}"
+        result+=$'\n'"                  key: ${secret_key}"
+    done
+    echo "$result"
+}
+
+# Builds a PROBES YAML block with HTTP liveness and readiness probes.
+build_http_probes() {
+    local path="$1"
+    local port="$2"
+    if [[ -z "$path" ]]; then
+        echo ""
+        return
+    fi
+    cat <<PROBES
+          livenessProbe:
+            httpGet:
+              path: ${path}
+              port: ${port}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: ${path}
+              port: ${port}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+PROBES
+}
+
+# Post-render cleanup: collapses consecutive blank lines and trims trailing blanks.
+strip_blank_placeholder_lines() {
+    local file="$1"
+    local tmp
+    tmp="$(mktemp)"
+    awk 'NF || !blank++ { print } NF { blank=0 }' "$file" >"$tmp"
+    sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$tmp" >"$file"
+    rm -f "$tmp"
+}
+
+# Parses the port from an app's service.yaml file.
+detect_service_port() {
+    local app_name="$1"
+    local service_file="${TARGET_DIR}/k8s/apps/${app_name}/base/service.yaml"
+    if [[ ! -f "$service_file" ]]; then
+        echo ""
+        return
+    fi
+    yq eval '.spec.ports[0].port' "$service_file"
 }
 
 # --- Detection ---

@@ -181,7 +181,6 @@ cmd_add() {
         print_info "Merging with existing sealed secret..."
     fi
 
-
     # Attempt merge-into if the file already exists; fall back to fresh seal otherwise
     if [[ -f "$sealed_file" ]]; then
         printf '%s' "$secret_json" | kubeseal \
@@ -325,6 +324,76 @@ cmd_remove() {
 
 # --- Usage ---
 
+cmd_verify() {
+    require_gum
+    require_yq
+    load_conf
+
+    local env_name="${1:-}"
+    if [[ -z "$env_name" ]]; then
+        env_name="$(detect_envs | choose_from "Select environment:" "No environments found.")" || exit 0
+    fi
+
+    print_header "Verifying secrets for environment: ${env_name}"
+
+    local missing_count=0
+    local app_dir
+    for app_dir in "${TARGET_DIR}/k8s/apps"/*/; do
+        [[ -d "$app_dir" ]] || continue
+        local app_name
+        app_name="$(basename "$app_dir")"
+
+        # Find all secretKeyRef entries in workload manifests
+        local workload_file
+        for workload_file in "${app_dir}base/"*.yaml; do
+            [[ -f "$workload_file" ]] || continue
+
+            # Extract secret name + key pairs using yq
+            local refs
+            refs="$(yq eval '
+                .. | select(has("secretKeyRef")) | .secretKeyRef |
+                .name + "=" + .key
+            ' "$workload_file" 2>/dev/null)" || continue
+
+            [[ -z "$refs" ]] && continue
+
+            # Check each reference
+            while IFS= read -r ref; do
+                [[ -z "$ref" ]] && continue
+                local secret_name="${ref%%=*}"
+                local secret_key="${ref#*=}"
+
+                # Check for sealed secret file in overlay
+                local sealed_file="${TARGET_DIR}/k8s/apps/${app_name}/overlays/${env_name}/sealed-secret.yaml"
+                if [[ ! -f "$sealed_file" ]]; then
+                    print_warning "${app_name}: secret '${secret_name}' not found (no sealed-secret.yaml in ${env_name})"
+                    ((missing_count++))
+                    continue
+                fi
+
+                # Check if the specific key exists in encryptedData
+                local has_key
+                has_key="$(yq eval ".spec.encryptedData | has(\"${secret_key}\")" "$sealed_file" 2>/dev/null)" || has_key="false"
+                if [[ "$has_key" != "true" ]]; then
+                    print_warning "${app_name}: key '${secret_key}' missing from secret '${secret_name}' in ${env_name}"
+                    ((missing_count++))
+                else
+                    print_success "${app_name}: secret '${secret_name}' key '${secret_key}' found in ${env_name}"
+                fi
+            done <<<"$refs"
+        done
+    done
+
+    if [[ "$missing_count" -eq 0 ]]; then
+        print_success "All secret references verified for '${env_name}'."
+    else
+        print_warning "${missing_count} missing secret(s) found."
+        if gum confirm "Walk through creating missing secrets now?"; then
+            cmd_add "" "$env_name"
+        fi
+    fi
+}
+
 cmd_preflight_check() {
     echo "  secret-ctl.sh dependencies:"
     preflight_check \
@@ -343,6 +412,7 @@ Commands:
   add [app] [env]     Create or update a SealedSecret for an app/environment
   list [app] [env]    List app/environment pairs that have sealed secrets
   remove [app] [env]  Remove a SealedSecret for an app/environment
+  verify [env]        Check for missing secret references
   preflight-check     Verify all required tools are installed
 $(print_global_options)
 EOF
@@ -367,6 +437,7 @@ main() {
         add) cmd_add "$@" ;;
         list) cmd_list "$@" ;;
         remove) cmd_remove "$@" ;;
+        verify) cmd_verify "$@" ;;
         preflight-check) cmd_preflight_check "$@" ;;
         -h | --help) usage ;;
         *)

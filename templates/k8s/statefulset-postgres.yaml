@@ -1,0 +1,62 @@
+---
+preset: postgres
+description: PostgreSQL database
+defaults:
+  IMAGE: "postgres:16-alpine"
+  PORT: "5432"
+  SECRET_NAME: "{{APP_NAME}}-secrets"
+  STORAGE_SIZE: "1Gi"
+  MOUNT_PATH: "/var/lib/postgresql/data"
+config:
+  POSTGRES_DB: "app"
+---
+# Labels and selectors (app: <name>) are injected by Kustomize commonLabels
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{APP_NAME}}
+spec:
+  serviceName: {{APP_NAME}}
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: {{APP_NAME}}
+          image: {{IMAGE}}
+          ports:
+            - containerPort: {{PORT}}
+          envFrom:
+            - configMapRef:
+                name: {{APP_NAME}}
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{SECRET_NAME}}
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{SECRET_NAME}}
+                  key: password
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "postgres"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          volumeMounts:
+            - name: data
+              mountPath: {{MOUNT_PATH}}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{STORAGE_SIZE}}

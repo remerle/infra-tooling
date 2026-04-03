@@ -398,9 +398,18 @@ calculate_expiry_date() {
 
     local date_flag date_unit
     case "$unit" in
-        h) date_flag="H"; date_unit="hours" ;;
-        m) date_flag="M"; date_unit="minutes" ;;
-        s) date_flag="S"; date_unit="seconds" ;;
+        h)
+            date_flag="H"
+            date_unit="hours"
+            ;;
+        m)
+            date_flag="M"
+            date_unit="minutes"
+            ;;
+        s)
+            date_flag="S"
+            date_unit="seconds"
+            ;;
         *)
             echo "(unknown expiry: unsupported unit '${unit}')"
             return
