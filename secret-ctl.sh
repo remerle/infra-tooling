@@ -21,6 +21,7 @@ cmd_init() {
         print_info "Found existing key backup at .sealed-secrets-key.json"
         if gum confirm "Restore this key into the cluster? (keeps existing SealedSecrets decryptable)"; then
             run_cmd "Restoring sealed-secrets key..." \
+                --explain "Restoring a previously-backed-up encryption key lets the controller decrypt SealedSecrets that were encrypted with the old key. Without it, you'd need to re-encrypt all secrets." \
                 kubectl apply -f "$key_backup"
 
             print_success "Key restored from backup."
@@ -32,9 +33,11 @@ cmd_init() {
     local manifest_url="https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.3/controller.yaml"
 
     run_cmd "Installing Sealed Secrets controller..." \
+        --explain "The controller runs in-cluster, watches for SealedSecret custom resources, and decrypts them into regular Secrets using its private key. Only the controller can decrypt; the private key never leaves the cluster." \
         kubectl apply -f "$manifest_url"
 
     if run_cmd "Waiting for Sealed Secrets controller to be ready..." \
+        --explain "The controller registers a validating webhook on startup. Until the webhook is registered, kubeseal commands will fail. Waiting ensures the controller is ready to accept seal/unseal requests." \
         kubectl wait --for=condition=available deployment/sealed-secrets-controller \
         -n kube-system --timeout=90s; then
         print_success "Sealed Secrets controller is ready."
@@ -46,6 +49,7 @@ cmd_init() {
 
     # Export the public cert for offline encryption
     run_cmd_sh "Exporting public cert..." \
+        --explain "Sealed Secrets uses asymmetric encryption. The public certificate (committed to Git) encrypts secrets locally -- anyone with it can encrypt. Only the controller's private key (in-cluster) can decrypt. This allows developers to encrypt secrets without cluster access." \
         "kubeseal --fetch-cert --controller-name=sealed-secrets-controller --controller-namespace=kube-system >\"$cert_file\""
 
     print_success "Public cert saved to .sealed-secrets-cert.pem (commit this file)."
@@ -388,6 +392,7 @@ Commands:
 Global options:
   --target-dir <path>   Directory to operate on (default: current directory)
   --show-me             Print commands instead of hiding behind spinners (or set SHOW_ME=1)
+  --explain             Print commands with explanations (learning mode, implies --show-me)
 EOF
 }
 
