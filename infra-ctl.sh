@@ -252,9 +252,9 @@ cmd_add_app() {
 
     # Generate Kargo resources if enabled
     if is_kargo_enabled; then
-        # Prompt for container image
+        # Prompt for container image repository (no tag -- Kargo discovers tags automatically)
         local image_repo
-        image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app_name}" --header "Container image for Kargo:")"
+        image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app_name}" --header "Container image repository for Kargo (no tag):")"
 
         local kargo_app_dir="${TARGET_DIR}/kargo/${app_name}"
         mkdir -p "$kargo_app_dir"
@@ -822,9 +822,9 @@ cmd_enable_kargo() {
             local kargo_app_dir="${TARGET_DIR}/kargo/${app}"
             mkdir -p "$kargo_app_dir"
 
-            # Prompt for image repo per app
+            # Prompt for image repository per app (no tag -- Kargo discovers tags)
             local image_repo
-            image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app}" --header "Container image for ${app}:")"
+            image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app}" --header "Container image repository for ${app} (no tag):")"
 
             # Project
             if safe_render_template \
