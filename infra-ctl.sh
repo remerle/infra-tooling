@@ -237,7 +237,7 @@ cmd_add_app() {
             fi
 
             local prompted_val
-            prompted_val="$(gum input --value "$default_val" --header "${key}${optional_flag}:")"
+            prompted_val="$(gum input --value "$default_val" --prompt "${key}${optional_flag}: ")"
 
             # Store into the appropriate variable
             case "$key" in
@@ -271,7 +271,7 @@ cmd_add_app() {
             key="${line%%=*}"
             default_val="${line#*=}"
             local cfg_val
-            cfg_val="$(gum input --value "$default_val" --header "Config ${key}:")"
+            cfg_val="$(gum input --value "$default_val" --prompt "Config ${key}: ")"
             if [[ -n "$cfg_val" ]]; then
                 config_entries+=("${key}=${cfg_val}")
             fi
@@ -283,40 +283,40 @@ cmd_add_app() {
             print_info "Format: ENV_VAR=secret-key (leave empty to finish)"
             while true; do
                 local mapping
-                mapping="$(gum input --placeholder "DB_PASSWORD=password" --header "Secret mapping (empty to finish):")"
+                mapping="$(gum input --placeholder "DB_PASSWORD=password" --prompt "Secret mapping (empty to finish): ")"
                 [[ -z "$mapping" ]] && break
                 secret_mappings+=("$mapping")
             done
         fi
     else
         # --- Custom flow (deployment only) ---
-        image="$(gum input --placeholder "ghcr.io/owner/app:latest" --header "Container image:")"
+        image="$(gum input --placeholder "ghcr.io/owner/app:latest" --prompt "Container image: ")"
         if [[ -z "$image" ]]; then
             print_error "Container image is required."
             exit 1
         fi
 
         while true; do
-            port="$(gum input --value "8080" --header "Container port:")"
+            port="$(gum input --value "8080" --prompt "Container port: ")"
             validate_port "$port" && break
         done
 
         # Optional: secret name
-        secret_name="$(gum input --placeholder "${app_name}-secrets" --header "Secret name (optional, leave empty to skip):")"
+        secret_name="$(gum input --placeholder "${app_name}-secrets" --prompt "Secret name (optional, empty to skip): ")"
 
         if [[ -n "$secret_name" ]]; then
             print_info "Map environment variables to secret keys from '${secret_name}'."
             print_info "Format: ENV_VAR=secret-key (leave empty to finish)"
             while true; do
                 local mapping
-                mapping="$(gum input --placeholder "DB_PASSWORD=password" --header "Secret mapping (empty to finish):")"
+                mapping="$(gum input --placeholder "DB_PASSWORD=password" --prompt "Secret mapping (empty to finish): ")"
                 [[ -z "$mapping" ]] && break
                 secret_mappings+=("$mapping")
             done
         fi
 
         # Optional: probe path
-        probe_path="$(gum input --placeholder "/api/health" --header "Health probe path (optional, leave empty to skip):")"
+        probe_path="$(gum input --placeholder "/api/health" --prompt "Probe path (optional, empty to skip): ")"
 
         # Use the web template as the base for custom deployments
         preset_template="${TEMPLATE_DIR}/k8s/deployment-web.yaml"
@@ -326,7 +326,7 @@ cmd_add_app() {
     print_info "Add config values for configMapGenerator (leave empty to finish)."
     while true; do
         local cfg_entry
-        cfg_entry="$(gum input --placeholder "KEY=value" --header "Config entry (empty to finish):")"
+        cfg_entry="$(gum input --placeholder "KEY=value" --prompt "Config entry (empty to finish): ")"
         [[ -z "$cfg_entry" ]] && break
         config_entries+=("$cfg_entry")
     done
@@ -493,7 +493,7 @@ cmd_add_app() {
         local default_image_repo="${image%%:*}"
         local image_repo
         while true; do
-            image_repo="$(gum input --value "${default_image_repo}" --header "Container image repository for Kargo (no tag):")"
+            image_repo="$(gum input --value "${default_image_repo}" --prompt "Image repo for Kargo (no tag): ")"
             validate_image_repo "$image_repo" && break
         done
 
@@ -1215,7 +1215,7 @@ cmd_enable_kargo() {
             # Prompt for image repository per app (no tag -- Kargo discovers tags)
             local image_repo
             while true; do
-                image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app}" --header "Container image repository for ${app} (no tag):")"
+                image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app}" --prompt "Image repo for ${app} (no tag): ")"
                 validate_image_repo "$image_repo" && break
             done
 
