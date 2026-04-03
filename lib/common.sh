@@ -272,6 +272,54 @@ validate_port() {
     fi
 }
 
+# Validates a GitHub Personal Access Token by checking authentication and required scopes.
+# Returns 0 on success, 1 on failure (prints error message).
+# Usage: validate_github_pat <pat> <required_scope> [<required_scope> ...]
+validate_github_pat() {
+    local pat="$1"
+    shift
+    local required_scopes=("$@")
+
+    # Check authentication
+    local response headers http_code
+    headers="$(mktemp)"
+    http_code="$(curl -s -o /dev/null -w '%{http_code}' -D "$headers" \
+        -H "Authorization: Bearer ${pat}" \
+        -H "Accept: application/vnd.github+json" \
+        https://api.github.com/user)"
+
+    if [[ "$http_code" == "401" || "$http_code" == "403" ]]; then
+        rm -f "$headers"
+        print_error "GitHub PAT is invalid or expired (HTTP ${http_code})."
+        return 1
+    fi
+
+    if [[ "$http_code" != "200" ]]; then
+        rm -f "$headers"
+        print_error "GitHub API returned unexpected status ${http_code}."
+        return 1
+    fi
+
+    # Check scopes (fine-grained tokens don't return X-OAuth-Scopes)
+    local scopes_header
+    scopes_header="$(grep -i '^x-oauth-scopes:' "$headers" | sed 's/^[^:]*: *//' | tr -d '\r')"
+    rm -f "$headers"
+
+    # Fine-grained PATs don't have X-OAuth-Scopes header; skip scope check for those
+    if [[ -z "$scopes_header" ]]; then
+        return 0
+    fi
+
+    local scope
+    for scope in "${required_scopes[@]}"; do
+        if ! echo "$scopes_header" | tr ',' '\n' | sed 's/^ *//' | grep -qx "$scope"; then
+            print_error "GitHub PAT is missing required scope: '${scope}'."
+            print_info "Current scopes: ${scopes_header}"
+            return 1
+        fi
+    done
+}
+
 # --- Argument parsing ---
 
 # Extracts global flags from arguments. Sets TARGET_DIR, SHOW_ME.
