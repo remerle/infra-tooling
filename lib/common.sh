@@ -15,6 +15,10 @@ TARGET_DIR="${PWD}"
 # instead of hiding them behind a gum spinner.
 : "${SHOW_ME:=0}"
 
+# When EXPLAIN=1 (or --explain flag), also print explanations for each command.
+# Implies SHOW_ME=1.
+: "${EXPLAIN:=0}"
+
 # Runs a command with a gum spinner, or prints and runs it directly if SHOW_ME=1.
 # Usage: run_cmd "Installing ArgoCD..." helm install argocd ...
 #   First arg is the human-readable description (used as spinner title).
@@ -23,8 +27,17 @@ run_cmd() {
     local title="$1"
     shift
 
+    local explanation=""
+    if [[ "${1:-}" == "--explain" ]]; then
+        explanation="$2"
+        shift 2
+    fi
+
     if [[ "$SHOW_ME" == "1" ]]; then
         print_info "${title}"
+        if [[ "$EXPLAIN" == "1" && -n "$explanation" ]]; then
+            gum style --faint --italic "    ${explanation}"
+        fi
         print_info "  \$ $*"
         "$@"
     else
@@ -36,10 +49,21 @@ run_cmd() {
 # Usage: run_cmd_sh "Configuring TLS..." 'kubectl create secret tls ... && kubectl apply ...'
 run_cmd_sh() {
     local title="$1"
-    local script="$2"
+    shift
+
+    local explanation=""
+    if [[ "${1:-}" == "--explain" ]]; then
+        explanation="$2"
+        shift 2
+    fi
+
+    local script="$1"
 
     if [[ "$SHOW_ME" == "1" ]]; then
         print_info "${title}"
+        if [[ "$EXPLAIN" == "1" && -n "$explanation" ]]; then
+            gum style --faint --italic "    ${explanation}"
+        fi
         print_info "  \$ ${script}"
         bash -c "$script"
     else
@@ -196,6 +220,11 @@ parse_global_args() {
                 shift 2
                 ;;
             --show-me)
+                SHOW_ME=1
+                shift
+                ;;
+            --explain)
+                EXPLAIN=1
                 SHOW_ME=1
                 shift
                 ;;
