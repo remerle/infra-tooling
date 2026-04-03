@@ -459,6 +459,19 @@ cmd_add_env() {
             fi
         done
 
+        # Find the position of the new env and its downstream neighbor
+        local new_idx=-1
+        local downstream_env=""
+        for i in "${!PROMOTION_ORDER[@]}"; do
+            if [[ "${PROMOTION_ORDER[$i]}" == "$env_name" ]]; then
+                new_idx=$i
+                if [[ $((i + 1)) -lt ${#PROMOTION_ORDER[@]} ]]; then
+                    downstream_env="${PROMOTION_ORDER[$((i + 1))]}"
+                fi
+                break
+            fi
+        done
+
         # Generate stages for each existing app
         if [[ ${#apps[@]} -gt 0 ]]; then
             local app
@@ -473,16 +486,57 @@ cmd_add_env() {
                 image_repo="$(grep 'repoURL:' "${kargo_app_dir}/warehouse.yaml" 2>/dev/null \
                     | head -1 | sed 's/.*repoURL:\s*//' | xargs)" || image_repo="ghcr.io/${REPO_OWNER}/${app}"
 
+                # 1. Generate the new env's Stage
                 local stage_file="${kargo_app_dir}/${env_name}-stage.yaml"
-                if safe_render_template \
-                    "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
-                    "$stage_file" \
-                    "APP_NAME=${app}" \
-                    "ENV=${env_name}" \
-                    "IMAGE_REPO=${image_repo}" \
-                    "UPSTREAM_STAGE=${app}-${upstream_env}" \
-                    "REPO_URL=${REPO_URL}"; then
-                    created_files+=("$stage_file")
+                if [[ $new_idx -eq 0 ]]; then
+                    # First in chain: sources directly from Warehouse
+                    if safe_render_template \
+                        "${TEMPLATE_DIR}/kargo/stage-direct.yaml" \
+                        "$stage_file" \
+                        "APP_NAME=${app}" \
+                        "ENV=${env_name}" \
+                        "IMAGE_REPO=${image_repo}" \
+                        "REPO_URL=${REPO_URL}"; then
+                        created_files+=("$stage_file")
+                    fi
+
+                    # The old first env (now second) needs to switch from direct to promoted
+                    if [[ -n "$downstream_env" && -f "${kargo_app_dir}/${downstream_env}-stage.yaml" ]]; then
+                        render_template \
+                            "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
+                            "${kargo_app_dir}/${downstream_env}-stage.yaml" \
+                            "APP_NAME=${app}" \
+                            "ENV=${downstream_env}" \
+                            "IMAGE_REPO=${image_repo}" \
+                            "UPSTREAM_STAGE=${app}-${env_name}" \
+                            "REPO_URL=${REPO_URL}"
+                        print_warning "Updated ${downstream_env}-stage.yaml: now promoted from ${env_name}"
+                    fi
+                else
+                    # Not first: promoted from upstream
+                    if safe_render_template \
+                        "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
+                        "$stage_file" \
+                        "APP_NAME=${app}" \
+                        "ENV=${env_name}" \
+                        "IMAGE_REPO=${image_repo}" \
+                        "UPSTREAM_STAGE=${app}-${upstream_env}" \
+                        "REPO_URL=${REPO_URL}"; then
+                        created_files+=("$stage_file")
+                    fi
+
+                    # Update the downstream env's Stage to point to the new env
+                    if [[ -n "$downstream_env" && -f "${kargo_app_dir}/${downstream_env}-stage.yaml" ]]; then
+                        render_template \
+                            "${TEMPLATE_DIR}/kargo/stage-promoted.yaml" \
+                            "${kargo_app_dir}/${downstream_env}-stage.yaml" \
+                            "APP_NAME=${app}" \
+                            "ENV=${downstream_env}" \
+                            "IMAGE_REPO=${image_repo}" \
+                            "UPSTREAM_STAGE=${app}-${env_name}" \
+                            "REPO_URL=${REPO_URL}"
+                        print_warning "Updated ${downstream_env}-stage.yaml: now promoted from ${env_name}"
+                    fi
                 fi
             done
         fi
