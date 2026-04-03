@@ -760,22 +760,8 @@ cmd_refresh_sa() {
     # Interactive selection if name not provided
     if [[ -z "$sa_name" ]]; then
         require_yq
-        local users_dir="${TARGET_DIR}/users"
-        local sa_names=()
-        local accounts
-        accounts="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
-            | grep '^accounts\.' | sed 's/^accounts\.//')" || true
-        while IFS= read -r acct; do
-            [[ -z "$acct" ]] && continue
-            if [[ -f "${users_dir}/${acct}.kubeconfig" && ! -f "${users_dir}/${acct}.crt" ]]; then
-                sa_names+=("$acct")
-            fi
-        done <<<"$accounts"
-        if [[ ${#sa_names[@]} -eq 0 ]]; then
-            print_warning "No service accounts found."
-            exit 0
-        fi
-        sa_name="$(printf '%s\n' "${sa_names[@]}" | gum choose --header "Select service account to refresh:")"
+        sa_name="$(detect_sa_accounts "$VALUES_FILE" "${TARGET_DIR}/users" \
+            | choose_from "Select service account to refresh:" "No service accounts found.")" || exit 0
     fi
 
     # Verify SA exists
@@ -812,23 +798,9 @@ cmd_remove_sa() {
     local sa_name="${1:-}"
 
     if [[ -z "$sa_name" ]]; then
-        local users_dir="${TARGET_DIR}/users"
-        local sa_names=()
-        local accounts
-        accounts="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
-            | grep '^accounts\.' | sed 's/^accounts\.//')" || true
-        while IFS= read -r acct; do
-            [[ -z "$acct" ]] && continue
-            # SA accounts have a kubeconfig but no cert
-            if [[ -f "${users_dir}/${acct}.kubeconfig" && ! -f "${users_dir}/${acct}.crt" ]]; then
-                sa_names+=("$acct")
-            fi
-        done <<<"$accounts"
-        if [[ ${#sa_names[@]} -eq 0 ]]; then
-            print_warning "No service accounts to remove."
-            exit 0
-        fi
-        sa_name="$(printf '%s\n' "${sa_names[@]}" | gum choose --header "Select service account to remove:")"
+        require_yq
+        sa_name="$(detect_sa_accounts "$VALUES_FILE" "${TARGET_DIR}/users" \
+            | choose_from "Select service account to remove:" "No service accounts to remove.")" || exit 0
     fi
 
     print_header "Remove Service Account: ${sa_name}"

@@ -553,3 +553,23 @@ account_exists() {
     val="$(yq ".configs.cm.\"accounts.${username}\" // \"\"" "$values_file")" || true
     [[ -n "$val" ]]
 }
+
+# Prints detected service account names (one per line).
+# SA accounts have a kubeconfig but no certificate file.
+# Usage: detect_sa_accounts <values_file> <users_dir>
+detect_sa_accounts() {
+    local values_file="$1"
+    local users_dir="$2"
+
+    local accounts
+    accounts="$(yq '.configs.cm | keys | .[]' "$values_file" 2>/dev/null \
+        | grep '^accounts\.' | sed 's/^accounts\.//')" || true
+
+    local acct
+    while IFS= read -r acct; do
+        [[ -z "$acct" ]] && continue
+        if [[ -f "${users_dir}/${acct}.kubeconfig" && ! -f "${users_dir}/${acct}.crt" ]]; then
+            echo "$acct"
+        fi
+    done <<<"$accounts"
+}
