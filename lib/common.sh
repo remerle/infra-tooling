@@ -339,8 +339,9 @@ validate_github_repo() {
 
     if ! gh repo view "$owner_repo" --json name &>/dev/null; then
         print_warning "Repository '${owner_repo}' is not accessible. It may not exist yet or may be private."
-        return 0
     fi
+
+    return 0
 }
 
 # Validates a container image repository reference.
@@ -391,6 +392,8 @@ validate_image_repo() {
             print_warning "Image repository '${ref}' not found in registry. It may not exist yet."
         fi
     fi
+
+    return 0
 }
 
 # --- Argument parsing ---
