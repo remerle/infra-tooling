@@ -61,29 +61,14 @@ cmd_init_cluster() {
     print_success "Cluster '${cluster_name}' created."
     echo ""
 
-    # k3s bundles Metrics Server. On k3d it may fail to scrape kubelets due to
-    # self-signed certs. Wait for it to stabilize; if it fails, offer to patch.
+    # k3s bundles Metrics Server (powers 'kubectl top' and HPA).
+    # No patching needed -- k3s manages its own kubelet certs.
     if run_cmd "Waiting for Metrics Server to be ready..." \
-        --explain "k3s bundles Metrics Server (collects CPU/memory usage from kubelets for 'kubectl top' and HPA). Waiting to see if it starts successfully without intervention." \
+        --explain "k3s bundles Metrics Server, which collects CPU/memory usage from kubelets. It powers 'kubectl top nodes/pods' and is required by the Horizontal Pod Autoscaler (HPA). No installation needed -- just waiting for it to start." \
         kubectl wait --for=condition=available deployment/metrics-server -n kube-system --timeout=60s; then
         print_success "Metrics Server is ready (kubectl top enabled)."
     else
-        print_warning "Metrics Server failed to become ready."
-        if gum confirm "Patch Metrics Server with --kubelet-insecure-tls? (fixes self-signed kubelet cert issues in k3d)"; then
-            run_cmd "Patching Metrics Server..." \
-                --explain "k3d generates self-signed kubelet certificates. Metrics Server validates these by default and rejects them. --kubelet-insecure-tls disables that check so Metrics Server can scrape metrics from k3d nodes." \
-                kubectl patch deployment metrics-server -n kube-system \
-                --type=json \
-                -p '[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
-
-            if run_cmd "Waiting for patched Metrics Server..." \
-                --explain "The patch triggers a rolling restart. Waiting for the new pod to pass readiness probes." \
-                kubectl wait --for=condition=available deployment/metrics-server -n kube-system --timeout=60s; then
-                print_success "Metrics Server is ready (kubectl top enabled)."
-            else
-                print_warning "Metrics Server still not ready. Check: kubectl logs -n kube-system -l k8s-app=metrics-server"
-            fi
-        fi
+        print_warning "Metrics Server not ready yet. It may need a moment to stabilize."
     fi
     echo ""
 
