@@ -456,6 +456,53 @@ detect_app_project() {
     echo "default"
 }
 
+# --- Interactive helpers ---
+
+# Prompts the user to select an item from a list provided on stdin.
+# Returns 1 (with a warning) if the list is empty; caller handles exit.
+# Usage: var="$(detect_apps | choose_from "Select app:" "No apps.")" || exit 0
+#   header:    gum choose --header text
+#   empty_msg: message shown (via print_warning) when stdin is empty
+#   Prints the selected item to stdout.
+#
+# IMPORTANT: This function runs in a subshell when called via $(...),
+# so it cannot exit the parent script directly. Use `|| exit 0` at the
+# call site to exit cleanly when the list is empty.
+choose_from() {
+    local header="$1"
+    local empty_msg="$2"
+
+    local items=()
+    while IFS= read -r item; do
+        [[ -n "$item" ]] && items+=("$item")
+    done
+
+    if [[ ${#items[@]} -eq 0 ]]; then
+        print_warning "$empty_msg"
+        return 1
+    fi
+
+    printf '%s\n' "${items[@]}" | gum choose --header "$header"
+}
+
+# Prompts for confirmation; exits 0 with "Aborted." if declined.
+# Usage: confirm_or_abort "Create these files?"
+confirm_or_abort() {
+    if ! gum confirm "$1"; then
+        print_warning "Aborted."
+        exit 0
+    fi
+}
+
+# Same as confirm_or_abort but with red-styled prompt for destructive actions.
+# Usage: confirm_destructive_or_abort "Delete cluster 'foo'? This cannot be undone."
+confirm_destructive_or_abort() {
+    if ! gum confirm --prompt.foreground 196 "$1"; then
+        print_warning "Aborted."
+        exit 0
+    fi
+}
+
 # --- Kargo support ---
 
 # Well-known environment names in conventional promotion order.
@@ -654,6 +701,18 @@ print_info() {
     else
         echo "  $1"
     fi
+}
+
+# Prints the global options block shared by all script usage() functions.
+print_global_options() {
+    cat <<EOF
+
+Global options:
+  --target-dir <path>   Directory to operate on (default: current directory)
+  --show-me             Print commands instead of hiding behind spinners (or set SHOW_ME=1)
+  --explain             Print commands with explanations (learning mode, implies --show-me)
+  --debug               Show full command output (implies --show-me; or set DEBUG=1)
+EOF
 }
 
 # Prints a summary of created files.
