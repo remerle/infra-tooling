@@ -526,6 +526,153 @@ cmd_add_app() {
     fi
 }
 
+cmd_add_ingress() {
+    require_gum
+    require_yq
+    load_conf
+
+    local app_name="${1:-}"
+    if [[ -z "$app_name" ]]; then
+        app_name="$(detect_apps | choose_from "Select application:" "No applications found. Run 'add-app' first.")" || exit 0
+    fi
+    validate_k8s_name "$app_name" "App name"
+
+    # Guard: app must exist
+    local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
+    if [[ ! -d "$app_dir" ]]; then
+        print_error "Application '${app_name}' not found at ${app_dir}"
+        exit 1
+    fi
+
+    # Guard: ingress must not already exist
+    local ingress_file="${app_dir}/base/ingress.yaml"
+    if [[ -f "$ingress_file" ]]; then
+        print_error "Ingress already exists at ${ingress_file}"
+        exit 1
+    fi
+
+    # Auto-detect port from service.yaml
+    local port
+    port="$(detect_service_port "$app_name")"
+    if [[ -z "$port" ]]; then
+        print_error "Could not detect port from ${app_dir}/base/service.yaml"
+        exit 1
+    fi
+
+    # Prompts
+    local host
+    host="$(gum input --placeholder "app.localhost" --prompt "Hostname: ")"
+    if [[ -z "$host" ]]; then
+        print_error "Hostname is required."
+        exit 1
+    fi
+
+    local path
+    path="$(gum input --value "/" --prompt "Path: ")"
+
+    # Preview
+    print_header "Add Ingress: ${app_name}"
+    print_info "Hostname: ${host}"
+    print_info "Path: ${path}"
+    print_info "Service: ${app_name}:${port}"
+    print_info "File: k8s/apps/${app_name}/base/ingress.yaml"
+
+    confirm_or_abort "Create ingress?"
+
+    local created_files=()
+
+    # Render ingress template
+    if safe_render_template "${TEMPLATE_DIR}/k8s/ingress.yaml" "$ingress_file" \
+        "APP_NAME=${app_name}" \
+        "HOST=${host}" \
+        "PATH=${path}" \
+        "PORT=${port}"; then
+        created_files+=("$ingress_file")
+    fi
+
+    # Add ingress.yaml to base kustomization resources
+    local base_kustomization="${app_dir}/base/kustomization.yaml"
+    yq eval -i '.resources += ["ingress.yaml"]' "$base_kustomization"
+
+    print_summary "${created_files[@]}"
+}
+
+cmd_list_ingress() {
+    load_conf
+
+    local found=0
+    local app_dir
+    for app_dir in "${TARGET_DIR}/k8s/apps"/*/; do
+        [[ -d "$app_dir" ]] || continue
+        local ingress_file="${app_dir}base/ingress.yaml"
+        [[ -f "$ingress_file" ]] || continue
+
+        local app_name
+        app_name="$(basename "$app_dir")"
+        local host
+        host="$(yq eval '.spec.rules[0].host' "$ingress_file")"
+        local path
+        path="$(yq eval '.spec.rules[0].http.paths[0].path' "$ingress_file")"
+
+        print_info "${app_name}  (host: ${host}, path: ${path})"
+        found=1
+    done
+
+    if [[ "$found" -eq 0 ]]; then
+        print_warning "No ingress resources found."
+        print_info "Run 'infra-ctl.sh add-ingress <app>' to create one."
+    fi
+}
+
+cmd_remove_ingress() {
+    require_gum
+    require_yq
+    load_conf
+
+    local app_name="${1:-}"
+    if [[ -z "$app_name" ]]; then
+        # Build list of apps that have ingress
+        local apps_with_ingress=()
+        local app_dir
+        for app_dir in "${TARGET_DIR}/k8s/apps"/*/; do
+            [[ -d "$app_dir" ]] || continue
+            [[ -f "${app_dir}base/ingress.yaml" ]] || continue
+            apps_with_ingress+=("$(basename "$app_dir")")
+        done
+        if [[ ${#apps_with_ingress[@]} -eq 0 ]]; then
+            print_warning "No ingress resources found."
+            return
+        fi
+        app_name="$(printf "%s\n" "${apps_with_ingress[@]}" | gum choose --header "Select application:")"
+    fi
+    validate_k8s_name "$app_name" "App name"
+
+    local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
+    local ingress_file="${app_dir}/base/ingress.yaml"
+    if [[ ! -f "$ingress_file" ]]; then
+        print_error "No ingress found for '${app_name}'"
+        exit 1
+    fi
+
+    # Preview
+    local host
+    host="$(yq eval '.spec.rules[0].host' "$ingress_file")"
+    print_header "Remove Ingress: ${app_name}"
+    print_info "Host: ${host}"
+    print_info "File: ${ingress_file}"
+
+    confirm_destructive_or_abort "Remove ingress for '${app_name}'?"
+
+    # Remove file
+    rm -f "$ingress_file"
+
+    # Remove from kustomization resources
+    local base_kustomization="${app_dir}/base/kustomization.yaml"
+    yq eval -i '.resources -= ["ingress.yaml"]' "$base_kustomization"
+
+    print_removed "$ingress_file"
+}
+
 cmd_add_env() {
     require_gum
 
@@ -1632,6 +1779,9 @@ Commands:
   list-apps             List all applications
   list-envs             List all environments
   list-projects         List all ArgoCD AppProjects
+  add-ingress [app]       Add an Ingress resource to an application
+  list-ingress            List all Ingress resources
+  remove-ingress [app]    Remove an Ingress resource from an application
   remove-app [name]     Remove an application and all its resources
   remove-env [name]     Remove an environment and all its resources
   remove-project [name] Remove an ArgoCD AppProject
@@ -1665,6 +1815,9 @@ main() {
         list-apps) cmd_list_apps "$@" ;;
         list-envs) cmd_list_envs "$@" ;;
         list-projects) cmd_list_projects "$@" ;;
+        add-ingress) cmd_add_ingress "$@" ;;
+        list-ingress) cmd_list_ingress ;;
+        remove-ingress) cmd_remove_ingress "$@" ;;
         remove-app) cmd_remove_app "$@" ;;
         remove-env) cmd_remove_env "$@" ;;
         remove-project) cmd_remove_project "$@" ;;
