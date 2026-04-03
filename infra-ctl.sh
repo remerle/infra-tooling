@@ -7,6 +7,7 @@ source "$(dirname "$0")/lib/common.sh"
 
 cmd_init() {
     require_gum
+    require_gh
 
     # Idempotency guard
     if [[ -d "${TARGET_DIR}/argocd" || -d "${TARGET_DIR}/k8s" ]]; then
@@ -34,6 +35,8 @@ cmd_init() {
         print_error "Repository URL is required."
         exit 1
     fi
+
+    validate_github_repo "$repo_url"
 
     # Extract and confirm owner
     local repo_owner
@@ -160,7 +163,10 @@ cmd_add_app() {
 
     # Container port
     local port
-    port="$(gum input --value "8080" --prompt "Container port: ")"
+    while true; do
+        port="$(gum input --value "8080" --prompt "Container port: ")"
+        validate_port "$port" && break
+    done
 
     # Preview what will be created
     print_header "Add Application: ${app_name}"
@@ -254,7 +260,10 @@ cmd_add_app() {
     if is_kargo_enabled; then
         # Prompt for container image repository (no tag -- Kargo discovers tags automatically)
         local image_repo
-        image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app_name}" --header "Container image repository for Kargo (no tag):")"
+        while true; do
+            image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app_name}" --header "Container image repository for Kargo (no tag):")"
+            validate_image_repo "$image_repo" && break
+        done
 
         local kargo_app_dir="${TARGET_DIR}/kargo/${app_name}"
         mkdir -p "$kargo_app_dir"
@@ -565,6 +574,7 @@ cmd_add_project() {
         local repo
         for repo in "${repos[@]}"; do
             repo="$(echo "$repo" | xargs)" # trim whitespace
+            validate_github_repo "$repo"
             source_repos_block+="    - ${repo}"$'\n'
         done
         # Remove trailing newline
@@ -688,6 +698,7 @@ cmd_edit_project() {
         local repo
         for repo in "${repos[@]}"; do
             repo="$(echo "$repo" | xargs)"
+            validate_github_repo "$repo"
             source_repos_block+="    - ${repo}"$'\n'
         done
         source_repos_block="${source_repos_block%$'\n'}"
@@ -824,7 +835,10 @@ cmd_enable_kargo() {
 
             # Prompt for image repository per app (no tag -- Kargo discovers tags)
             local image_repo
-            image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app}" --header "Container image repository for ${app} (no tag):")"
+            while true; do
+                image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app}" --header "Container image repository for ${app} (no tag):")"
+                validate_image_repo "$image_repo" && break
+            done
 
             # Project
             if safe_render_template \
