@@ -410,7 +410,7 @@ Each `add-app` command prompts for a workload type, a preset, and preset-specifi
 infra-ctl.sh add-app backend
 # Workload type: Deployment
 # Preset: web
-# IMAGE: ghcr.io/remerle/k8s-practice-backend:latest
+# IMAGE: ghcr.io/remerle/k8s-practice-backend:26.4.10
 # PORT: 3000
 # SECRET_NAME: backend-secrets
 #   Secret key name: DATABASE_URL
@@ -421,7 +421,7 @@ infra-ctl.sh add-app backend
 infra-ctl.sh add-app frontend
 # Workload type: Deployment
 # Preset: web
-# IMAGE: ghcr.io/remerle/k8s-practice-frontend:latest
+# IMAGE: ghcr.io/remerle/k8s-practice-frontend:26.4.11
 # PORT: 3000
 # SECRET_NAME: (skip)
 # PROBE_PATH: /api/health
