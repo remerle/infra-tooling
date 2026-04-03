@@ -163,9 +163,11 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 
 ## When modifying these scripts
 
-- Adding a new command: add a `cmd_<name>` function and a case in the `main()` dispatcher
+- Adding a new command: add a `cmd_<name>` function and a case in the `main()` dispatcher. Also add the command to `completions.zsh`.
 - Adding a new template: place it in the appropriate `templates/` subdirectory
 - Adding a new placeholder: add it to the "Template placeholders" table above
+- **Always update `completions.zsh`** when adding, removing, or renaming commands in any script. The completions file must stay in sync with the actual command sets.
+- **Naming and behavior consistency across commands**: follow the existing patterns for command naming (`add-*`, `remove-*`, `list-*`, `edit-*`) and behavior. Commands that operate on a named resource (e.g., `remove-app <name>`) should list available items when called without a name argument, rather than only showing usage errors.
 
 ### `lib/common.sh` function inventory
 
@@ -201,6 +203,7 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 **Styled output (gum wrappers):**
 - `print_header(msg)`, `print_success(msg)`, `print_warning(msg)`, `print_error(msg)`, `print_info(msg)` -- colored terminal output
 - `print_summary(files...)` -- prints a summary of created files
+- `print_removed(files...)` -- prints a summary of removed files
 
 ### `lib/user-ctl-helpers.sh` function inventory
 
