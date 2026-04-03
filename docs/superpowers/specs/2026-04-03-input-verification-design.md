@@ -64,7 +64,7 @@ Checks the key against `^[A-Z][A-Z0-9_]*$`. If it doesn't match, prints a warnin
 | `cmd_add_app` | Image repository (Kargo) | `validate_image_repo` | Format: re-prompt. Registry: warning |
 | `cmd_add_project` | Allowed repo URLs (CSV) | `validate_github_repo` per URL | Warning per URL, continue |
 | `cmd_edit_project` | Allowed repo URLs (CSV) | `validate_github_repo` per URL | Warning per URL, continue |
-| `cmd_edit_app` | Image repository (Kargo) | `validate_image_repo` | Format: re-prompt. Registry: warning |
+| `cmd_enable_kargo` | Image repository (per app) | `validate_image_repo` | Format: re-prompt. Registry: warning |
 
 ### `cluster-ctl.sh`
 
