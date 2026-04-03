@@ -236,8 +236,16 @@ cmd_add_app() {
                 optional_flag=" (optional, leave empty to skip)"
             fi
 
+            # Get hint text to show as header above the input
+            local hint
+            hint="$(get_preset_hint "$preset_template" "$key")"
+            local header_arg=()
+            if [[ -n "$hint" ]]; then
+                header_arg=(--header "$hint")
+            fi
+
             local prompted_val
-            prompted_val="$(gum input --value "$default_val" --prompt "${key}${optional_flag}: ")"
+            prompted_val="$(gum input --value "$default_val" "${header_arg[@]}" --prompt "${key}${optional_flag}: ")"
 
             # Store into the appropriate variable
             case "$key" in

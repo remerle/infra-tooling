@@ -6,6 +6,11 @@ defaults:
   PORT: "3000"
   SECRET_NAME: "{{APP_NAME}}-secrets"
   PROBE_PATH: "/api/health"
+hints:
+  IMAGE: "e.g., ghcr.io/owner/app:latest"
+  PORT: "port the container listens on"
+  SECRET_NAME: "Secret resource name (holds sensitive env vars)"
+  PROBE_PATH: "HTTP path for liveness/readiness checks"
 optional:
   - SECRET_NAME
   - PROBE_PATH

@@ -621,6 +621,16 @@ is_preset_optional() {
     echo "$optionals" | grep -qx "$key"
 }
 
+# Gets the hint text for a default key from preset frontmatter.
+# Returns empty string if no hint is defined.
+get_preset_hint() {
+    local template="$1"
+    local key="$2"
+    local hint
+    hint="$(read_preset_frontmatter "$template" | yq eval ".hints.${key} // \"\"" -)"
+    echo "$hint"
+}
+
 # Strips frontmatter from a template and renders the body using render_template.
 render_preset_template() {
     local template="$1"
