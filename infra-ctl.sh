@@ -215,11 +215,20 @@ cmd_add_app() {
         # --- Preset flow ---
         preset_template="${TEMPLATE_DIR}/k8s/${workload_prefix}-${preset_choice}.yaml"
 
-        # Walk through each default with gum input
-        local line key default_val
+        # Collect defaults into array first (gum input inside a while-read loop
+        # steals stdin from the process substitution)
+        local defaults_lines=()
         while IFS= read -r line; do
+            [[ -n "$line" ]] && defaults_lines+=("$line")
+        done < <(get_preset_defaults "$preset_template")
+
+        # Walk through each default with gum input
+        local key default_val
+        for line in "${defaults_lines[@]}"; do
             key="${line%%=*}"
             default_val="${line#*=}"
+            # Resolve {{APP_NAME}} in defaults
+            default_val="${default_val//\{\{APP_NAME\}\}/${app_name}}"
 
             # Check if the key is optional
             local optional_flag=""
@@ -239,7 +248,7 @@ cmd_add_app() {
                 STORAGE_SIZE) storage_size="$prompted_val" ;;
                 MOUNT_PATH) mount_path="$prompted_val" ;;
             esac
-        done < <(get_preset_defaults "$preset_template")
+        done
 
         # Validate required fields
         if [[ -z "$image" ]]; then
@@ -252,9 +261,13 @@ cmd_add_app() {
         fi
         validate_port "$port"
 
-        # Collect config entries from preset defaults
+        # Collect config entries from preset (same stdin issue as above)
+        local config_lines=()
         while IFS= read -r line; do
-            [[ -z "$line" ]] && continue
+            [[ -n "$line" ]] && config_lines+=("$line")
+        done < <(get_preset_config "$preset_template")
+
+        for line in "${config_lines[@]}"; do
             key="${line%%=*}"
             default_val="${line#*=}"
             local cfg_val
@@ -262,7 +275,7 @@ cmd_add_app() {
             if [[ -n "$cfg_val" ]]; then
                 config_entries+=("${key}=${cfg_val}")
             fi
-        done < <(get_preset_config "$preset_template")
+        done
 
         # Prompt for secret env var mappings if a secret name was provided
         if [[ -n "$secret_name" ]]; then
