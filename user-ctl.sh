@@ -850,12 +850,7 @@ Commands:
   refresh-sa [name]             Regenerate a service account token
 
   preflight-check               Verify all required tools are installed
-
-Global options:
-  --target-dir <path>   Directory to operate on (default: current directory)
-  --show-me             Print commands instead of hiding behind spinners (or set SHOW_ME=1)
-  --explain             Print commands with explanations (learning mode, implies --show-me)
-  --debug               Show full command output (implies --show-me; or set DEBUG=1)
+$(print_global_options)
 EOF
 }
 
