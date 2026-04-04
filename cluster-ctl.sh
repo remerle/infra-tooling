@@ -452,6 +452,113 @@ cmd_add_argo_creds() {
     print_success "ArgoCD repository credentials configured for ${REPO_URL}"
 }
 
+cmd_add_registry_creds() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    load_conf
+
+    print_header "Configure Container Registry Credentials"
+
+    # Prompt for registry server
+    local registry
+    registry="$(gum input --value "ghcr.io" --prompt "Registry server: ")"
+    if [[ -z "$registry" ]]; then
+        print_error "Registry server is required."
+        exit 1
+    fi
+
+    # Prompt for username
+    local default_username="${REPO_OWNER:-}"
+    local username
+    username="$(gum input --value "$default_username" --prompt "Registry username: ")"
+    if [[ -z "$username" ]]; then
+        print_error "Username is required."
+        exit 1
+    fi
+
+    # Prompt for PAT
+    local pat_hint="A token with read access to the container registry."
+    if [[ "$registry" == "ghcr.io" ]]; then
+        pat_hint="A GitHub PAT with read:packages scope."
+        print_info "Create one at: https://github.com/settings/tokens/new"
+        print_info "Required scope: read:packages"
+    fi
+    print_info "$pat_hint"
+
+    local pat
+    while true; do
+        pat="$(gum input --password --prompt "Registry token: ")"
+        if [[ -z "$pat" ]]; then
+            print_error "A token is required."
+            continue
+        fi
+        if [[ "$registry" == "ghcr.io" ]]; then
+            if validate_github_pat "$pat" "read:packages"; then
+                break
+            fi
+            print_info "Please enter a valid PAT with the read:packages scope."
+        else
+            break
+        fi
+    done
+
+    # Detect environments from GitOps repo
+    local envs=()
+    readarray -t envs < <(detect_envs)
+
+    if [[ ${#envs[@]} -eq 0 ]]; then
+        print_error "No environments found in k8s/namespaces/."
+        print_info "Run 'infra-ctl.sh add-env <name>' to create environments first."
+        exit 1
+    fi
+
+    # Multi-select namespaces (all selected by default)
+    local selected=()
+    if [[ ${#envs[@]} -eq 1 ]]; then
+        selected=("${envs[0]}")
+        print_info "Namespace: ${selected[0]}"
+    else
+        readarray -t selected < <(printf '%s\n' "${envs[@]}" \
+            | gum choose --no-limit --selected="$(printf '%s,' "${envs[@]}" | sed 's/,$//')" \
+                --header "Select namespaces:")
+    fi
+
+    if [[ ${#selected[@]} -eq 0 ]]; then
+        print_warning "No namespaces selected."
+        return
+    fi
+
+    print_info "Registry:   ${registry}"
+    print_info "Username:   ${username}"
+    print_info "Namespaces: ${selected[*]}"
+
+    local ns
+    for ns in "${selected[@]}"; do
+        # Create namespace if it doesn't exist
+        run_cmd_sh "Ensuring namespace '${ns}' exists..." \
+            --explain "Namespaces must exist before Secrets can be created in them. ArgoCD normally creates namespaces via CreateNamespace=true during sync, but registry credentials must be in place before the first sync so kubelet can pull images. Creating the namespace ahead of time is harmless -- ArgoCD's CreateNamespace is a no-op if the namespace already exists." \
+            "kubectl create namespace \"$ns\" --dry-run=client -o yaml | kubectl apply -f -"
+
+        # Create docker-registry secret
+        run_cmd_sh "Creating registry credentials in '${ns}'..." \
+            --explain "Kubelet (the node agent that pulls container images) needs its own credentials for private registries. ArgoCD's Git credentials only give ArgoCD access to read Git repos -- they do not help kubelet pull container images. A kubernetes.io/dockerconfigjson Secret stores registry auth in the format kubelet expects." \
+            "kubectl create secret docker-registry registry-creds \
+                --namespace \"$ns\" \
+                --docker-server=\"$registry\" \
+                --docker-username=\"$username\" \
+                --docker-password=\"$pat\" \
+                --dry-run=client -o yaml | kubectl apply -f -"
+
+        # Patch default ServiceAccount to use the secret
+        run_cmd_sh "Patching default ServiceAccount in '${ns}'..." \
+            --explain "Every pod that does not specify a serviceAccountName runs as the 'default' ServiceAccount. By adding imagePullSecrets to this ServiceAccount, all pods in the namespace automatically inherit the registry credentials without any changes to individual workload manifests." \
+            "kubectl patch serviceaccount default -n \"$ns\" \
+                -p '{\"imagePullSecrets\": [{\"name\": \"registry-creds\"}]}'"
+    done
+
+    print_success "Registry credentials configured for: ${selected[*]}"
+}
+
 cmd_add_kargo_creds() {
     require_gum
     require_gh
