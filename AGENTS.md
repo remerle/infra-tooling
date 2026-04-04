@@ -128,6 +128,16 @@ The scripts detect existing state by scanning the filesystem:
 
 No external state store. The filesystem is the source of truth.
 
+## Naming conventions
+
+### Secret naming: `<app>-secrets`
+
+Kubernetes Secrets created by `secret-ctl.sh` follow the convention `<app-name>-secrets` (e.g., `backend-secrets`, `postgres-secrets`). This matches the preset default `SECRET_NAME: "{{APP_NAME}}-secrets"` in workload templates. Both `secret-ctl.sh add` and the preset frontmatter use this convention, so secrets and workload manifests align without manual coordination.
+
+### Namespace naming: matches environment name
+
+ArgoCD Applications deploy to a namespace matching the environment name (e.g., `dev`, `staging`, `prod`). Namespaces are created automatically by ArgoCD via `CreateNamespace=true` in the sync policy. The YAML files in `k8s/namespaces/` are for reference and detection (`detect_envs`) only; they are not deployed by any ArgoCD Application.
+
 ## Key decisions
 
 ### k3d cluster architecture

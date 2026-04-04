@@ -247,6 +247,10 @@ These are the correct GitOps behaviors, but they can surprise you if you're expe
 
 **No overwrites:** Creation commands (`init`, `add-app`, `add-env`, `add-project`) never overwrite existing files. If a file already exists, they print a warning and skip it. The `edit-project` command overwrites the project file by design.
 
+**Secret naming convention:** Secrets are named `<app>-secrets` by convention (e.g., `backend-secrets`, `postgres-secrets`). Both `secret-ctl.sh add` and the preset default `SECRET_NAME` use this pattern, so workload manifests and sealed secrets align automatically.
+
+**Namespace creation:** Namespaces are created automatically by ArgoCD via `CreateNamespace=true` in the sync policy. The YAML files in `k8s/namespaces/` are for reference only; they are not deployed by a separate ArgoCD Application.
+
 ## cluster-ctl.sh
 
 Manages the local k3d Kubernetes cluster lifecycle. Independent from `infra-ctl.sh` -- you can use one without the other.
