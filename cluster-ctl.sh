@@ -10,14 +10,25 @@ source "$(dirname "$0")/lib/common.sh"
 apply_local_tls() {
     mkcert -install 2>/dev/null
 
-    # Wildcard *.localhost doesn't work reliably -- some TLS implementations
-    # (including macOS/LibreSSL) refuse to match wildcards against single-label
-    # TLDs like .localhost. List each hostname explicitly instead.
+    # Wildcards against single-label TLDs like .localhost are rejected by
+    # most TLS implementations, so we enumerate every hostname explicitly.
+    # Core hosts always included; app hostnames come from ingress manifests.
+    local hosts=("localhost" "argocd.localhost" "kargo.localhost")
+
+    # Collect <env>.<app>.localhost hostnames from overlay ingresses in the
+    # GitOps repo (if any). This keeps the cert SAN list in sync with the
+    # Ingress resources that Traefik will serve.
+    local ingress_file
+    while IFS= read -r ingress_file; do
+        local host
+        host="$(grep -m1 '^[[:space:]]*-[[:space:]]*host:' "$ingress_file" 2>/dev/null | sed 's/.*host:[[:space:]]*//')"
+        [[ -n "$host" ]] && hosts+=("$host")
+    done < <(find "${TARGET_DIR}/k8s/apps" -type f -path '*/overlays/*/ingress.yaml' 2>/dev/null | sort -u)
+
     local tls_dir
     tls_dir="$(mktemp -d)"
     mkcert -cert-file "${tls_dir}/tls.crt" -key-file "${tls_dir}/tls.key" \
-        "localhost" "argocd.localhost" "kargo.localhost" "app.localhost" \
-        "*.localhost" >/dev/null 2>&1
+        "${hosts[@]}" >/dev/null 2>&1
 
     run_cmd_sh "Configuring TLS..." \
         --explain "The TLS Secret stores the mkcert-generated certificate and key. The TLSStore (a Traefik CRD) sets it as Traefik's cluster-wide default, so every Ingress route uses the locally-trusted cert automatically. These are cluster-specific resources (not persisted in the GitOps repo) -- to regenerate them, run 'cluster-ctl.sh renew-tls'." \
@@ -747,6 +758,15 @@ cmd_renew_tls() {
         print_error "No reachable cluster found."
         print_info "Make sure your kubectl context points to a running cluster."
         exit 1
+    fi
+
+    # Count ingress hostnames we'll include in the cert
+    local ingress_count
+    ingress_count="$(find "${TARGET_DIR}/k8s/apps" -type f -path '*/overlays/*/ingress.yaml' 2>/dev/null | wc -l | tr -d ' ')"
+    if [[ "$ingress_count" -gt 0 ]]; then
+        print_info "Including ${ingress_count} ingress hostname(s) from ${TARGET_DIR}/k8s/apps/*/overlays/*/ingress.yaml"
+    else
+        print_info "No overlay ingress manifests found in ${TARGET_DIR}/k8s/apps/. Only core hostnames (localhost, argocd.localhost, kargo.localhost) will be in the cert."
     fi
 
     apply_local_tls

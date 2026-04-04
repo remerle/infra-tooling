@@ -631,13 +631,6 @@ cmd_add_ingress() {
         exit 1
     fi
 
-    # Guard: ingress must not already exist
-    local ingress_file="${app_dir}/base/ingress.yaml"
-    if [[ -f "$ingress_file" ]]; then
-        print_error "Ingress already exists at ${ingress_file}"
-        exit 1
-    fi
-
     # Auto-detect port from service.yaml
     local port
     port="$(detect_service_port "$app_name")"
@@ -646,42 +639,78 @@ cmd_add_ingress() {
         exit 1
     fi
 
-    # Prompts
-    local host
-    host="$(gum input --placeholder "app.localhost" --prompt "Hostname: ")"
-    if [[ -z "$host" ]]; then
-        print_error "Hostname is required."
+    # Collect overlays for this app (one per env)
+    local overlays_dir="${app_dir}/overlays"
+    if [[ ! -d "$overlays_dir" ]]; then
+        print_error "No overlays found for '${app_name}'. Add an environment first with 'infra-ctl.sh add-env'."
         exit 1
     fi
 
-    local path
-    path="$(gum input --value "/" --prompt "Path: ")"
+    local available_envs=()
+    local d
+    for d in "$overlays_dir"/*/; do
+        [[ -d "$d" ]] || continue
+        local env_name
+        env_name="$(basename "$d")"
+        # Skip envs that already have an ingress
+        if [[ -f "${d}ingress.yaml" ]]; then
+            continue
+        fi
+        available_envs+=("$env_name")
+    done
+
+    if [[ ${#available_envs[@]} -eq 0 ]]; then
+        print_warning "All environments already have an ingress for '${app_name}'."
+        return
+    fi
+
+    # Multi-select envs (all pre-selected)
+    local selected=()
+    if [[ ${#available_envs[@]} -eq 1 ]]; then
+        selected=("${available_envs[0]}")
+    else
+        local selected_csv
+        selected_csv="$(printf '%s,' "${available_envs[@]}" | sed 's/,$//')"
+        readarray -t selected < <(printf '%s\n' "${available_envs[@]}" \
+            | gum choose --no-limit --selected="$selected_csv" \
+                --header "Add ingress to which environments?")
+    fi
+
+    if [[ ${#selected[@]} -eq 0 ]]; then
+        print_warning "No environments selected."
+        return
+    fi
 
     # Preview
     print_header "Add Ingress: ${app_name}"
-    print_info "Hostname: ${host}"
-    print_info "Path: ${path}"
     print_info "Service: ${app_name}:${port}"
-    print_info "File: k8s/apps/${app_name}/base/ingress.yaml"
+    print_info "Environments:"
+    local env
+    for env in "${selected[@]}"; do
+        print_info "  ${env}.${app_name}.localhost -> overlays/${env}/ingress.yaml"
+    done
 
     confirm_or_abort "Create ingress?"
 
     local created_files=()
 
-    # Render ingress template
-    if safe_render_template "${TEMPLATE_DIR}/k8s/ingress.yaml" "$ingress_file" \
-        "APP_NAME=${app_name}" \
-        "HOST=${host}" \
-        "PATH=${path}" \
-        "PORT=${port}"; then
-        created_files+=("$ingress_file")
-    fi
+    for env in "${selected[@]}"; do
+        local ingress_file="${overlays_dir}/${env}/ingress.yaml"
+        if safe_render_template "${TEMPLATE_DIR}/k8s/ingress.yaml" "$ingress_file" \
+            "APP_NAME=${app_name}" \
+            "ENV=${env}" \
+            "PORT=${port}"; then
+            created_files+=("$ingress_file")
+        fi
 
-    # Add ingress.yaml to base kustomization resources
-    local base_kustomization="${app_dir}/base/kustomization.yaml"
-    yq eval -i '.resources += ["ingress.yaml"]' "$base_kustomization"
+        # Add ingress.yaml to overlay kustomization resources
+        local overlay_kustomization="${overlays_dir}/${env}/kustomization.yaml"
+        yq eval -i '.resources += ["ingress.yaml"] | .resources |= unique' "$overlay_kustomization"
+    done
 
     print_summary "${created_files[@]}"
+    print_info "Hostnames are now trusted only if the cluster TLS cert includes them."
+    print_info "Run 'cluster-ctl.sh renew-tls' to regenerate the cert."
 }
 
 cmd_list_ingress() {
@@ -691,18 +720,23 @@ cmd_list_ingress() {
     local app_dir
     for app_dir in "${TARGET_DIR}/k8s/apps"/*/; do
         [[ -d "$app_dir" ]] || continue
-        local ingress_file="${app_dir}base/ingress.yaml"
-        [[ -f "$ingress_file" ]] || continue
-
         local app_name
         app_name="$(basename "$app_dir")"
-        local host
-        host="$(yq eval '.spec.rules[0].host' "$ingress_file")"
-        local path
-        path="$(yq eval '.spec.rules[0].http.paths[0].path' "$ingress_file")"
 
-        print_info "${app_name}  (host: ${host}, path: ${path})"
-        found=1
+        local overlay
+        for overlay in "${app_dir}overlays"/*/; do
+            [[ -d "$overlay" ]] || continue
+            local ingress_file="${overlay}ingress.yaml"
+            [[ -f "$ingress_file" ]] || continue
+
+            local env
+            env="$(basename "$overlay")"
+            local host
+            host="$(yq eval '.spec.rules[0].host' "$ingress_file")"
+
+            print_info "${app_name} [${env}]  https://${host}"
+            found=1
+        done
     done
 
     if [[ "$found" -eq 0 ]]; then
@@ -718,13 +752,17 @@ cmd_remove_ingress() {
 
     local app_name="${1:-}"
     if [[ -z "$app_name" ]]; then
-        # Build list of apps that have ingress
+        # Build list of apps that have at least one overlay ingress
         local apps_with_ingress=()
         local app_dir
         for app_dir in "${TARGET_DIR}/k8s/apps"/*/; do
             [[ -d "$app_dir" ]] || continue
-            [[ -f "${app_dir}base/ingress.yaml" ]] || continue
-            apps_with_ingress+=("$(basename "$app_dir")")
+            local has_ingress=0
+            local overlay
+            for overlay in "${app_dir}overlays"/*/; do
+                [[ -f "${overlay}ingress.yaml" ]] && has_ingress=1 && break
+            done
+            [[ "$has_ingress" -eq 1 ]] && apps_with_ingress+=("$(basename "$app_dir")")
         done
         if [[ ${#apps_with_ingress[@]} -eq 0 ]]; then
             print_warning "No ingress resources found."
@@ -735,29 +773,63 @@ cmd_remove_ingress() {
     validate_k8s_name "$app_name" "App name"
 
     local app_dir="${TARGET_DIR}/k8s/apps/${app_name}"
-    local ingress_file="${app_dir}/base/ingress.yaml"
-    if [[ ! -f "$ingress_file" ]]; then
+    local overlays_dir="${app_dir}/overlays"
+    if [[ ! -d "$overlays_dir" ]]; then
+        print_error "No overlays directory for '${app_name}'"
+        exit 1
+    fi
+
+    # Find envs that have ingress
+    local envs_with_ingress=()
+    local overlay
+    for overlay in "$overlays_dir"/*/; do
+        [[ -f "${overlay}ingress.yaml" ]] || continue
+        envs_with_ingress+=("$(basename "$overlay")")
+    done
+
+    if [[ ${#envs_with_ingress[@]} -eq 0 ]]; then
         print_error "No ingress found for '${app_name}'"
         exit 1
     fi
 
+    # Multi-select envs to remove from (all pre-selected)
+    local selected=()
+    if [[ ${#envs_with_ingress[@]} -eq 1 ]]; then
+        selected=("${envs_with_ingress[0]}")
+    else
+        local selected_csv
+        selected_csv="$(printf '%s,' "${envs_with_ingress[@]}" | sed 's/,$//')"
+        readarray -t selected < <(printf '%s\n' "${envs_with_ingress[@]}" \
+            | gum choose --no-limit --selected="$selected_csv" \
+                --header "Remove ingress from which environments?")
+    fi
+
+    if [[ ${#selected[@]} -eq 0 ]]; then
+        print_warning "No environments selected."
+        return
+    fi
+
     # Preview
-    local host
-    host="$(yq eval '.spec.rules[0].host' "$ingress_file")"
     print_header "Remove Ingress: ${app_name}"
-    print_info "Host: ${host}"
-    print_info "File: ${ingress_file}"
+    local env
+    for env in "${selected[@]}"; do
+        print_info "  ${env}.${app_name}.localhost"
+    done
 
-    confirm_destructive_or_abort "Remove ingress for '${app_name}'?"
+    confirm_destructive_or_abort "Remove ingress from these environments?"
 
-    # Remove file
-    rm -f "$ingress_file"
+    local removed=()
+    for env in "${selected[@]}"; do
+        local ingress_file="${overlays_dir}/${env}/ingress.yaml"
+        rm -f "$ingress_file"
+        removed+=("$ingress_file")
 
-    # Remove from kustomization resources
-    local base_kustomization="${app_dir}/base/kustomization.yaml"
-    yq eval -i '.resources -= ["ingress.yaml"]' "$base_kustomization"
+        local overlay_kustomization="${overlays_dir}/${env}/kustomization.yaml"
+        yq eval -i '.resources -= ["ingress.yaml"]' "$overlay_kustomization"
+    done
 
-    print_removed "$ingress_file"
+    print_removed "${removed[@]}"
+    print_info "Run 'cluster-ctl.sh renew-tls' to regenerate the cert without these hostnames."
 }
 
 cmd_add_env() {

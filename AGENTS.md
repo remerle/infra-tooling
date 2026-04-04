@@ -59,7 +59,7 @@ Templates are in `templates/`, organized to mirror the output directory structur
 | `{{REPO_URL}}` | `.infra-ctl.conf` | `app-env.yaml`, `parent-app.yaml`, `projects-app.yaml`, `kargo-apps.yaml` |
 | `{{REPO_OWNER}}` | `.infra-ctl.conf` | `overlay-kustomization.yaml` |
 | `{{APP_NAME}}` | User input (`add-app`) | `app-env.yaml`, `base-kustomization-deployment.yaml`, `base-kustomization-statefulset.yaml`, `overlay-kustomization.yaml`, `service.yaml`, `service-headless.yaml` |
-| `{{ENV}}` | User input (`add-env`) or detection | `app-env.yaml`, `namespace.yaml`, `overlay-kustomization.yaml` |
+| `{{ENV}}` | User input (`add-env`) or detection | `app-env.yaml`, `namespace.yaml`, `overlay-kustomization.yaml`, `ingress.yaml` |
 | `{{PROJECT}}` | User input or detection (`detect_app_project`) | `app-env.yaml` |
 | `{{PROJECT_NAME}}` | User input (`add-project`) | `appproject.yaml` |
 | `{{PROJECT_DESCRIPTION}}` | User input (`add-project`) | `appproject.yaml` |
@@ -76,8 +76,6 @@ Templates are in `templates/`, organized to mirror the output directory structur
 | `{{MOUNT_PATH}}` | Frontmatter default or user input | `statefulset-postgres.yaml` |
 | `{{STORAGE_SIZE}}` | Frontmatter default or user input | `statefulset-postgres.yaml` |
 | `{{PROBE_PATH}}` | Frontmatter default or user input | Used to build `{{PROBES}}` block |
-| `{{HOST}}` | User input (`add-ingress`) | `ingress.yaml` |
-| `{{PATH}}` | User input (`add-ingress`, default `/`) | `ingress.yaml` |
 
 ## Preset frontmatter system
 
@@ -205,6 +203,14 @@ To enable Kargo on an existing repo: `infra-ctl.sh enable-kargo`.
 ### Convention: app manifests named `<app>-<env>.yaml`
 
 ArgoCD Application manifests in `argocd/apps/` follow the pattern `<app-name>-<env-name>.yaml`. This makes it easy to find all environments for an app or all apps in an environment via glob patterns.
+
+### Ingress: hostname convention `<env>.<app>.localhost`
+
+Ingress resources live in overlays, not in base (`k8s/apps/<app>/overlays/<env>/ingress.yaml`), because the hostname encodes the environment. Each ingress gets the hostname `<env>.<app>.localhost` at path `/`. This gives every app+env pair a distinct TLS SNI hostname, so apps stay at root (no path rewriting) and all environments share one TLS cert with multiple SANs.
+
+Wildcard certs like `*.localhost` are unreliable on macOS because most TLS implementations refuse to match wildcards against single-label TLDs. Instead, `cluster-ctl.sh renew-tls` (and `init-cluster --enable HTTPS`) scans `k8s/apps/*/overlays/*/ingress.yaml` and bakes every concrete hostname into the mkcert SAN list. Adding or removing ingresses requires a cert regen to pick up the new hostnames.
+
+`add-ingress` writes one ingress manifest per selected environment; `remove-ingress` and `list-ingress` operate on those overlay files. There is no base ingress.
 
 ### No assumption about script location
 

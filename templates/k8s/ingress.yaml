@@ -4,10 +4,10 @@ metadata:
   name: {{APP_NAME}}
 spec:
   rules:
-    - host: {{HOST}}
+    - host: {{ENV}}.{{APP_NAME}}.localhost
       http:
         paths:
-          - path: {{PATH}}
+          - path: /
             pathType: Prefix
             backend:
               service:
