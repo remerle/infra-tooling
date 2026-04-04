@@ -77,6 +77,8 @@ cmd_add() {
 
     local app_name="${1:-}"
     local env_name="${2:-}"
+    shift 2 2>/dev/null || true
+    local cli_pairs=("$@")
 
     if [[ -z "$app_name" ]]; then
         load_conf
@@ -133,33 +135,52 @@ cmd_add() {
         fi
     fi
 
-    # Prompt for key/value pairs
+    # Collect key/value pairs from CLI args or interactive prompt
     local keys=()
     local values=()
-    while true; do
-        local key
-        key="$(gum input --prompt "Secret key (empty to finish): " --placeholder "e.g. DATABASE_URL")"
 
-        if [[ -z "$key" ]]; then
-            break
-        fi
-
-        validate_secret_key "$key"
-
-        # Warn if key exists in current sealed secret
-        if [[ -f "$sealed_file" ]] && grep -q "^\s*${key}:" "$sealed_file"; then
-            if ! gum confirm "Key '${key}' already exists. Overwrite?"; then
-                continue
+    if [[ ${#cli_pairs[@]} -gt 0 ]]; then
+        # Parse KEY=value pairs from CLI arguments
+        local pair
+        for pair in "${cli_pairs[@]}"; do
+            if [[ "$pair" != *"="* ]]; then
+                print_error "Invalid argument '${pair}'. Expected KEY=value format."
+                exit 1
             fi
-        fi
+            local key="${pair%%=*}"
+            local value="${pair#*=}"
+            validate_secret_key "$key"
+            keys+=("$key")
+            values+=("$value")
+            print_info "Secret: ${key}"
+        done
+    else
+        # Interactive prompt
+        while true; do
+            local key
+            key="$(gum input --prompt "Secret key (empty to finish): " --placeholder "e.g. DATABASE_URL")"
 
-        local value
-        value="$(gum input --prompt "Value for ${key}: " --password)"
+            if [[ -z "$key" ]]; then
+                break
+            fi
 
-        keys+=("$key")
-        values+=("$value")
-        print_success "Added: ${key}"
-    done
+            validate_secret_key "$key"
+
+            # Warn if key exists in current sealed secret
+            if [[ -f "$sealed_file" ]] && grep -q "^\s*${key}:" "$sealed_file"; then
+                if ! gum confirm "Key '${key}' already exists. Overwrite?"; then
+                    continue
+                fi
+            fi
+
+            local value
+            value="$(gum input --prompt "Value for ${key}: " --password)"
+
+            keys+=("$key")
+            values+=("$value")
+            print_success "Added: ${key}"
+        done
+    fi
 
     if [[ ${#keys[@]} -eq 0 ]]; then
         print_warning "No secrets entered. Aborted."
@@ -410,7 +431,7 @@ Usage: secret-ctl.sh <command> [options]
 
 Commands:
   init                Install Sealed Secrets controller and set up key material
-  add [app] [env]     Create or update a SealedSecret for an app/environment
+  add [app] [env] [KEY=value...]  Create or update a SealedSecret for an app/environment
   list [app] [env]    List app/environment pairs that have sealed secrets
   remove [app] [env]  Remove a SealedSecret for an app/environment
   verify [env]        Check for missing secret references
