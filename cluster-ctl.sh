@@ -417,11 +417,10 @@ cmd_add_argo_creds() {
     fi
 
     # Prompt for PAT
-    print_info "A fine-grained GitHub PAT is required. Create one at:"
-    print_info "  https://github.com/settings/personal-access-tokens/new"
+    print_info "A classic GitHub PAT is required. Create one at:"
+    print_info "  https://github.com/settings/tokens/new"
     print_info ""
-    print_info "Required permissions on the GitOps repository:"
-    print_info "  Contents:  Read-only"
+    print_info "Required scope: repo"
     local pat
     while true; do
         pat="$(gum input --password --prompt "GitHub PAT: ")"
@@ -480,7 +479,7 @@ cmd_add_registry_creds() {
     # Prompt for PAT
     local pat_hint="A token with read access to the container registry."
     if [[ "$registry" == "ghcr.io" ]]; then
-        pat_hint="A GitHub PAT with read:packages scope."
+        pat_hint="A classic GitHub PAT is required."
         print_info "Create one at: https://github.com/settings/tokens/new"
         print_info "Required scope: read:packages"
     fi
@@ -627,13 +626,11 @@ cmd_add_kargo_creds() {
     fi
 
     # Prompt for PAT
-    print_info "A fine-grained GitHub PAT is required. Kargo needs write access to"
+    print_info "A classic GitHub PAT is required. Kargo needs write access to"
     print_info "commit image tag updates during promotions. Create one at:"
-    print_info "  https://github.com/settings/personal-access-tokens/new"
+    print_info "  https://github.com/settings/tokens/new"
     print_info ""
-    print_info "Required permissions on the GitOps repository:"
-    print_info "  Contents:  Read and write"
-    print_info "  Packages:  Read (only if the container registry is private)"
+    print_info "Required scopes: repo, read:packages (if the container registry is private)"
     local pat
     while true; do
         pat="$(gum input --password --prompt "GitHub PAT: ")"

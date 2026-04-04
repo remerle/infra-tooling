@@ -521,14 +521,14 @@ For a private GitOps repo, ArgoCD needs read access:
 
 ```bash
 cluster-ctl.sh add-argo-creds
-# Enter a GitHub PAT with repo read access
+# Enter a classic GitHub PAT with the "repo" scope
 ```
 
 For a private container registry (e.g., ghcr.io), kubelet needs pull credentials. This creates namespaces if they don't exist and configures each one:
 
 ```bash
 cluster-ctl.sh add-registry-creds
-# Enter the registry server (default: ghcr.io), username, and a token with read:packages
+# Enter the registry server (default: ghcr.io), username, and a classic PAT with the "read:packages" scope
 # Select which namespaces to configure
 ```
 
@@ -554,7 +554,7 @@ Kargo needs read+write access to the GitOps repo and optionally read access to t
 
 ```bash
 cluster-ctl.sh add-kargo-creds backend
-# Enter a GitHub PAT with repo read+write access
+# Enter a classic GitHub PAT with the "repo" scope (and "read:packages" if the registry is private)
 # Answer: is the container registry private? (yes if ghcr.io repo is private)
 
 cluster-ctl.sh add-kargo-creds frontend

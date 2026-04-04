@@ -314,14 +314,18 @@ validate_github_pat() {
         return 1
     fi
 
-    # Check scopes (fine-grained tokens don't return X-OAuth-Scopes)
+    # Check scopes (classic tokens return X-OAuth-Scopes; fine-grained tokens don't)
     local scopes_header
     scopes_header="$(grep -i '^x-oauth-scopes:' "$headers" | sed 's/^[^:]*: *//' | tr -d '\r')"
     rm -f "$headers"
 
-    # Fine-grained PATs don't have X-OAuth-Scopes header; skip scope check for those
+    # Fine-grained PATs omit X-OAuth-Scopes. Reject them: their per-repo
+    # permission model breaks silently when repos aren't added to the scope,
+    # and we can't verify scopes here. Require classic tokens.
     if [[ -z "$scopes_header" ]]; then
-        return 0
+        print_error "Fine-grained GitHub PATs are not supported."
+        print_info "Create a classic PAT at: https://github.com/settings/tokens/new"
+        return 1
     fi
 
     local scope
