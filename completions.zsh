@@ -112,7 +112,7 @@ _cluster_ctl() {
     local -a commands=(
         'init-cluster:Create a k3d cluster and install tooling'
         'delete-cluster:Delete a k3d cluster'
-        'add-repo-creds:Configure ArgoCD access to a private Git repo'
+        'add-argo-creds:Configure ArgoCD access to a private Git repo'
         'add-kargo-creds:Configure Kargo access to a private registry'
         'upgrade-argocd:Upgrade ArgoCD Helm release'
         'upgrade-kargo:Upgrade Kargo Helm release'

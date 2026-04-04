@@ -390,7 +390,7 @@ cmd_status() {
     fi
 }
 
-cmd_add_repo_creds() {
+cmd_add_argo_creds() {
     require_gum
     require_gh
     require_cmd "kubectl" "brew install kubectl"
@@ -686,7 +686,7 @@ cmd_argo_init() {
         if [[ -n "$existing_condition" && ("$existing_condition" == *"authorization failed"* || "$existing_condition" == *"not granted"*) ]]; then
             print_error "parent-app exists but cannot access the repository."
             print_info "$existing_condition"
-            print_info "Run: cluster-ctl.sh add-repo-creds"
+            print_info "Run: cluster-ctl.sh add-argo-creds"
             exit 1
         fi
 
@@ -716,7 +716,7 @@ cmd_argo_init() {
         print_error "parent-app failed to sync."
         print_info "$condition_msg"
         if [[ "$condition_msg" == *"authorization failed"* || "$condition_msg" == *"not granted"* ]]; then
-            print_info "If this is a private repo, run: cluster-ctl.sh add-repo-creds"
+            print_info "If this is a private repo, run: cluster-ctl.sh add-argo-creds"
         fi
         exit 1
     else
@@ -909,7 +909,7 @@ Usage: cluster-ctl.sh <command> [options]
 Commands:
   init-cluster        Create a local k3d cluster and optionally install ArgoCD
   delete-cluster [name]  Tear down a k3d cluster
-  add-repo-creds      Configure ArgoCD access to a private Git repository
+  add-argo-creds      Configure ArgoCD access to a private Git repository
   add-kargo-creds     Configure Kargo access to a private Git repo and container registry
   upgrade-argocd      Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
   upgrade-kargo       Re-apply Kargo Helm release
@@ -940,7 +940,7 @@ main() {
     case "$command" in
         init-cluster) cmd_init_cluster "$@" ;;
         delete-cluster) cmd_delete_cluster "$@" ;;
-        add-repo-creds) cmd_add_repo_creds "$@" ;;
+        add-argo-creds) cmd_add_argo_creds "$@" ;;
         add-kargo-creds) cmd_add_kargo_creds "$@" ;;
         upgrade-argocd) cmd_upgrade_argocd "$@" ;;
         upgrade-kargo) cmd_upgrade_kargo "$@" ;;
