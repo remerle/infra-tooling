@@ -98,6 +98,12 @@ cmd_init() {
         "REPO_URL=${repo_url}"
     created_files+=("$projects_app")
 
+    # Create .gitignore if one doesn't exist
+    local gitignore="${TARGET_DIR}/.gitignore"
+    if safe_write "$gitignore" "$(cat "${TEMPLATE_DIR}/gitignore")"; then
+        created_files+=("$gitignore")
+    fi
+
     # Save configuration
     save_conf "$repo_url" "$repo_owner"
     created_files+=("${TARGET_DIR}/.infra-ctl.conf")
