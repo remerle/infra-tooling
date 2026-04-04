@@ -133,7 +133,7 @@ Manages the GitOps repository structure: directory scaffolding, Kustomize config
 
 Bootstraps the repository skeleton. Prompts for the Git repository URL (used in ArgoCD Application manifests to tell ArgoCD where to pull configurations from) and creates:
 
-- `k8s/namespaces/` -- where Kubernetes Namespace definitions live (one per environment)
+- `k8s/namespaces/` -- Namespace definitions (one per environment). These are for reference only; ArgoCD creates namespaces automatically via `CreateNamespace=true` when syncing applications.
 - `k8s/apps/` -- where application configurations live (Kustomize base + overlays per environment)
 - `argocd/parent-app.yaml` -- the "app of apps" that tells ArgoCD to watch `argocd/apps/` for Application manifests
 - `argocd/apps/projects.yaml` -- tells ArgoCD to watch `argocd/projects/` for AppProject resources
@@ -191,7 +191,7 @@ infra-ctl.sh add-ingress frontend
 
 Scaffolds a new environment across all existing applications. Creates:
 
-- A **Namespace** resource (`k8s/namespaces/<name>.yaml`) -- Kubernetes uses namespaces to isolate environments within a cluster.
+- A **Namespace** resource (`k8s/namespaces/<name>.yaml`) -- for reference; the actual namespace is created automatically by ArgoCD when it syncs applications targeting that environment.
 - An **overlay** per existing app for this environment.
 - An **ArgoCD Application** per existing app, pointed at the new overlay.
 
