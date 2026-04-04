@@ -800,6 +800,86 @@ cmd_argo_sync() {
     print_success "All applications synced."
 }
 
+cmd_argo_status() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+
+    # Verify a cluster is reachable
+    if ! kubectl cluster-info &>/dev/null; then
+        print_error "No reachable cluster found."
+        exit 1
+    fi
+
+    if ! kubectl get namespace argocd &>/dev/null; then
+        print_error "ArgoCD is not installed in the current cluster."
+        exit 1
+    fi
+
+    print_header "ArgoCD Application Status"
+
+    # Get all applications as JSON for parsing
+    local apps_json
+    apps_json="$(kubectl get applications -n argocd -o json 2>/dev/null)" || {
+        print_warning "No applications found."
+        return
+    }
+
+    local app_count
+    app_count="$(echo "$apps_json" | jq '.items | length')"
+
+    if [[ "$app_count" -eq 0 ]]; then
+        print_warning "No applications found. Run: cluster-ctl.sh argo-init"
+        return
+    fi
+
+    # Summary counts
+    local synced degraded progressing errors
+    synced="$(echo "$apps_json" | jq '[.items[] | select(.status.sync.status == "Synced")] | length')"
+    degraded="$(echo "$apps_json" | jq '[.items[] | select(.status.health.status == "Degraded")] | length')"
+    progressing="$(echo "$apps_json" | jq '[.items[] | select(.status.health.status == "Progressing")] | length')"
+    errors="$(echo "$apps_json" | jq '[.items[] | select(.status.conditions != null and (.status.conditions | length > 0))] | length')"
+
+    print_info "Applications: ${app_count}  Synced: ${synced}  Progressing: ${progressing}  Degraded: ${degraded}  Errors: ${errors}"
+    echo ""
+
+    # Per-app details
+    local i
+    for ((i = 0; i < app_count; i++)); do
+        local name sync health namespace
+        name="$(echo "$apps_json" | jq -r ".items[$i].metadata.name")"
+        sync="$(echo "$apps_json" | jq -r ".items[$i].status.sync.status // \"Unknown\"")"
+        health="$(echo "$apps_json" | jq -r ".items[$i].status.health.status // \"Unknown\"")"
+        namespace="$(echo "$apps_json" | jq -r ".items[$i].spec.destination.namespace // \"-\"")"
+
+        # Color-code the status
+        local sync_display="$sync"
+        local health_display="$health"
+        case "$sync" in
+            Synced) sync_display="$(gum style --foreground 2 "$sync")" ;;
+            OutOfSync) sync_display="$(gum style --foreground 3 "$sync")" ;;
+            Unknown) sync_display="$(gum style --foreground 1 "$sync")" ;;
+        esac
+        case "$health" in
+            Healthy) health_display="$(gum style --foreground 2 "$health")" ;;
+            Progressing) health_display="$(gum style --foreground 3 "$health")" ;;
+            Degraded | Missing) health_display="$(gum style --foreground 1 "$health")" ;;
+        esac
+
+        printf "  %-22s  sync: %-12s  health: %-12s  ns: %s\n" "$name" "$sync_display" "$health_display" "$namespace"
+
+        # Show error conditions if any
+        local condition
+        condition="$(echo "$apps_json" | jq -r ".items[$i].status.conditions[0].message // empty")"
+        if [[ -n "$condition" ]]; then
+            # Truncate long messages
+            if [[ ${#condition} -gt 120 ]]; then
+                condition="${condition:0:117}..."
+            fi
+            print_error "    $condition"
+        fi
+    done
+}
+
 # --- Usage ---
 
 cmd_preflight_check() {
@@ -835,6 +915,7 @@ Commands:
   upgrade-kargo       Re-apply Kargo Helm release
   argo-init           Bootstrap ArgoCD by applying the parent-app to the cluster
   argo-sync           Force ArgoCD to sync all applications immediately
+  argo-status         Show sync status, health, and errors for all ArgoCD applications
   renew-tls           Regenerate mkcert certificates and update the cluster
   status              Show cluster and ArgoCD health
   preflight-check     Verify all required tools are installed
@@ -865,6 +946,7 @@ main() {
         upgrade-kargo) cmd_upgrade_kargo "$@" ;;
         argo-init) cmd_argo_init "$@" ;;
         argo-sync) cmd_argo_sync "$@" ;;
+        argo-status) cmd_argo_status "$@" ;;
         renew-tls) cmd_renew_tls "$@" ;;
         status) cmd_status "$@" ;;
         preflight-check) cmd_preflight_check "$@" ;;

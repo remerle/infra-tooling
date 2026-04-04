@@ -118,6 +118,7 @@ _cluster_ctl() {
         'upgrade-kargo:Upgrade Kargo Helm release'
         'argo-init:Bootstrap ArgoCD with the parent-app'
         'argo-sync:Force ArgoCD to sync all applications'
+        'argo-status:Show ArgoCD application status and errors'
         'renew-tls:Regenerate mkcert certificates'
         'status:Show cluster status'
         'preflight-check:Validate cluster prerequisites'
