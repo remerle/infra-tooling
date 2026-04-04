@@ -678,7 +678,19 @@ cmd_argo_init() {
 
     # Check if parent-app already exists
     if kubectl get application parent-app -n argocd &>/dev/null; then
-        print_warning "parent-app already exists in the cluster."
+        local existing_status
+        existing_status="$(kubectl get application parent-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)" || true
+        local existing_condition
+        existing_condition="$(kubectl get application parent-app -n argocd -o jsonpath='{.status.conditions[0].message}' 2>/dev/null)" || true
+
+        if [[ -n "$existing_condition" && ("$existing_condition" == *"authorization failed"* || "$existing_condition" == *"not granted"*) ]]; then
+            print_error "parent-app exists but cannot access the repository."
+            print_info "$existing_condition"
+            print_info "Run: cluster-ctl.sh add-repo-creds"
+            exit 1
+        fi
+
+        print_warning "parent-app already exists in the cluster (status: ${existing_status:-Unknown})."
         print_info "Use 'cluster-ctl.sh argo-sync' to sync."
         return
     fi
@@ -687,8 +699,30 @@ cmd_argo_init() {
         --explain "The parent-app is the bootstrap Application that tells ArgoCD to watch argocd/apps/ for child Application manifests. This is a one-time step; after this, ArgoCD manages everything via Git." \
         kubectl apply -f "$parent_app" -n argocd
 
-    print_success "ArgoCD initialized. The parent-app will discover and sync all child applications."
-    print_info "Run 'cluster-ctl.sh argo-sync' to trigger an immediate sync."
+    # Wait for ArgoCD to reconcile and check for errors
+    print_info "Waiting for ArgoCD to reconcile the parent-app..."
+    sleep 5
+
+    local sync_status
+    sync_status="$(kubectl get application parent-app -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null)" || true
+
+    local condition_msg
+    condition_msg="$(kubectl get application parent-app -n argocd -o jsonpath='{.status.conditions[0].message}' 2>/dev/null)" || true
+
+    if [[ "$sync_status" == "Synced" ]]; then
+        print_success "ArgoCD initialized. The parent-app is synced."
+        print_info "Run 'cluster-ctl.sh argo-sync' to sync all child applications."
+    elif [[ -n "$condition_msg" ]]; then
+        print_error "parent-app failed to sync."
+        print_info "$condition_msg"
+        if [[ "$condition_msg" == *"authorization failed"* || "$condition_msg" == *"not granted"* ]]; then
+            print_info "If this is a private repo, run: cluster-ctl.sh add-repo-creds"
+        fi
+        exit 1
+    else
+        print_warning "parent-app sync status: ${sync_status:-Unknown}"
+        print_info "Check the ArgoCD UI or run: kubectl get application parent-app -n argocd -o yaml"
+    fi
 }
 
 cmd_argo_sync() {
