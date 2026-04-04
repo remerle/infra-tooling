@@ -304,7 +304,8 @@ KARGOINGRESS"
 
     # Next steps
     print_header "Next Steps"
-    print_info "1. Initialize your GitOps repo:  infra-ctl.sh init"
+    print_info "1. Initialize your GitOps repo:       infra-ctl.sh init"
+    print_info "2. If using a private registry:       cluster-ctl.sh add-registry-creds"
 }
 
 cmd_delete_cluster() {
