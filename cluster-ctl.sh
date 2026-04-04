@@ -1017,6 +1017,7 @@ Commands:
   init-cluster        Create a local k3d cluster and optionally install ArgoCD
   delete-cluster [name]  Tear down a k3d cluster
   add-argo-creds      Configure ArgoCD access to a private Git repository
+  add-registry-creds  Configure container registry credentials for image pulls
   add-kargo-creds     Configure Kargo access to a private Git repo and container registry
   upgrade-argocd      Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
   upgrade-kargo       Re-apply Kargo Helm release
@@ -1048,6 +1049,7 @@ main() {
         init-cluster) cmd_init_cluster "$@" ;;
         delete-cluster) cmd_delete_cluster "$@" ;;
         add-argo-creds) cmd_add_argo_creds "$@" ;;
+        add-registry-creds) cmd_add_registry_creds "$@" ;;
         add-kargo-creds) cmd_add_kargo_creds "$@" ;;
         upgrade-argocd) cmd_upgrade_argocd "$@" ;;
         upgrade-kargo) cmd_upgrade_kargo "$@" ;;

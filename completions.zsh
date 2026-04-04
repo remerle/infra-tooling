@@ -113,6 +113,7 @@ _cluster_ctl() {
         'init-cluster:Create a k3d cluster and install tooling'
         'delete-cluster:Delete a k3d cluster'
         'add-argo-creds:Configure ArgoCD access to a private Git repo'
+        'add-registry-creds:Configure container registry credentials for image pulls'
         'add-kargo-creds:Configure Kargo access to a private registry'
         'upgrade-argocd:Upgrade ArgoCD Helm release'
         'upgrade-kargo:Upgrade Kargo Helm release'
