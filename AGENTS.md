@@ -7,7 +7,7 @@ Design decisions and conventions for AI agents working in this repository.
 Five independent bash scripts at the repository root:
 
 - **`infra-ctl.sh`** -- manages the GitOps repository structure (directories, templates, manifests). Git-only; does not interact with any cluster.
-- **`cluster-ctl.sh`** -- manages the local k3d cluster lifecycle (creation, ArgoCD Helm installation/upgrade, Kargo, teardown) and ArgoCD operations (init, sync, status). Interacts with Docker, Kubernetes, and Helm.
+- **`cluster-ctl.sh`** -- manages the local k3d cluster lifecycle (creation, ArgoCD Helm installation/upgrade, Kargo, teardown), ArgoCD operations (init, sync, status), and credential management (ArgoCD repo access, container registry auth, Kargo credentials). Interacts with Docker, Kubernetes, and Helm.
 - **`secret-ctl.sh`** -- manages per-environment secrets using Bitnami Sealed Secrets. Interacts with the cluster (for controller install and key management) and writes encrypted SealedSecret files to the repo.
 - **`user-ctl.sh`** -- manages RBAC roles, human users (x509 certs), and service accounts (short-lived tokens). Interacts with the cluster (CSR API, RBAC bindings, Helm upgrades) and writes to `helm/argocd-values.yaml` and `k8s/platform/`.
 - **`config-ctl.sh`** -- manages configMapGenerator literals in Kustomize configurations. Manipulates kustomization.yaml files via yq. Does not interact with the cluster.
@@ -220,14 +220,15 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 4b. `config-ctl.sh add` -- manage configMapGenerator literals
 5. `secret-ctl.sh init` -- install Sealed Secrets controller (requires running cluster)
 6. `secret-ctl.sh add <app> <env>` -- encrypt and store per-environment secrets
-7. `cluster-ctl.sh add-repo-creds` -- (if private repo) give ArgoCD read access
-8. Commit and push the GitOps repo
-9. `cluster-ctl.sh argo-init` -- bootstrap ArgoCD by applying the parent-app (one-time)
-10. `cluster-ctl.sh argo-sync` -- force immediate sync of all applications
-11. `cluster-ctl.sh add-kargo-creds` -- (if private repo/registry) configure Kargo credentials (requires namespaces to exist)
-12. `user-ctl.sh add-role <name>` -- create an RBAC role with a permission preset
-13. `user-ctl.sh add <username> <group>` -- create a human user with x509 cert
-14. `user-ctl.sh add-sa <name> <group>` -- create a service account with token
+7. `cluster-ctl.sh add-argo-creds` -- (if private repo) give ArgoCD read access
+8. `cluster-ctl.sh add-registry-creds` -- (if private registry) configure kubelet pull credentials for each namespace
+9. Commit and push the GitOps repo
+10. `cluster-ctl.sh argo-init` -- bootstrap ArgoCD by applying the parent-app (one-time)
+11. `cluster-ctl.sh argo-sync` -- force immediate sync of all applications
+12. `cluster-ctl.sh add-kargo-creds` -- (if private repo/registry) configure Kargo credentials (requires namespaces to exist)
+13. `user-ctl.sh add-role <name>` -- create an RBAC role with a permission preset
+14. `user-ctl.sh add <username> <group>` -- create a human user with x509 cert
+15. `user-ctl.sh add-sa <name> <group>` -- create a service account with token
 
 ## When modifying these scripts
 
