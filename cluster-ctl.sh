@@ -648,6 +648,49 @@ cmd_renew_tls() {
     print_success "TLS certificates renewed."
 }
 
+cmd_argo_init() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+    load_conf
+
+    # Verify a cluster is reachable
+    if ! kubectl cluster-info &>/dev/null; then
+        print_error "No reachable cluster found."
+        print_info "Make sure your kubectl context points to a running cluster."
+        exit 1
+    fi
+
+    # Verify ArgoCD is installed
+    if ! kubectl get namespace argocd &>/dev/null; then
+        print_error "ArgoCD is not installed in the current cluster."
+        print_info "Run: cluster-ctl.sh init-cluster"
+        exit 1
+    fi
+
+    local parent_app="${TARGET_DIR}/argocd/parent-app.yaml"
+    if [[ ! -f "$parent_app" ]]; then
+        print_error "parent-app.yaml not found at ${parent_app}"
+        print_info "Run: infra-ctl.sh init"
+        exit 1
+    fi
+
+    print_header "ArgoCD Init"
+
+    # Check if parent-app already exists
+    if kubectl get application parent-app -n argocd &>/dev/null; then
+        print_warning "parent-app already exists in the cluster."
+        print_info "Use 'cluster-ctl.sh argo-sync' to sync."
+        return
+    fi
+
+    run_cmd "Applying parent-app to cluster..." \
+        --explain "The parent-app is the bootstrap Application that tells ArgoCD to watch argocd/apps/ for child Application manifests. This is a one-time step; after this, ArgoCD manages everything via Git." \
+        kubectl apply -f "$parent_app" -n argocd
+
+    print_success "ArgoCD initialized. The parent-app will discover and sync all child applications."
+    print_info "Run 'cluster-ctl.sh argo-sync' to trigger an immediate sync."
+}
+
 cmd_argo_sync() {
     require_gum
     require_cmd "kubectl" "brew install kubectl"
@@ -670,6 +713,12 @@ cmd_argo_sync() {
     if ! kubectl -n argocd get deploy argocd-server &>/dev/null; then
         print_error "ArgoCD server deployment not found."
         exit 1
+    fi
+
+    # Bootstrap if parent-app doesn't exist yet
+    if ! kubectl get application parent-app -n argocd &>/dev/null; then
+        print_info "parent-app not found in cluster. Running argo-init first..."
+        cmd_argo_init
     fi
 
     print_header "ArgoCD Sync"
@@ -750,6 +799,7 @@ Commands:
   add-kargo-creds     Configure Kargo access to a private Git repo and container registry
   upgrade-argocd      Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
   upgrade-kargo       Re-apply Kargo Helm release
+  argo-init           Bootstrap ArgoCD by applying the parent-app to the cluster
   argo-sync           Force ArgoCD to sync all applications immediately
   renew-tls           Regenerate mkcert certificates and update the cluster
   status              Show cluster and ArgoCD health
@@ -779,6 +829,7 @@ main() {
         add-kargo-creds) cmd_add_kargo_creds "$@" ;;
         upgrade-argocd) cmd_upgrade_argocd "$@" ;;
         upgrade-kargo) cmd_upgrade_kargo "$@" ;;
+        argo-init) cmd_argo_init "$@" ;;
         argo-sync) cmd_argo_sync "$@" ;;
         renew-tls) cmd_renew_tls "$@" ;;
         status) cmd_status "$@" ;;
