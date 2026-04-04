@@ -47,6 +47,18 @@ cmd_init() {
 
     local created_files=()
 
+    # Determine whether Kargo is active: check an existing conf file (if present)
+    # and the cluster. This covers the case where cluster-ctl installed Kargo
+    # before init ran (conf didn't exist yet) and the case where init is being
+    # re-run on an existing repo.
+    local kargo_enabled=false
+    if [[ -f "${TARGET_DIR}/.infra-ctl.conf" ]] && grep -q '^KARGO_ENABLED=true' "${TARGET_DIR}/.infra-ctl.conf"; then
+        kargo_enabled=true
+    fi
+    if kubectl get namespace kargo &>/dev/null 2>&1; then
+        kargo_enabled=true
+    fi
+
     # Create directory skeleton
     local dirs=(
         "${TARGET_DIR}/k8s/namespaces"
@@ -75,7 +87,7 @@ cmd_init() {
 
     # Create Kargo promotion order file if enabled (empty initially;
     # add-env populates it as environments are created, sorted by convention)
-    if is_kargo_enabled; then
+    if [[ "$kargo_enabled" == true ]]; then
         local promo_file="${TARGET_DIR}/kargo/promotion-order.txt"
         touch "$promo_file"
         rm -f "${TARGET_DIR}/kargo/.gitkeep"
@@ -98,6 +110,18 @@ cmd_init() {
         "REPO_URL=${repo_url}"
     created_files+=("$projects_app")
 
+    # Render kargo.yaml (umbrella Application pointing at kargo/) if Kargo is enabled.
+    # This is what applies the Kargo Project/Warehouse/Stage resources to the
+    # cluster. Without it, resources under kargo/ are never deployed.
+    if [[ "$kargo_enabled" == true ]]; then
+        local kargo_apps="${TARGET_DIR}/argocd/apps/kargo.yaml"
+        render_template \
+            "${TEMPLATE_DIR}/argocd/kargo-apps.yaml" \
+            "$kargo_apps" \
+            "REPO_URL=${repo_url}"
+        created_files+=("$kargo_apps")
+    fi
+
     # Create .gitignore if one doesn't exist
     local gitignore="${TARGET_DIR}/.gitignore"
     if safe_write "$gitignore" "$(cat "${TEMPLATE_DIR}/gitignore")"; then
@@ -108,14 +132,11 @@ cmd_init() {
     save_conf "$repo_url" "$repo_owner"
     created_files+=("${TARGET_DIR}/.infra-ctl.conf")
 
-    # Detect Kargo in the cluster and enable it in the conf.
-    # This covers the case where cluster-ctl installed Kargo before init ran
-    # (so the conf file didn't exist yet when the flag would have been written).
-    if kubectl get namespace kargo &>/dev/null 2>&1; then
+    # Persist KARGO_ENABLED=true in conf if we detected Kargo
+    if [[ "$kargo_enabled" == true ]]; then
         local conf_file="${TARGET_DIR}/.infra-ctl.conf"
         if ! grep -q '^KARGO_ENABLED=true' "$conf_file"; then
             echo "KARGO_ENABLED=true" >>"$conf_file"
-            print_info "Detected Kargo in cluster, enabled in .infra-ctl.conf"
         fi
     fi
 
@@ -1249,7 +1270,20 @@ cmd_enable_kargo() {
     rm -f "${TARGET_DIR}/kargo/.gitkeep"
     print_success "Created kargo/promotion-order.txt"
 
-    local created_files=("$promo_file")
+    local created_files=("${TARGET_DIR}/kargo/promotion-order.txt")
+
+    # Render the kargo.yaml umbrella Application if it doesn't exist.
+    # This is what applies the Kargo Project/Warehouse/Stage resources to the
+    # cluster. Without it, resources under kargo/ are never deployed.
+    local kargo_apps="${TARGET_DIR}/argocd/apps/kargo.yaml"
+    if [[ ! -f "$kargo_apps" ]]; then
+        render_template \
+            "${TEMPLATE_DIR}/argocd/kargo-apps.yaml" \
+            "$kargo_apps" \
+            "REPO_URL=${REPO_URL}"
+        created_files+=("$kargo_apps")
+        print_success "Created argocd/apps/kargo.yaml"
+    fi
 
     # Generate Kargo resources for existing apps
     local apps=()

@@ -43,6 +43,7 @@ my-gitops-repo/
 │   ├── parent-app.yaml           # App-of-apps root, watches argocd/apps/
 │   ├── apps/
 │   │   ├── projects.yaml         # Watches argocd/projects/ for AppProjects
+│   │   ├── kargo.yaml            # (if Kargo enabled) watches kargo/
 │   │   └── <app>-<env>.yaml     # One Application per app-env combination
 │   └── projects/
 │       └── <project>.yaml        # AppProject resources (access control)
@@ -137,6 +138,7 @@ Bootstraps the repository skeleton. Prompts for the Git repository URL (used in 
 - `k8s/apps/` -- where application configurations live (Kustomize base + overlays per environment)
 - `argocd/parent-app.yaml` -- the "app of apps" that tells ArgoCD to watch `argocd/apps/` for Application manifests
 - `argocd/apps/projects.yaml` -- tells ArgoCD to watch `argocd/projects/` for AppProject resources
+- `argocd/apps/kargo.yaml` -- (if Kargo enabled) tells ArgoCD to watch `kargo/` for Kargo Projects, Warehouses, and Stages
 - `argocd/projects/` -- where AppProject resources live (for access control, added later)
 - `kargo/` -- Kargo progressive delivery configuration (optional, see `enable-kargo`)
 - `.infra-ctl.conf` -- stores configuration for use by other commands (see below)
@@ -386,6 +388,7 @@ Templates live in `templates/` and use `{{PLACEHOLDER}}` markers that get replac
 |---------------|-----------|
 | `templates/argocd/parent-app.yaml` | The "app of apps" Application (`argocd/parent-app.yaml`) |
 | `templates/argocd/projects-app.yaml` | The Application that watches for AppProjects (`argocd/apps/projects.yaml`) |
+| `templates/argocd/kargo-apps.yaml` | The Application that watches for Kargo resources (`argocd/apps/kargo.yaml`, Kargo-only) |
 | `templates/argocd/app-env.yaml` | Per-app, per-environment Application manifests (`argocd/apps/<name>-<env>.yaml`) |
 | `templates/argocd/appproject.yaml` | AppProject resources (`argocd/projects/<name>.yaml`) |
 | `templates/k8s/base-kustomization.yaml` | Base Kustomize config for an app (`k8s/apps/<name>/base/kustomization.yaml`) |

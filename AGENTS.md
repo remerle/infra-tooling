@@ -26,6 +26,8 @@ k8s/                    # Kubernetes resources (what gets deployed)
 argocd/                 # ArgoCD configuration (how things get deployed)
   parent-app.yaml       # App-of-apps root, watches argocd/apps/
   apps/                 # One Application manifest per app-env combination
+    projects.yaml       # Umbrella Application that deploys argocd/projects/
+    kargo.yaml          # (if Kargo enabled) umbrella Application for kargo/
   projects/             # AppProject resources (access control)
 kargo/                  # Kargo progressive delivery (optional)
   promotion-order.txt   # Linear promotion pipeline (one env per line)
@@ -54,7 +56,7 @@ Templates are in `templates/`, organized to mirror the output directory structur
 
 | Placeholder | Source | Used in |
 |-------------|--------|---------|
-| `{{REPO_URL}}` | `.infra-ctl.conf` | `app-env.yaml`, `parent-app.yaml`, `projects-app.yaml` |
+| `{{REPO_URL}}` | `.infra-ctl.conf` | `app-env.yaml`, `parent-app.yaml`, `projects-app.yaml`, `kargo-apps.yaml` |
 | `{{REPO_OWNER}}` | `.infra-ctl.conf` | `overlay-kustomization.yaml` |
 | `{{APP_NAME}}` | User input (`add-app`) | `app-env.yaml`, `base-kustomization-deployment.yaml`, `base-kustomization-statefulset.yaml`, `overlay-kustomization.yaml`, `service.yaml`, `service-headless.yaml` |
 | `{{ENV}}` | User input (`add-env`) or detection | `app-env.yaml`, `namespace.yaml`, `overlay-kustomization.yaml` |
@@ -159,6 +161,8 @@ The `gh` CLI is a hard dependency for `cluster-ctl.sh` and `infra-ctl.sh`. It is
 ### Why projects are separate from the parent app
 
 The parent app (`argocd/parent-app.yaml`) watches `argocd/apps/`. A separate Application (`argocd/apps/projects.yaml`) watches `argocd/projects/`. This is because Application and AppProject are different resource types with different lifecycles and permission concerns. Mixing them in one directory would conflate deployment config with access control.
+
+When Kargo is enabled, a third umbrella Application (`argocd/apps/kargo.yaml`) watches `kargo/` recursively and deploys the Kargo Projects, Warehouses, and Stages. It uses `directory.include: '*.yaml'` to skip the non-manifest `kargo/promotion-order.txt` file. This umbrella Application is created during `init` (if Kargo is enabled) or by `enable-kargo`. Without it, the generated Kargo resources would sit in the repo unused.
 
 ### Why RBAC is deferred
 
