@@ -674,7 +674,7 @@ cmd_argo_sync() {
 
     print_header "ArgoCD Sync"
 
-    # Get the ArgoCD admin password for CLI access
+    # Get the ArgoCD admin password for CLI login
     local argocd_password
     argocd_password="$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)" || true
 
@@ -684,32 +684,25 @@ cmd_argo_sync() {
         exit 1
     fi
 
-    # Port-forward to ArgoCD server in background
-    local pf_pid=""
-    trap 'if [[ -n "$pf_pid" ]]; then kill "$pf_pid" 2>/dev/null || true; fi' EXIT
-    kubectl -n argocd port-forward svc/argocd-server 8543:443 &>/dev/null &
-    pf_pid=$!
-    # Give port-forward time to establish
-    sleep 2
+    # All argocd commands run inside the server pod where the CLI can reach
+    # the API server on localhost:8080 without port-forwarding.
+    local argocd_exec=(kubectl -n argocd exec deploy/argocd-server --)
 
     run_cmd "Logging in to ArgoCD..." \
-        --explain "Authenticates with the ArgoCD API server using the admin credentials. This is needed to issue sync commands." \
-        kubectl -n argocd exec deploy/argocd-server -- \
-        argocd login localhost:8080 --insecure --plaintext --username admin --password "$argocd_password"
+        --explain "Authenticates with the ArgoCD API server using the admin credentials. The CLI runs inside the server pod and connects to localhost:8080 (the API server's plaintext port)." \
+        "${argocd_exec[@]}" argocd login localhost:8080 --insecure --plaintext --username admin --password "$argocd_password"
 
-    # Sync parent app first, then wait for child apps to appear
+    # Sync parent app first so child apps are discovered
     run_cmd "Syncing parent-app..." \
         --explain "The parent-app is the 'app of apps' that discovers all Application manifests in argocd/apps/. Syncing it first ensures ArgoCD knows about all child applications." \
-        kubectl -n argocd exec deploy/argocd-server -- \
-        argocd app sync parent-app --plaintext
+        "${argocd_exec[@]}" argocd app sync parent-app --plaintext
 
     # Brief wait for child apps to be discovered
     sleep 3
 
     # Get all apps and sync them
     local apps
-    apps="$(kubectl -n argocd exec deploy/argocd-server -- \
-        argocd app list --plaintext -o name 2>/dev/null | grep -v '^parent-app$' || true)"
+    apps="$("${argocd_exec[@]}" argocd app list --plaintext -o name 2>/dev/null | grep -v '^parent-app$' || true)"
 
     if [[ -n "$apps" ]]; then
         local app
@@ -717,8 +710,7 @@ cmd_argo_sync() {
             [[ -z "$app" ]] && continue
             run_cmd "Syncing ${app}..." \
                 --explain "Triggers an immediate sync for ${app}, applying the latest Git state to the cluster without waiting for the default 3-minute poll interval." \
-                kubectl -n argocd exec deploy/argocd-server -- \
-                argocd app sync "$app" --plaintext
+                "${argocd_exec[@]}" argocd app sync "$app" --plaintext
         done <<<"$apps"
     fi
 
