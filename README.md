@@ -486,9 +486,12 @@ cluster-ctl.sh add-repo-creds
 git add -A
 git commit -m "Deploy e-commerce app to dev, staging, and prod"
 git push
+
+# Force ArgoCD to sync immediately (otherwise it polls every 3 minutes)
+cluster-ctl.sh argo-sync
 ```
 
-ArgoCD detects the changes and deploys everything. The parent app watches `argocd/apps/`, sees the Application manifests, and each Application syncs its overlay to the cluster. Wait for ArgoCD to sync before proceeding -- Kargo credentials require the app namespaces to exist, which are created when ArgoCD deploys the Kargo Project resources.
+ArgoCD detects the changes and deploys everything. The parent app watches `argocd/apps/`, sees the Application manifests, and each Application syncs its overlay to the cluster. `argo-sync` triggers this immediately rather than waiting for the poll interval. Wait for the sync to complete before proceeding -- Kargo credentials require the app namespaces to exist, which are created when ArgoCD deploys the Kargo Project resources.
 
 ### 8. Configure Kargo credentials (if private repo/registry)
 

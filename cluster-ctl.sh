@@ -648,6 +648,85 @@ cmd_renew_tls() {
     print_success "TLS certificates renewed."
 }
 
+cmd_argo_sync() {
+    require_gum
+    require_cmd "kubectl" "brew install kubectl"
+
+    # Verify a cluster is reachable
+    if ! kubectl cluster-info &>/dev/null; then
+        print_error "No reachable cluster found."
+        print_info "Make sure your kubectl context points to a running cluster."
+        exit 1
+    fi
+
+    # Verify ArgoCD is installed
+    if ! kubectl get namespace argocd &>/dev/null; then
+        print_error "ArgoCD is not installed in the current cluster."
+        print_info "Run: cluster-ctl.sh init-cluster"
+        exit 1
+    fi
+
+    # Verify the ArgoCD server is ready
+    if ! kubectl -n argocd get deploy argocd-server &>/dev/null; then
+        print_error "ArgoCD server deployment not found."
+        exit 1
+    fi
+
+    print_header "ArgoCD Sync"
+
+    # Get the ArgoCD admin password for CLI access
+    local argocd_password
+    argocd_password="$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' 2>/dev/null | base64 -d)" || true
+
+    if [[ -z "$argocd_password" ]]; then
+        print_error "Could not retrieve ArgoCD admin password."
+        print_info "The argocd-initial-admin-secret may have been deleted."
+        exit 1
+    fi
+
+    # Port-forward to ArgoCD server in background
+    local pf_pid
+    kubectl -n argocd port-forward svc/argocd-server 8543:443 &>/dev/null &
+    pf_pid=$!
+    # Give port-forward time to establish
+    sleep 2
+
+    # Ensure port-forward is cleaned up on exit
+    trap 'kill "$pf_pid" 2>/dev/null || true' EXIT
+
+    run_cmd "Logging in to ArgoCD..." \
+        --explain "Authenticates with the ArgoCD API server using the admin credentials. This is needed to issue sync commands." \
+        kubectl -n argocd exec deploy/argocd-server -- \
+        argocd login localhost:8080 --insecure --plaintext --username admin --password "$argocd_password"
+
+    # Sync parent app first, then wait for child apps to appear
+    run_cmd "Syncing parent-app..." \
+        --explain "The parent-app is the 'app of apps' that discovers all Application manifests in argocd/apps/. Syncing it first ensures ArgoCD knows about all child applications." \
+        kubectl -n argocd exec deploy/argocd-server -- \
+        argocd app sync parent-app --plaintext
+
+    # Brief wait for child apps to be discovered
+    sleep 3
+
+    # Get all apps and sync them
+    local apps
+    apps="$(kubectl -n argocd exec deploy/argocd-server -- \
+        argocd app list --plaintext -o name 2>/dev/null | grep -v '^parent-app$' || true)"
+
+    if [[ -n "$apps" ]]; then
+        local app
+        while IFS= read -r app; do
+            [[ -z "$app" ]] && continue
+            run_cmd "Syncing ${app}..." \
+                --explain "Triggers an immediate sync for ${app}, applying the latest Git state to the cluster without waiting for the default 3-minute poll interval." \
+                kubectl -n argocd exec deploy/argocd-server -- \
+                argocd app sync "$app" --plaintext
+        done <<<"$apps"
+    fi
+
+    print_success "All applications synced."
+}
+
 # --- Usage ---
 
 cmd_preflight_check() {
@@ -681,6 +760,7 @@ Commands:
   add-kargo-creds     Configure Kargo access to a private Git repo and container registry
   upgrade-argocd      Re-apply ArgoCD Helm values (after editing helm/argocd-values.yaml)
   upgrade-kargo       Re-apply Kargo Helm release
+  argo-sync           Force ArgoCD to sync all applications immediately
   renew-tls           Regenerate mkcert certificates and update the cluster
   status              Show cluster and ArgoCD health
   preflight-check     Verify all required tools are installed
@@ -709,6 +789,7 @@ main() {
         add-kargo-creds) cmd_add_kargo_creds "$@" ;;
         upgrade-argocd) cmd_upgrade_argocd "$@" ;;
         upgrade-kargo) cmd_upgrade_kargo "$@" ;;
+        argo-sync) cmd_argo_sync "$@" ;;
         renew-tls) cmd_renew_tls "$@" ;;
         status) cmd_status "$@" ;;
         preflight-check) cmd_preflight_check "$@" ;;
