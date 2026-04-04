@@ -382,16 +382,7 @@ infra-ctl.sh init
 # Enter your repo URL when prompted
 ```
 
-### 2. Configure repository credentials (if private repo)
-
-For a private GitOps repo, ArgoCD needs read access. Skip this step for public repos.
-
-```bash
-cluster-ctl.sh add-repo-creds
-# Enter a GitHub PAT with repo read access
-```
-
-### 3. Add environments
+### 2. Add environments
 
 ```bash
 infra-ctl.sh add-env dev
@@ -401,7 +392,7 @@ infra-ctl.sh add-env prod
 
 This creates namespace manifests and sets up the overlay directories that will hold per-environment configuration.
 
-### 4. Add the applications
+### 3. Add the applications
 
 Each `add-app` command prompts for a workload type, a preset, and preset-specific options (image, port, probes, secrets, config). Presets pre-fill sensible defaults; you can accept or override each one.
 
@@ -447,7 +438,7 @@ infra-ctl.sh add-app postgres
 
 Each command generates a workload manifest (Deployment or StatefulSet), a Kustomize base with Service, per-env overlays, and ArgoCD Application manifests. For backend and frontend, Kargo resources are also generated: a Warehouse (watches the container registry for new tags) and Stages (one per environment in the promotion pipeline). Postgres doesn't get Kargo resources because it uses `postgres:16-alpine` directly rather than a CI-built image.
 
-### 5. Add ingress for the frontend
+### 4. Add ingress for the frontend
 
 ```bash
 infra-ctl.sh add-ingress frontend
@@ -456,7 +447,7 @@ infra-ctl.sh add-ingress frontend
 
 This generates `k8s/apps/frontend/base/ingress.yaml` and registers it in the base `kustomization.yaml`. The frontend becomes accessible at `http://app.localhost` via k3d's built-in Traefik ingress controller (requires ports 80/443 exposed during `cluster-ctl.sh init-cluster`).
 
-### 6. Create secrets
+### 5. Create secrets
 
 The backend and postgres manifests reference Secrets for credentials. `add-app` prints the required `secret-ctl.sh` commands after creating each app. Use Sealed Secrets to create encrypted secrets that are safe to commit:
 
@@ -480,9 +471,28 @@ kubectl create secret generic backend-secrets -n dev \
   --from-literal=DATABASE_URL=postgresql://store:store@postgres:5432/store
 ```
 
-### 7. Configure Kargo credentials (if private repo/registry)
+### 6. Configure ArgoCD repository credentials (if private repo)
 
-Kargo needs read+write access to the GitOps repo and optionally read access to the container registry. Both commands prompt for a GitHub Personal Access Token.
+For a private GitOps repo, ArgoCD needs read access. Skip this step for public repos.
+
+```bash
+cluster-ctl.sh add-repo-creds
+# Enter a GitHub PAT with repo read access
+```
+
+### 7. Commit and push
+
+```bash
+git add -A
+git commit -m "Deploy e-commerce app to dev, staging, and prod"
+git push
+```
+
+ArgoCD detects the changes and deploys everything. The parent app watches `argocd/apps/`, sees the Application manifests, and each Application syncs its overlay to the cluster. Wait for ArgoCD to sync before proceeding -- Kargo credentials require the app namespaces to exist, which are created when ArgoCD deploys the Kargo Project resources.
+
+### 8. Configure Kargo credentials (if private repo/registry)
+
+Kargo needs read+write access to the GitOps repo and optionally read access to the container registry. These credentials are stored in Kubernetes Secrets in each app's namespace, which must exist before running these commands.
 
 ```bash
 cluster-ctl.sh add-kargo-creds backend
@@ -494,16 +504,6 @@ cluster-ctl.sh add-kargo-creds frontend
 ```
 
 Postgres doesn't need Kargo credentials because it has no Kargo resources (no Warehouse or Stages were generated for it). For a public repo and registry, skip this step entirely.
-
-### 8. Commit and push
-
-```bash
-git add -A
-git commit -m "Deploy e-commerce app to dev, staging, and prod"
-git push
-```
-
-ArgoCD detects the changes and deploys everything. The parent app watches `argocd/apps/`, sees the Application manifests, and each Application syncs its overlay to the cluster.
 
 ### 9. Verify
 
