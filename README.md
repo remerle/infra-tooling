@@ -275,7 +275,7 @@ cluster-ctl.sh delete-cluster
 
 #### `argo-init`
 
-Bootstraps ArgoCD by applying the parent-app to the cluster. This is a one-time step that tells ArgoCD to watch the Git repository for Application manifests. Checks for repo access errors and suggests `add-repo-creds` if the repo is private.
+Bootstraps ArgoCD by applying the parent-app to the cluster. This is a one-time step that tells ArgoCD to watch the Git repository for Application manifests. Checks for repo access errors and suggests `add-argo-creds` if the repo is private.
 
 ```bash
 cluster-ctl.sh argo-init
@@ -303,6 +303,22 @@ Shows current cluster status: k3d clusters, kubectl context, and ArgoCD pod heal
 
 ```bash
 cluster-ctl.sh status
+```
+
+#### `add-argo-creds`
+
+Configures ArgoCD to access a private Git repository. Creates a labeled Kubernetes Secret in the `argocd` namespace that ArgoCD auto-discovers for repository authentication.
+
+```bash
+cluster-ctl.sh add-argo-creds
+```
+
+#### `add-registry-creds`
+
+Configures kubelet to pull container images from a private registry. Creates a `docker-registry` Secret and patches the default ServiceAccount in each selected namespace. Detects environments from the GitOps repo and creates namespaces if they don't exist yet.
+
+```bash
+cluster-ctl.sh add-registry-creds
 ```
 
 ### k3d cluster architecture
@@ -499,13 +515,21 @@ kubectl create secret generic backend-secrets -n dev \
   --from-literal=DATABASE_URL=postgresql://store:store@postgres:5432/store
 ```
 
-### 6. Configure ArgoCD repository credentials (if private repo)
+### 6. Configure credentials (if private repo/registry)
 
-For a private GitOps repo, ArgoCD needs read access. Skip this step for public repos.
+For a private GitOps repo, ArgoCD needs read access:
 
 ```bash
-cluster-ctl.sh add-repo-creds
+cluster-ctl.sh add-argo-creds
 # Enter a GitHub PAT with repo read access
+```
+
+For a private container registry (e.g., ghcr.io), kubelet needs pull credentials. This creates namespaces if they don't exist and configures each one:
+
+```bash
+cluster-ctl.sh add-registry-creds
+# Enter the registry server (default: ghcr.io), username, and a token with read:packages
+# Select which namespaces to configure
 ```
 
 ### 7. Commit, push, and bootstrap ArgoCD
