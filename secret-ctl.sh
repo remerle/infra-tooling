@@ -174,7 +174,8 @@ cmd_add() {
     done
 
     local secret_json
-    secret_json="$(jq -n --arg name "$app_name" --arg ns "$env_name" --argjson data "$data_json" \
+    local secret_name="${app_name}-secrets"
+    secret_json="$(jq -n --arg name "$secret_name" --arg ns "$env_name" --argjson data "$data_json" \
         '{"apiVersion":"v1","kind":"Secret","metadata":{"name":$name,"namespace":$ns},"type":"Opaque","stringData":$data}')"
 
     if [[ -f "$sealed_file" ]]; then
