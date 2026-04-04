@@ -685,14 +685,12 @@ cmd_argo_sync() {
     fi
 
     # Port-forward to ArgoCD server in background
-    local pf_pid
+    local pf_pid=""
+    trap 'if [[ -n "$pf_pid" ]]; then kill "$pf_pid" 2>/dev/null || true; fi' EXIT
     kubectl -n argocd port-forward svc/argocd-server 8543:443 &>/dev/null &
     pf_pid=$!
     # Give port-forward time to establish
     sleep 2
-
-    # Ensure port-forward is cleaned up on exit
-    trap 'kill "$pf_pid" 2>/dev/null || true' EXIT
 
     run_cmd "Logging in to ArgoCD..." \
         --explain "Authenticates with the ArgoCD API server using the admin credentials. This is needed to issue sync commands." \
