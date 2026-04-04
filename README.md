@@ -269,6 +269,30 @@ Tears down a k3d cluster. Lists existing clusters and prompts for which one to d
 cluster-ctl.sh delete-cluster
 ```
 
+#### `argo-init`
+
+Bootstraps ArgoCD by applying the parent-app to the cluster. This is a one-time step that tells ArgoCD to watch the Git repository for Application manifests. Checks for repo access errors and suggests `add-repo-creds` if the repo is private.
+
+```bash
+cluster-ctl.sh argo-init
+```
+
+#### `argo-sync`
+
+Forces an immediate sync of all ArgoCD applications. Logs into ArgoCD via the server pod, syncs the parent-app first (to discover child apps), then syncs all child applications. Auto-runs `argo-init` if the parent-app hasn't been applied yet.
+
+```bash
+cluster-ctl.sh argo-sync
+```
+
+#### `argo-status`
+
+Shows sync status, health, and errors for all ArgoCD-managed applications. Displays a summary with counts and per-app details with color-coded status.
+
+```bash
+cluster-ctl.sh argo-status
+```
+
 #### `status`
 
 Shows current cluster status: k3d clusters, kubectl context, and ArgoCD pod health.
