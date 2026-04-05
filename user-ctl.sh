@@ -462,13 +462,47 @@ cmd_add() {
     require_yq
     require_helm
 
-    if [[ $# -lt 2 ]]; then
-        print_error "Usage: user-ctl.sh add <username> <group>"
-        exit 1
-    fi
+    local name_flag="" group_flag=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --group)
+                require_flag_value "--group" "${2:-}"
+                group_flag="$2"
+                shift 2
+                ;;
+            -h | --help)
+                echo "Usage: user-ctl.sh add [name] --group <group>"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then
+                    name_flag="$1"
+                else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
 
-    local username="$1"
-    local group="$2"
+    local username="$name_flag"
+    if [[ -z "$username" ]]; then
+        username="$(prompt_or_die "Username" "--name")"
+    fi
+    local group="$group_flag"
+    if [[ -z "$group" ]]; then
+        group="$(prompt_or_die "Group" "--group")"
+    fi
     validate_k8s_name "$username" "Username"
     validate_k8s_name "$group" "Group"
 
@@ -624,6 +658,8 @@ cmd_remove() {
         fi
     fi
 
+    validate_k8s_name "$username" "Username"
+
     if ! account_exists "$username" "$VALUES_FILE"; then
         print_error "Account '${username}' not found."
         exit 1
@@ -633,10 +669,10 @@ cmd_remove() {
 
     require_yes "$yes" "remove user '${username}'"
 
-    # Delete k8s CSR if it exists
-    run_cmd_sh "Removing K8s CSR..." \
+    # Delete k8s CSR if it exists (argv form; username validated above)
+    run_cmd "Removing K8s CSR..." \
         --explain "Cleaning up the CSR resource from the cluster. Note that the issued certificate cannot be revoked -- Kubernetes has no certificate revocation mechanism." \
-        "kubectl delete csr '$username' --ignore-not-found 2>/dev/null || true"
+        kubectl delete csr "$username" --ignore-not-found
     print_success "K8s CSR removed."
 
     # Warn about x509 certificate limitation
@@ -724,21 +760,20 @@ cmd_add_sa() {
     require_yq
     require_helm
 
-    if [[ $# -lt 2 ]]; then
-        print_error "Usage: user-ctl.sh add-sa <name> <group> [--duration <hours>h]"
-        exit 1
-    fi
-
-    local sa_name="$1"
-    local group="$2"
-    shift 2
-    validate_k8s_name "$sa_name" "Service account name"
-    validate_k8s_name "$group" "Group"
-
-    # Parse optional --duration flag
+    local name_flag="" group_flag=""
     local duration="2160h" # 90 days default
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --group)
+                require_flag_value "--group" "${2:-}"
+                group_flag="$2"
+                shift 2
+                ;;
             --duration)
                 require_flag_value "--duration" "${2:-}"
                 duration="$2"
@@ -748,12 +783,36 @@ cmd_add_sa() {
                 fi
                 shift 2
                 ;;
-            *)
-                print_error "Unknown option: $1"
+            -h | --help)
+                echo "Usage: user-ctl.sh add-sa [name] --group <group> [--duration <hours>h]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
                 exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then
+                    name_flag="$1"
+                else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
                 ;;
         esac
     done
+
+    local sa_name="$name_flag"
+    if [[ -z "$sa_name" ]]; then
+        sa_name="$(prompt_or_die "Service account name" "--name")"
+    fi
+    local group="$group_flag"
+    if [[ -z "$group" ]]; then
+        group="$(prompt_or_die "Group" "--group")"
+    fi
+    validate_k8s_name "$sa_name" "Service account name"
+    validate_k8s_name "$group" "Group"
 
     # Verify role exists
     if ! role_exists "$group" "$VALUES_FILE"; then
@@ -929,17 +988,15 @@ cmd_refresh_sa() {
     require_gum
     require_cmd "kubectl" "brew install kubectl"
 
-    local sa_name=""
+    local name_flag=""
     local duration="2160h"
-
-    # Parse: first non-flag arg is the SA name
-    if [[ $# -gt 0 && "$1" != --* ]]; then
-        sa_name="$1"
-        shift
-    fi
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
             --duration)
                 require_flag_value "--duration" "${2:-}"
                 duration="$2"
@@ -949,12 +1006,27 @@ cmd_refresh_sa() {
                 fi
                 shift 2
                 ;;
-            *)
-                print_error "Unknown option: $1"
+            -h | --help)
+                echo "Usage: user-ctl.sh refresh-sa [name] [--duration <hours>h]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
                 exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then
+                    name_flag="$1"
+                else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
                 ;;
         esac
     done
+
+    local sa_name="$name_flag"
 
     # Interactive selection if name not provided
     if [[ -z "$sa_name" ]]; then
@@ -1042,22 +1114,34 @@ cmd_remove_sa() {
         fi
     fi
 
+    validate_k8s_name "$sa_name" "Service account name"
+
     print_header "Remove Service Account: ${sa_name}"
 
     require_yes "$yes" "remove service account '${sa_name}'"
 
-    # Delete ServiceAccount and RBAC bindings
-    run_cmd_sh "Removing ServiceAccount and RBAC bindings..." \
+    # Delete ServiceAccount and RBAC bindings (argv form; sa_name is validated above)
+    run_cmd "Deleting ServiceAccount..." \
         --explain "Deleting the ServiceAccount invalidates all tokens immediately (tokens are tied to the SA). Unlike x509 cert users, SA removal is an effective instant revocation." \
-        "
-        kubectl delete serviceaccount \"${sa_name}\" -n kube-system --ignore-not-found
-        kubectl delete clusterrolebinding \"${sa_name}\" --ignore-not-found 2>/dev/null || true
-        kubectl delete clusterrolebinding \"${sa_name}-cluster-readonly\" --ignore-not-found 2>/dev/null || true
-        for ns in \$(kubectl get rolebinding -A -l app.kubernetes.io/managed-by=user-ctl \
-            -o jsonpath=\"{range .items[?(@.metadata.name==\\\"${sa_name}\\\")]}{.metadata.namespace}{\\\"\\\\n\\\"}{end}\" 2>/dev/null); do
-            kubectl delete rolebinding \"${sa_name}\" -n \"\$ns\" --ignore-not-found 2>/dev/null || true
-        done
-    "
+        kubectl delete serviceaccount "$sa_name" -n kube-system --ignore-not-found
+    run_cmd "Deleting ClusterRoleBinding (primary)..." \
+        --explain "Removes the ClusterRoleBinding that grants this SA its cluster-scoped role. Ignored if absent." \
+        kubectl delete clusterrolebinding "$sa_name" --ignore-not-found
+    run_cmd "Deleting ClusterRoleBinding (cluster-readonly)..." \
+        --explain "Removes the paired cluster-readonly binding created alongside admin-readonly-settings SAs. Ignored if absent." \
+        kubectl delete clusterrolebinding "${sa_name}-cluster-readonly" --ignore-not-found
+    # Find namespaces that still have a rolebinding for this SA (managed by user-ctl)
+    local ns_list
+    ns_list="$(kubectl get rolebinding -A -l app.kubernetes.io/managed-by=user-ctl \
+        -o jsonpath="{range .items[?(@.metadata.name=='${sa_name}')]}{.metadata.namespace}{'\n'}{end}" 2>/dev/null || true)"
+    if [[ -n "$ns_list" ]]; then
+        while IFS= read -r ns; do
+            [[ -z "$ns" ]] && continue
+            run_cmd "Deleting RoleBinding in ${ns}..." \
+                --explain "Removes the namespaced RoleBinding for this SA. Ignored if absent." \
+                kubectl delete rolebinding "$sa_name" -n "$ns" --ignore-not-found
+        done <<<"$ns_list"
+    fi
     print_success "ServiceAccount and RBAC bindings removed."
 
     # Remove ArgoCD account

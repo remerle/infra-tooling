@@ -15,10 +15,7 @@ cmd_init() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --repo-url)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--repo-url requires a value"
-                    exit 1
-                }
+                require_flag_value "--repo-url" "${2:-}"
                 repo_url_flag="$2"
                 shift 2
                 ;;
@@ -215,58 +212,42 @@ cmd_add_app() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--name requires a value"
-                    exit 1
-                }
+                require_flag_value "--name" "${2:-}"
                 app_name_flag="$2"
                 shift 2
                 ;;
             --project)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--project requires a value"
-                    exit 1
-                }
+                require_flag_value "--project" "${2:-}"
                 project_flag="$2"
                 shift 2
                 ;;
             --workload-type)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--workload-type requires a value"
-                    exit 1
-                }
+                require_flag_value "--workload-type" "${2:-}"
                 workload_type_flag="$(tr '[:upper:]' '[:lower:]' <<<"$2")"
                 shift 2
                 ;;
             --preset)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--preset requires a value"
-                    exit 1
-                }
+                require_flag_value "--preset" "${2:-}"
                 preset_flag="$2"
                 shift 2
                 ;;
             --set)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--set requires KEY=VAL"
-                    exit 1
-                }
+                require_flag_value "--set" "${2:-}"
                 parse_set_kv "$2" set_values
                 shift 2
                 ;;
             --secret-key)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--secret-key requires a value"
-                    exit 1
-                }
+                require_flag_value "--secret-key" "${2:-}"
                 secret_keys_flag+=("$2")
                 shift 2
                 ;;
             --config)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--config requires KEY=VAL"
+                require_flag_value "--config" "${2:-}"
+                if [[ "$2" != *"="* ]]; then
+                    print_error "--config expects KEY=VAL, got: $2"
                     exit 1
-                }
+                fi
+                validate_configmap_key "${2%%=*}" "--config key"
                 config_flag_entries+=("$2")
                 shift 2
                 ;;
@@ -279,10 +260,7 @@ cmd_add_app() {
                 shift
                 ;;
             --image-repo)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--image-repo requires a value"
-                    exit 1
-                }
+                require_flag_value "--image-repo" "${2:-}"
                 image_repo_flag="$2"
                 shift 2
                 ;;
@@ -291,34 +269,22 @@ cmd_add_app() {
                 shift
                 ;;
             --image)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--image requires a value"
-                    exit 1
-                }
+                require_flag_value "--image" "${2:-}"
                 image_flag="$2"
                 shift 2
                 ;;
             --port)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--port requires a value"
-                    exit 1
-                }
+                require_flag_value "--port" "${2:-}"
                 port_flag="$2"
                 shift 2
                 ;;
             --secret-name)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--secret-name requires a value"
-                    exit 1
-                }
+                require_flag_value "--secret-name" "${2:-}"
                 secret_name_flag="$2"
                 shift 2
                 ;;
             --probe-path)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--probe-path requires a value"
-                    exit 1
-                }
+                require_flag_value "--probe-path" "${2:-}"
                 probe_path_flag="$2"
                 shift 2
                 ;;
@@ -792,9 +758,7 @@ EOF
         fi
     fi
 
-    if [[ "$yes" != "true" ]] && [[ -t 0 ]]; then
-        confirm_or_abort "Create these files?"
-    fi
+    require_yes "$yes" "create these files"
 
     local created_files=()
 
@@ -861,12 +825,20 @@ EOF
         created_files+=("$workload_output")
     fi
 
-    # Append config entries to base configMapGenerator via yq
+    # Upsert config entries into base configMapGenerator via yq.
+    # For each entry, first strip any existing literal with the same key,
+    # then append the new one. This prevents duplicate-key failures from
+    # kustomize build when the user passes --config KEY=val more than once
+    # or reuses a key already present in the template.
     if [[ ${#config_entries[@]} -gt 0 ]]; then
-        local entry
+        local entry key
         for entry in "${config_entries[@]}"; do
-            yq eval -i \
-                ".configMapGenerator[0].literals += [\"${entry}\"]" \
+            key="${entry%%=*}"
+            YQ_KEY="$key" yq eval -i \
+                '.configMapGenerator[0].literals |= map(select((split("=")[0]) != env(YQ_KEY)))' \
+                "$base_kustomization"
+            YQ_ENTRY="$entry" yq eval -i \
+                '.configMapGenerator[0].literals += [env(YQ_ENTRY)]' \
                 "$base_kustomization"
         done
     fi
@@ -914,7 +886,8 @@ EOF
                 validate_image_repo "$image_repo" && break
             done
         else
-            image_repo="$default_image_repo"
+            print_error "--image-repo is required when --kargo is set and not running interactively"
+            exit 1
         fi
         validate_image_repo "$image_repo"
 
@@ -985,18 +958,12 @@ cmd_add_ingress() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --app)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--app requires a value"
-                    exit 1
-                }
+                require_flag_value "--app" "${2:-}"
                 app_name_flag="$2"
                 shift 2
                 ;;
             --env)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--env requires a value"
-                    exit 1
-                }
+                require_flag_value "--env" "${2:-}"
                 env_flags+=("$2")
                 shift 2
                 ;;
@@ -1121,9 +1088,7 @@ cmd_add_ingress() {
         print_info "  ${env}.${app_name}.localhost -> overlays/${env}/ingress.yaml"
     done
 
-    if [[ "$yes" != "true" ]] && [[ -t 0 ]]; then
-        confirm_or_abort "Create ingress?"
-    fi
+    require_yes "$yes" "create ingress"
 
     local created_files=()
 
@@ -1412,9 +1377,7 @@ cmd_add_env() {
         fi
     fi
 
-    if [[ "$yes" != "true" ]] && [[ -t 0 ]]; then
-        confirm_or_abort "Create these files?"
-    fi
+    require_yes "$yes" "create these files"
 
     local created_files=()
 
@@ -2067,10 +2030,7 @@ cmd_enable_kargo() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --image-repo)
-                [[ -z "${2:-}" ]] && {
-                    print_error "--image-repo requires <app>=<url>"
-                    exit 1
-                }
+                require_flag_value "--image-repo" "${2:-}"
                 local _k="${2%%=*}" _v="${2#*=}"
                 [[ -z "$_k" || "$_k" == "$_v" ]] && {
                     print_error "--image-repo expects <app>=<url>, got: $2"
@@ -2131,9 +2091,7 @@ cmd_enable_kargo() {
             print_info "  $((i + 1)). ${PROMOTION_ORDER[$i]}"
         done
 
-        if [[ "$yes" != "true" ]] && [[ -t 0 ]]; then
-            confirm_or_abort "Use this order? (Edit kargo/promotion-order.txt after to change)"
-        fi
+        require_yes "$yes" "use this promotion order (edit kargo/promotion-order.txt after to change)"
     else
         mkdir -p "${TARGET_DIR}/kargo"
         touch "${TARGET_DIR}/kargo/promotion-order.txt"
@@ -2182,7 +2140,8 @@ cmd_enable_kargo() {
                     validate_image_repo "$image_repo" && break
                 done
             else
-                image_repo="$default_image_repo"
+                print_error "--image-repo ${app}=<url> is required when not running interactively"
+                exit 1
             fi
             validate_image_repo "$image_repo"
 

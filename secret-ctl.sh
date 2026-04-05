@@ -262,8 +262,16 @@ cmd_add() {
                 value="${value%x}"
             elif [[ "$value" == @* ]]; then
                 local file="${value#@}"
+                # Reject symlinks: -h catches symlinks even to regular files; use it
+                # before -f so the caller can't coax us into following a link to an
+                # unexpected path (e.g., a link from a checked-in secrets dir to /etc/shadow).
+                if [[ -L "$file" ]]; then
+                    print_error "Refusing to read symlink: ${file}"
+                    exit 1
+                fi
+                # Require a regular file (rejects FIFOs, device nodes, directories).
                 if [[ ! -f "$file" ]]; then
-                    print_error "File not found: ${file}"
+                    print_error "File not found or not a regular file: ${file}"
                     exit 1
                 fi
                 # 1 MiB size guard - secrets larger than this are almost certainly a misconfiguration
@@ -282,8 +290,12 @@ cmd_add() {
             fi
             validate_secret_key "$key"
 
-            # Overwrite check
-            if [[ -f "$sealed_file" ]] && grep -q "^\s*${key}:" "$sealed_file"; then
+            # Overwrite check (use yq so regex-unsafe characters in $key are irrelevant)
+            local _key_exists="false"
+            if [[ -f "$sealed_file" ]]; then
+                _key_exists="$(YQ_KEY="$key" yq eval '.spec.encryptedData | has(env(YQ_KEY))' "$sealed_file" 2>/dev/null)" || _key_exists="false"
+            fi
+            if [[ "$_key_exists" == "true" ]]; then
                 if [[ "$overwrite_flag" == "true" ]]; then
                     : # allow
                 elif [[ "$overwrite_flag" == "false" ]]; then

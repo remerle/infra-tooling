@@ -322,7 +322,7 @@ Every command listed above accepts flags for every value it would otherwise prom
 | `init` | `--repo-url <url>`, `--yes` |
 | `add-app` | `--name`, `--project`, `--workload-type`, `--preset`, `--set KEY=VAL` (repeatable, validated against preset), `--secret-key NAME` (repeatable), `--config KEY=VAL` (repeatable), `--kargo`/`--no-kargo`, `--image-repo`, `--custom`, `--image`, `--port`, `--secret-name`, `--probe-path`, `--yes` |
 | `add-env` | `--name`, `--yes` |
-| `add-project` | `--name`, `--description`, `--restrict-repos`/`--no-restrict-repos`, `--source-repo URL` (repeatable), `--namespace NAME` (repeatable), `--cluster-resources`/`--no-cluster-resources` |
+| `add-project` | `--name`, `--description`, `--restrict-repos`/`--no-restrict-repos`, `--source-repo URL` (repeatable), `--namespace NAME` (repeatable; implicitly restricts namespaces), `--no-restrict-namespaces`, `--cluster-resources`/`--no-cluster-resources` |
 | `edit-project` | same as `add-project` |
 | `add-ingress` | `--app`, `--env NAME` (repeatable), `--yes` |
 | `remove-ingress` | `--app`, `--env NAME` (repeatable), `--yes` |
@@ -488,8 +488,8 @@ cluster-ctl.sh preflight-check
 | `init-cluster` | `--name`, `--agents`, `--expose-ports`/`--no-expose-ports`, `--tls`/`--no-tls`, `--argocd`/`--no-argocd`, `--kargo`/`--no-kargo`, `--kargo-password` |
 | `delete-cluster` | `--name`, `--yes` |
 | `add-argo-creds` | `--pat`, `--yes` |
-| `add-registry-creds` | `--registry`, `--username`, `--token`, `--env NAME` (repeatable) |
-| `add-kargo-creds` | `--app`, `--pat`, `--private-registry`/`--no-private-registry` |
+| `add-registry-creds` | `--registry`, `--username`, `--token`, `--env NAME` (repeatable), `--yes` |
+| `add-kargo-creds` | `--app`, `--pat`, `--private-registry`/`--no-private-registry`, `--yes` |
 
 Run `cluster-ctl.sh <command> --help` for details.
 
@@ -666,12 +666,12 @@ Lists all configured roles.
 user-ctl.sh list-roles
 ```
 
-#### `add <username> <group>`
+#### `add [username] --group <group>`
 
-Creates a human user. Generates an x509 client certificate signed by the cluster CA, a `kubectl` kubeconfig snippet, and the RoleBinding that ties the user (via its group) to the role of the same name. The group must already exist as a role (run `add-role <group>` first).
+Creates a human user. Generates an x509 client certificate signed by the cluster CA, a `kubectl` kubeconfig snippet, and the RoleBinding that ties the user (via its group) to the role of the same name. The group must already exist as a role (run `add-role <group>` first). The first positional argument is shorthand for `--name`.
 
 ```bash
-user-ctl.sh add alice developer
+user-ctl.sh add alice --group developer
 ```
 
 #### `remove [username]`
@@ -690,12 +690,12 @@ Lists all humans and service accounts with their groups.
 user-ctl.sh list
 ```
 
-#### `add-sa <name> <group> [--duration <hours>h]`
+#### `add-sa [name] --group <group> [--duration <hours>h]`
 
-Creates a Kubernetes ServiceAccount with a time-bounded token and binds it to the role of the same name. Default token duration is 2160h (90 days). The token and matching kubeconfig snippet are printed so you can copy them into CI.
+Creates a Kubernetes ServiceAccount with a time-bounded token and binds it to the role of the same name. Default token duration is 2160h (90 days). The token and matching kubeconfig snippet are printed so you can copy them into CI. The first positional argument is shorthand for `--name`.
 
 ```bash
-user-ctl.sh add-sa ci-bot developer --duration 720h
+user-ctl.sh add-sa ci-bot --group developer --duration 720h
 ```
 
 #### `remove-sa [name]`
@@ -706,9 +706,9 @@ Removes a service account (SA + RoleBinding entry). Prompts if no name is given.
 user-ctl.sh remove-sa ci-bot
 ```
 
-#### `refresh-sa [name]`
+#### `refresh-sa [name] [--duration <hours>h]`
 
-Regenerates the token for an existing service account without changing its role bindings. Use this when a token is about to expire or has leaked.
+Regenerates the token for an existing service account without changing its role bindings. Use this when a token is about to expire or has leaked. The first positional argument is shorthand for `--name`.
 
 ```bash
 user-ctl.sh refresh-sa ci-bot
@@ -730,9 +730,11 @@ user-ctl.sh preflight-check
 | `remove-role` | `--name`, `--yes` |
 | `remove` | `--name`, `--yes` |
 | `remove-sa` | `--name`, `--yes` |
-| `add-sa`, `refresh-sa` | `--duration` |
+| `add` | `--name`, `--group` |
+| `add-sa` | `--name`, `--group`, `--duration` |
+| `refresh-sa` | `--name`, `--duration` |
 
-`add` and `add-sa` take `<username> <group>` as positional arguments. Run `user-ctl.sh <command> --help` for details.
+For `add`, `add-sa`, and `refresh-sa` the first positional argument is shorthand for `--name`. `--group` is flag-only. Run `user-ctl.sh <command> --help` for details.
 
 ## Templates
 

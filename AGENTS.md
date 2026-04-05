@@ -236,8 +236,8 @@ Repo URL and owner are stored in `.infra-ctl.conf` at the target directory root.
 11. `cluster-ctl.sh argo-sync` -- force immediate sync of all applications
 12. `cluster-ctl.sh add-kargo-creds` -- (if private repo/registry) configure Kargo credentials (requires namespaces to exist)
 13. `user-ctl.sh add-role <name>` -- create an RBAC role with a permission preset
-14. `user-ctl.sh add <username> <group>` -- create a human user with x509 cert
-15. `user-ctl.sh add-sa <name> <group>` -- create a service account with token
+14. `user-ctl.sh add <username> --group <group>` -- create a human user with x509 cert
+15. `user-ctl.sh add-sa <name> --group <group>` -- create a service account with token
 
 ## When modifying these scripts
 
@@ -254,7 +254,7 @@ Commands follow these naming patterns:
 | `remove-*` | `remove-app [name]` | No | No (chooser if omitted) |
 | `edit-*` | `edit-project [name]` | No | No (chooser if omitted) |
 
-**Interactive choosers are mandatory.** Any command that operates on an existing resource MUST present a `gum choose` picker when called without a name argument. Never show a bare usage error for commands that could list and prompt instead. The only commands that require arguments are `add-*` commands (you need a name to create something new) and commands that take non-resource arguments like `add <username> <group>`.
+**Interactive choosers are mandatory.** Any command that operates on an existing resource MUST present a `gum choose` picker when called without a name argument. Never show a bare usage error for commands that could list and prompt instead. The only commands that require arguments are `add-*` commands (you need a name to create something new) and commands that take non-resource arguments via flags (e.g., `user-ctl.sh add <username> --group <group>`).
 
 ### Flag-first command contract (MANDATORY)
 
@@ -340,7 +340,8 @@ When adding a NEW command, the checklist below applies. When modifying an existi
 - `validate_github_pat(pat, required_scopes...)` -- validates a GitHub PAT for authentication and required OAuth scopes; returns 1 on failure
 - `validate_github_repo(url)` -- checks GitHub repo accessibility via `gh`; prints warning on failure but returns 0
 - `validate_image_repo(ref)` -- validates OCI image reference format (returns 1) and checks registry (prints warning); must not contain a tag
-- `validate_secret_key(key)` -- warns if key doesn't match uppercase env var convention; always returns 0
+- `validate_secret_key(key)` -- dies if key violates the k8s Secret key regex `[-._a-zA-Z0-9]+`; warns if key doesn't follow uppercase env-var convention
+- `validate_configmap_key(key, label)` -- dies if key is not a valid configMap/env-var identifier (`[A-Za-z_][A-Za-z0-9_]*`)
 
 **Configuration:**
 - `load_conf()` -- parses `KEY=value` lines from `.infra-ctl.conf` in `TARGET_DIR`; fails if missing or malformed
@@ -421,6 +422,7 @@ When adding a NEW command, the checklist below applies. When modifying an existi
 - `account_exists(username, values_file)` -- checks if an account exists in the values file
 
 **Flag-first prompt helpers** (in `lib/common.sh`):
+- `require_flag_value(flag, value)` -- exits with a clear error if a flag's value was omitted on the CLI; call from every flag-parse case arm before assigning `$2`
 - `require_tty(flag)` -- exits with a clear error if stdin is not a TTY; flag is the CLI flag name to name in the error
 - `prompt_or_die(label, flag, [default])` -- gum input prompt; dies if no TTY
 - `prompt_password_or_die(label, flag)` -- gum input --password; dies if no TTY

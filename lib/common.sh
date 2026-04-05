@@ -419,12 +419,24 @@ validate_image_repo() {
     return 0
 }
 
-# Warns if a secret key name does not follow uppercase environment variable convention.
-# Always returns 0 (warning only, never blocks).
+# Validates a Kubernetes Secret key name at the boundary.
+# k8s Secret keys must match [-._a-zA-Z0-9]+ (see the data and stringData
+# schema in the Secret resource); keys outside that character set will be
+# rejected by the API server and would also corrupt our grep/yq lookups.
+# Also warns if the key does not follow the uppercase env-var convention.
+# Dies with a clear error on malformed keys; warns on case; returns 0 otherwise.
 # Usage: validate_secret_key <key>
 validate_secret_key() {
     local key="$1"
 
+    if [[ -z "$key" ]]; then
+        print_error "Secret key cannot be empty"
+        exit 1
+    fi
+    if ! [[ "$key" =~ ^[-._a-zA-Z0-9]+$ ]]; then
+        print_error "Secret key '${key}' is not a valid k8s Secret key (must match [-._a-zA-Z0-9]+)"
+        exit 1
+    fi
     if ! [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
         print_warning "Secret key '${key}' is not uppercase. Convention is uppercase with underscores (e.g., DATABASE_URL)."
     fi
@@ -458,7 +470,7 @@ parse_global_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --target-dir)
-                if [[ -z "${2:-}" ]]; then
+                if [[ -z "${2:-}" ]]; then # lint-ok: pre-gum, require_flag_value needs print_error
                     # Use echo here because gum may not be installed yet
                     echo "ERROR: --target-dir requires a path argument" >&2
                     exit 1
@@ -1254,7 +1266,10 @@ require_yes() {
 # Usage: declare -A values; parse_set_kv "IMAGE=nginx:latest" values
 parse_set_kv() {
     local input="$1"
-    local -n _arr="$2"
+    # Use an unlikely nameref target so callers cannot collide with a local
+    # variable named `_arr` (bash emits "circular name reference" when the
+    # nameref and target share a name).
+    local -n __parse_set_kv_out="$2"
     if [[ "$input" != *"="* ]]; then
         print_error "--set expects KEY=VAL, got: ${input}"
         exit 1
@@ -1266,7 +1281,7 @@ parse_set_kv() {
         exit 1
     fi
     validate_configmap_key "$key" "--set key"
-    _arr["$key"]="$val"
+    __parse_set_kv_out["$key"]="$val"
 }
 
 # Validates a set of --set keys against the known keys of a preset.

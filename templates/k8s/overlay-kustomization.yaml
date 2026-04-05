@@ -11,5 +11,5 @@ replicas:
 configMapGenerator:
   - name: {{APP_NAME}}
     behavior: merge
-    literals:
-      - EXAMPLE_KEY=example-value  # TODO: replace with {{ENV}}-specific config
+    literals: []
+    # Add env-specific overrides with: config-ctl.sh add --app {{APP_NAME}} --env {{ENV}} --config KEY=VAL

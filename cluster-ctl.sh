@@ -625,9 +625,7 @@ cmd_add_argo_creds() {
     existing="$(kubectl get secret repo-creds -n argocd -o name 2>/dev/null)" || true
     if [[ -n "$existing" ]]; then
         print_warning "Repository credentials already exist."
-        if [[ "$yes" != "true" ]] && [[ -t 0 ]]; then
-            confirm_or_abort "Overwrite existing credentials?"
-        fi
+        require_yes "$yes" "overwrite existing ArgoCD repo credentials"
     fi
 
     # PAT: flag wins, else prompt, else die
@@ -684,7 +682,7 @@ cmd_add_registry_creds() {
     require_cmd "kubectl" "brew install kubectl"
     load_conf
 
-    local registry_flag="" username_flag="" token_flag=""
+    local registry_flag="" username_flag="" token_flag="" yes="false"
     local env_flags=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -708,8 +706,12 @@ cmd_add_registry_creds() {
                 env_flags+=("$2")
                 shift 2
                 ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
             -h | --help)
-                echo "Usage: cluster-ctl.sh add-registry-creds [--registry <host>] [--username <user>] [--token <pat>] [--env <ns>]..."
+                echo "Usage: cluster-ctl.sh add-registry-creds [--registry <host>] [--username <user>] [--token <pat>] [--env <ns>]... [--yes]"
                 exit 0
                 ;;
             -*)
@@ -841,9 +843,22 @@ cmd_add_registry_creds() {
     print_info "Username:   ${username}"
     print_info "Namespaces: ${selected[*]}"
 
+    # Warn if registry-creds already exists in any selected namespace, and
+    # require --yes to overwrite.
+    local existing_ns=()
+    local ns
+    for ns in "${selected[@]}"; do
+        if kubectl get secret registry-creds -n "$ns" &>/dev/null; then
+            existing_ns+=("$ns")
+        fi
+    done
+    if [[ ${#existing_ns[@]} -gt 0 ]]; then
+        print_warning "registry-creds already exists in: ${existing_ns[*]}"
+        require_yes "$yes" "overwrite existing registry credentials in ${#existing_ns[@]} namespace(s)"
+    fi
+
     # All kubectl calls below use argv form + stdin piping so flag-sourced values
     # ($registry, $username, $pat) cannot be re-parsed as shell.
-    local ns
     for ns in "${selected[@]}"; do
         # Create namespace if it doesn't exist
         print_info "Ensuring namespace '${ns}' exists..."
@@ -880,7 +895,7 @@ cmd_add_kargo_creds() {
     require_cmd "kubectl" "brew install kubectl"
     load_conf
 
-    local app_flag="" pat_flag="" private_flag=""
+    local app_flag="" pat_flag="" private_flag="" yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --app)
@@ -901,8 +916,12 @@ cmd_add_kargo_creds() {
                 private_flag="false"
                 shift
                 ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
             -h | --help)
-                echo "Usage: cluster-ctl.sh add-kargo-creds [app] [--pat <token>] [--private-registry]"
+                echo "Usage: cluster-ctl.sh add-kargo-creds [app] [--pat <token>] [--private-registry] [--yes]"
                 exit 0
                 ;;
             -*)
@@ -1008,6 +1027,19 @@ cmd_add_kargo_creds() {
     else
         print_error "--pat is required when not running interactively"
         exit 1
+    fi
+
+    # Warn if gitops-repo-creds or registry-creds already exists, require --yes to overwrite.
+    local existing_kargo=()
+    if kubectl get secret gitops-repo-creds -n "$app_name" &>/dev/null; then
+        existing_kargo+=("gitops-repo-creds")
+    fi
+    if kubectl get secret registry-creds -n "$app_name" &>/dev/null; then
+        existing_kargo+=("registry-creds")
+    fi
+    if [[ ${#existing_kargo[@]} -gt 0 ]]; then
+        print_warning "Secret(s) already exist in namespace '${app_name}': ${existing_kargo[*]}"
+        require_yes "$yes" "overwrite existing Kargo credentials in namespace '${app_name}'"
     fi
 
     # Create Git credential (argv form + stdin pipes; no bash -c re-parse)

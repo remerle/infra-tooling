@@ -160,6 +160,38 @@ parse_set_kv "BAD KEY=foo" v
 run_test "parse_set_kv rejects keys with spaces" 1 "not a valid identifier" \
     -- "$TMP/psv1.sh"
 
+# parse_set_kv must work when the caller's array is named `_arr`
+# (regression guard for the nameref collision we fixed).
+make_runner "$TMP/psv2.sh" '
+declare -A _arr
+parse_set_kv "IMAGE=nginx" _arr
+echo "${_arr[IMAGE]}"
+'
+run_test "parse_set_kv works with caller array named _arr" 0 "nginx" \
+    -- "$TMP/psv2.sh"
+
+# --- validate_secret_key ---
+make_runner "$TMP/vsk1.sh" 'validate_secret_key "DATABASE_URL"'
+run_test "validate_secret_key accepts uppercase id" 0 "" \
+    -- "$TMP/vsk1.sh"
+
+make_runner "$TMP/vsk2.sh" 'validate_secret_key "api.key-v2"'
+# Valid k8s Secret key but warns on case
+run_test "validate_secret_key accepts dot/hyphen but warns on case" 0 "not uppercase" \
+    -- "$TMP/vsk2.sh"
+
+make_runner "$TMP/vsk3.sh" 'validate_secret_key ""'
+run_test "validate_secret_key rejects empty" 1 "cannot be empty" \
+    -- "$TMP/vsk3.sh"
+
+make_runner "$TMP/vsk4.sh" 'validate_secret_key "BAD KEY"'
+run_test "validate_secret_key rejects spaces" 1 "not a valid k8s Secret key" \
+    -- "$TMP/vsk4.sh"
+
+make_runner "$TMP/vsk5.sh" 'validate_secret_key "BAD;KEY"'
+run_test "validate_secret_key rejects shell metacharacters" 1 "not a valid k8s Secret key" \
+    -- "$TMP/vsk5.sh"
+
 echo ""
 echo "Passed: $PASSED"
 echo "Failed: $FAILED"

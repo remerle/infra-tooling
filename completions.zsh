@@ -135,6 +135,7 @@ _infra_ctl() {
                         '--no-restrict-repos[Allow any source repo]' \
                         '*--source-repo[Allowed source repo URL]:url:' \
                         '*--namespace[Destination namespace]:namespace:_infra_complete_envs' \
+                        '--no-restrict-namespaces[Allow all destination namespaces]' \
                         '--cluster-resources[Allow cluster-scoped resources]' \
                         '--no-cluster-resources[Deny cluster-scoped resources]'
                     ;;
@@ -146,6 +147,7 @@ _infra_ctl() {
                         '--no-restrict-repos[Allow any repo]' \
                         '*--source-repo[Allowed source repo URL]:url:' \
                         '*--namespace[Destination namespace]:namespace:_infra_complete_envs' \
+                        '--no-restrict-namespaces[Allow all destination namespaces]' \
                         '--cluster-resources[Allow cluster-scoped resources]' \
                         '--no-cluster-resources[Deny cluster-scoped resources]'
                     ;;
@@ -255,14 +257,16 @@ _cluster_ctl() {
                         '--registry[Container registry URL]:url:' \
                         '--username[Registry username]:user:' \
                         '--token[Registry token/password]:token:' \
-                        '*--env[Environment]:env:_infra_complete_envs'
+                        '*--env[Environment]:env:_infra_complete_envs' \
+                        '--yes[Skip overwrite confirmation]' '-y[Skip overwrite confirmation]'
                     ;;
                 add-kargo-creds)
                     _arguments \
                         '--app[Application]:app:_infra_complete_apps' \
                         '--pat[GitHub personal access token]:pat:' \
                         '--private-registry[App uses a private registry]' \
-                        '--no-private-registry[App uses a public registry]'
+                        '--no-private-registry[App uses a public registry]' \
+                        '--yes[Skip overwrite confirmation]' '-y[Skip overwrite confirmation]'
                     ;;
             esac
             ;;
@@ -376,8 +380,20 @@ _user_ctl() {
                         '--name[SA name]:name:' \
                         '--yes[Skip confirmation]' '-y[Skip confirmation]'
                     ;;
-                add-sa|refresh-sa)
+                add)
                     _arguments \
+                        '--name[Username]:name:' \
+                        '--group[RBAC group (role name)]:group:'
+                    ;;
+                add-sa)
+                    _arguments \
+                        '--name[Service account name]:name:' \
+                        '--group[RBAC group (role name)]:group:' \
+                        '--duration[Token duration (e.g. 2160h)]:duration:'
+                    ;;
+                refresh-sa)
+                    _arguments \
+                        '--name[Service account name]:name:' \
                         '--duration[Token duration (e.g. 2160h)]:duration:'
                     ;;
             esac

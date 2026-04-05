@@ -149,10 +149,18 @@ cmd_add() {
         yq eval -i '.configMapGenerator[0].literals = []' "$kust_file"
     fi
 
-    # Append each entry
-    local entry
+    # Upsert each entry: strip any prior literal with the same key, then append.
+    # Writing --config KEY=new overwrites any prior KEY=old instead of producing
+    # a duplicate that breaks `kustomize build` at deploy time.
+    local entry key
     for entry in "${entries[@]}"; do
-        YQ_ENTRY="$entry" yq eval -i '.configMapGenerator[0].literals += [env(YQ_ENTRY)]' "$kust_file"
+        key="${entry%%=*}"
+        YQ_KEY="$key" yq eval -i \
+            '.configMapGenerator[0].literals |= map(select((split("=")[0]) != env(YQ_KEY)))' \
+            "$kust_file"
+        YQ_ENTRY="$entry" yq eval -i \
+            '.configMapGenerator[0].literals += [env(YQ_ENTRY)]' \
+            "$kust_file"
     done
 
     # Clean up null/empty entries from literals
@@ -363,21 +371,40 @@ cmd_remove() {
     # Which to remove: --key flags (match by KEY prefix), else prompt, else die
     local selected
     if [[ ${#key_flags[@]} -gt 0 ]]; then
-        # For each --key NAME, find matching literals (NAME=... or NAME)
-        local sel_lines=""
-        local k lit
+        # Dedup --key flags so repeated flags don't try to delete the same literal twice.
+        local -A _seen_keys=()
+        local _deduped_keys=()
+        local k
         for k in "${key_flags[@]}"; do
+            if [[ -z "${_seen_keys[$k]+x}" ]]; then
+                _seen_keys["$k"]=1
+                _deduped_keys+=("$k")
+            fi
+        done
+
+        # For each --key NAME, find matching literals (NAME=... or NAME). Each
+        # key must match at least one literal; if any key is unmatched we fail
+        # with a clear error rather than silently dropping it.
+        local sel_lines=""
+        local missing=()
+        local lit matched
+        for k in "${_deduped_keys[@]}"; do
+            matched=0
             while IFS= read -r lit; do
                 if [[ "$lit" == "$k" || "$lit" == "${k}="* ]]; then
                     sel_lines+="${lit}"$'\n'
+                    matched=1
                 fi
             done <<<"$literals"
+            if [[ "$matched" -eq 0 ]]; then
+                missing+=("$k")
+            fi
         done
-        selected="${sel_lines%$'\n'}"
-        if [[ -z "$selected" ]]; then
-            print_error "No matching literals for keys: ${key_flags[*]}"
+        if [[ ${#missing[@]} -gt 0 ]]; then
+            print_error "No matching literal for --key: ${missing[*]}"
             exit 1
         fi
+        selected="${sel_lines%$'\n'}"
     elif [[ -t 0 ]]; then
         selected="$(echo "$literals" | gum choose --no-limit --header "Select values to remove:")" || exit 0
     else
