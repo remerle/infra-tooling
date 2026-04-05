@@ -1984,15 +1984,37 @@ doctor_layer_7_images() {
         done < <(kubectl -n "$ns" get pods -o jsonpath='{.items[*].spec.containers[*].image}' 2>/dev/null | tr ' ' '\n' | sort -u)
     done
 
-    # Check each distinct image via 'crane digest'.
+    # Check each distinct image via 'crane digest'. Capture stderr so we can
+    # distinguish auth-required errors (private registry, no local creds) from
+    # real failures (typo, deleted tag, network).
+    local crane_err registry fix_msg
     for image in "${!seen_images[@]}"; do
-        if ! crane digest "$image" &>/dev/null; then
-            doctor_warn "$image" \
-                "Image tag not resolvable via registry" \
-                "'crane digest' could not fetch the manifest for this image; tag may be wrong, the image may not exist, or the registry may require authentication" \
-                "Check for typos in the image ref; if private registry, run 'cluster-ctl.sh add-registry-creds'" \
-                "crane digest ${image} → failed"
+        crane_err="$(crane digest "$image" 2>&1 >/dev/null)" && continue
+
+        # Extract the registry host from the image ref. The first '/'-separated
+        # segment is the registry if it contains '.' or ':', otherwise the ref
+        # is an implicit docker.io image (e.g. 'nginx:latest').
+        registry="${image%%/*}"
+        if [[ "$registry" != *.* && "$registry" != *:* ]]; then
+            registry="docker.io"
         fi
+
+        if [[ "$crane_err" == *UNAUTHORIZED* || "$crane_err" == *DENIED* \
+              || "$crane_err" == *"401 Unauthorized"* || "$crane_err" == *"403 Forbidden"* ]]; then
+            if [[ "$registry" == "ghcr.io" ]]; then
+                fix_msg="Authenticate crane to ghcr.io: 'gh auth refresh -s read:packages' then 'gh auth token | docker login ghcr.io -u \$(gh api user -q .login) --password-stdin', then re-run doctor"
+            else
+                fix_msg="Authenticate crane to this registry: 'docker login ${registry}', then re-run doctor"
+            fi
+            doctor_info "$image" "Skipped: registry ${registry} requires authentication. ${fix_msg}"
+            continue
+        fi
+
+        doctor_warn "$image" \
+            "Image tag not resolvable via registry" \
+            "'crane digest' could not fetch the manifest for this image; tag may be wrong, the image may not exist, or the registry may be unreachable" \
+            "Check for typos in the image ref; if the image is private, authenticate first (e.g. 'docker login ${registry}') and re-run doctor" \
+            "crane digest ${image} → ${crane_err}"
     done
 
     render_doctor_layer "Layer 7: Image reachability"
