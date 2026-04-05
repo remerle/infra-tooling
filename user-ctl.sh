@@ -14,12 +14,42 @@ cmd_add_role() {
     require_yq
     require_helm
 
-    if [[ $# -lt 1 ]]; then
-        print_error "Usage: user-ctl.sh add-role <name>"
-        exit 1
-    fi
+    local name_flag="" preset_flag=""
+    local argocd_resources_flag="" actions_flag=""
+    local k8s_scope_flag="" k8s_verbs_flag=""
+    local ns_flags=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name_flag="$2"; shift 2 ;;
+            --preset) preset_flag="$2"; shift 2 ;;
+            --argocd-resources) argocd_resources_flag="$2"; shift 2 ;;
+            --actions) actions_flag="$2"; shift 2 ;;
+            --k8s-scope) k8s_scope_flag="$2"; shift 2 ;;
+            --k8s-verbs) k8s_verbs_flag="$2"; shift 2 ;;
+            --namespace) ns_flags+=("$2"); shift 2 ;;
+            -h|--help)
+                cat <<EOF
+Usage: user-ctl.sh add-role <name> [flags]
 
-    local role_name="$1"
+Flags:
+  --name <string>                 Role name (positional shorthand)
+  --preset <preset>               admin-readonly-settings | developer | viewer | custom
+  --argocd-resources <csv>        Comma-separated resources (custom preset)
+  --actions <csv>                 Comma-separated actions (custom preset)
+  --k8s-scope <scope>             cluster-wide | namespace-scoped (custom preset)
+  --k8s-verbs <csv>               Comma-separated kubectl verbs (custom preset)
+  --namespace <name>              Namespace (repeatable; developer/custom-namespaced)
+EOF
+                exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
+
+    local role_name="$name_flag"
+    if [[ -z "$role_name" ]]; then
+        role_name=$(prompt_or_die "Role name" "--name")
+    fi
     validate_k8s_name "$role_name" "Role name"
 
     if role_exists "$role_name" "$VALUES_FILE"; then
@@ -29,13 +59,17 @@ cmd_add_role() {
 
     print_header "Add Role: ${role_name}"
 
-    # Choose preset
+    # Choose preset: flag wins, else prompt, else die
     local preset
-    preset="$(gum choose --header "Permission preset:" \
-        "admin-readonly-settings" \
-        "developer" \
-        "viewer" \
-        "custom")"
+    if [[ -n "$preset_flag" ]]; then
+        case "$preset_flag" in
+            admin-readonly-settings|developer|viewer|custom) preset="$preset_flag" ;;
+            *) print_error "--preset must be one of: admin-readonly-settings, developer, viewer, custom"; exit 1 ;;
+        esac
+    else
+        preset=$(prompt_choose_or_die "Permission preset" "--preset" \
+            "admin-readonly-settings" "developer" "viewer" "custom")
+    fi
 
     local argocd_policy=""
     local created_files=()
@@ -47,17 +81,31 @@ cmd_add_role() {
             ;;
         custom)
             local resources actions
-            resources="$(gum choose --no-limit --header "Select ArgoCD resources:" \
-                "applications" "projects" "repositories" "clusters" \
-                "certificates" "accounts" "logs" "exec" | paste -sd, -)"
+            if [[ -n "$argocd_resources_flag" ]]; then
+                resources="$argocd_resources_flag"
+            elif [[ -t 0 ]]; then
+                resources="$(gum choose --no-limit --header "Select ArgoCD resources:" \
+                    "applications" "projects" "repositories" "clusters" \
+                    "certificates" "accounts" "logs" "exec" | paste -sd, -)"
+            else
+                print_error "--argocd-resources is required when not running interactively"
+                exit 1
+            fi
 
             if [[ -z "$resources" ]]; then
                 print_error "At least one resource must be selected."
                 exit 1
             fi
 
-            actions="$(gum choose --no-limit --header "Select actions:" \
-                "get" "create" "update" "delete" "sync" "override" "action" "*" | paste -sd, -)"
+            if [[ -n "$actions_flag" ]]; then
+                actions="$actions_flag"
+            elif [[ -t 0 ]]; then
+                actions="$(gum choose --no-limit --header "Select actions:" \
+                    "get" "create" "update" "delete" "sync" "override" "action" "*" | paste -sd, -)"
+            else
+                print_error "--actions is required when not running interactively"
+                exit 1
+            fi
 
             if [[ -z "$actions" ]]; then
                 print_error "At least one action must be selected."
@@ -91,7 +139,14 @@ cmd_add_role() {
             fi
 
             local selected_namespaces
-            selected_namespaces="$(echo "$envs" | gum choose --no-limit --header "Select namespaces for this role:")"
+            if [[ ${#ns_flags[@]} -gt 0 ]]; then
+                selected_namespaces="$(printf '%s\n' "${ns_flags[@]}")"
+            elif [[ -t 0 ]]; then
+                selected_namespaces="$(echo "$envs" | gum choose --no-limit --header "Select namespaces for this role:")"
+            else
+                print_error "--namespace is required when not running interactively (repeat for multiple)"
+                exit 1
+            fi
 
             if [[ -z "$selected_namespaces" ]]; then
                 print_error "At least one namespace must be selected."
@@ -117,17 +172,35 @@ cmd_add_role() {
             created_files+=("$cr_file" "$crb_file")
             ;;
         custom)
-            # For custom, prompt for k8s RBAC scope
+            # K8s scope: flag wins, else prompt, else die
             print_info "Now configure Kubernetes (kubectl) access for this role."
             local k8s_scope
-            k8s_scope="$(gum choose --header "K8s access scope:" \
-                "cluster-wide (ClusterRole)" \
-                "namespace-scoped (Role per namespace)")"
+            if [[ -n "$k8s_scope_flag" ]]; then
+                case "$k8s_scope_flag" in
+                    cluster-wide) k8s_scope="cluster-wide (ClusterRole)" ;;
+                    namespace-scoped) k8s_scope="namespace-scoped (Role per namespace)" ;;
+                    *) print_error "--k8s-scope must be 'cluster-wide' or 'namespace-scoped'"; exit 1 ;;
+                esac
+            elif [[ -t 0 ]]; then
+                k8s_scope="$(gum choose --header "K8s access scope:" \
+                    "cluster-wide (ClusterRole)" \
+                    "namespace-scoped (Role per namespace)")"
+            else
+                print_error "--k8s-scope is required when not running interactively"
+                exit 1
+            fi
 
             if [[ "$k8s_scope" == "cluster-wide (ClusterRole)" ]]; then
                 local k8s_verbs
-                k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
-                    "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
+                if [[ -n "$k8s_verbs_flag" ]]; then
+                    k8s_verbs="$k8s_verbs_flag"
+                elif [[ -t 0 ]]; then
+                    k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
+                        "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
+                else
+                    print_error "--k8s-verbs is required when not running interactively"
+                    exit 1
+                fi
 
                 local cr_file="${platform_dir}/${role_name}-clusterrole.yaml"
                 local crb_file="${platform_dir}/${role_name}-clusterrolebinding.yaml"
@@ -144,11 +217,25 @@ cmd_add_role() {
                 fi
 
                 local selected_ns
-                selected_ns="$(echo "$envs" | gum choose --no-limit --header "Select namespaces:")"
+                if [[ ${#ns_flags[@]} -gt 0 ]]; then
+                    selected_ns="$(printf '%s\n' "${ns_flags[@]}")"
+                elif [[ -t 0 ]]; then
+                    selected_ns="$(echo "$envs" | gum choose --no-limit --header "Select namespaces:")"
+                else
+                    print_error "--namespace is required when not running interactively"
+                    exit 1
+                fi
 
                 local k8s_verbs
-                k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
-                    "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
+                if [[ -n "$k8s_verbs_flag" ]]; then
+                    k8s_verbs="$k8s_verbs_flag"
+                elif [[ -t 0 ]]; then
+                    k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
+                        "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
+                else
+                    print_error "--k8s-verbs is required when not running interactively"
+                    exit 1
+                fi
 
                 local ns
                 while IFS= read -r ns; do
