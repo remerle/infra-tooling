@@ -1187,6 +1187,35 @@ doctor_layer_1_prereqs() {
     DOCTOR_CURRENT_LAYER_ERRORS=()
     DOCTOR_CURRENT_LAYER_WARNINGS=()
     DOCTOR_CURRENT_LAYER_INFOS=()
+
+    local tool
+    for tool in kubectl jq helm k3d docker curl; do
+        if ! command -v "$tool" &>/dev/null; then
+            doctor_error "$tool" \
+                "Required CLI not found on PATH" \
+                "cluster-ctl.sh doctor depends on \`${tool}\` for cluster inspection" \
+                "brew install ${tool}"
+        fi
+    done
+
+    if ! docker info &>/dev/null; then
+        doctor_error "docker" \
+            "Docker daemon not running" \
+            "kubectl and k3d both need Docker to reach the cluster" \
+            "Start Docker Desktop or OrbStack"
+    fi
+
+    if [[ "$DOCTOR_SCOPE" != "repo" ]]; then
+        if kubectl cluster-info &>/dev/null; then
+            DOCTOR_CLUSTER_REACHABLE=1
+        else
+            doctor_warn "cluster" \
+                "Kubernetes cluster not reachable via current kubeconfig context" \
+                "layers 2/5/6/7/8/9 need a live cluster" \
+                "Run 'cluster-ctl.sh init-cluster' or check your kubeconfig context with 'kubectl config current-context'"
+        fi
+    fi
+
     render_doctor_layer "Layer 1: Prerequisites"
 }
 
