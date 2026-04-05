@@ -1765,6 +1765,23 @@ cmd_enable_kargo() {
     require_gh_scope "read:packages"
     load_conf
 
+    declare -A image_repo_map=()
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --image-repo)
+                [[ -z "${2:-}" ]] && { print_error "--image-repo requires <app>=<url>"; exit 1; }
+                local _k="${2%%=*}" _v="${2#*=}"
+                [[ -z "$_k" || "$_k" == "$_v" ]] && { print_error "--image-repo expects <app>=<url>, got: $2"; exit 1; }
+                image_repo_map["$_k"]="$_v"
+                shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: infra-ctl.sh enable-kargo [--image-repo <app>=<url>]... [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *)  print_error "Unexpected argument: $1"; exit 1 ;;
+        esac
+    done
+
     if is_kargo_enabled; then
         print_warning "Kargo is already enabled in .infra-ctl.conf"
         exit 0
@@ -1798,7 +1815,9 @@ cmd_enable_kargo() {
             print_info "  $((i + 1)). ${PROMOTION_ORDER[$i]}"
         done
 
-        confirm_or_abort "Use this order? (Edit kargo/promotion-order.txt after to change)"
+        if [[ "$yes" != "true" ]] && [[ -t 0 ]]; then
+            confirm_or_abort "Use this order? (Edit kargo/promotion-order.txt after to change)"
+        fi
     else
         mkdir -p "${TARGET_DIR}/kargo"
         touch "${TARGET_DIR}/kargo/promotion-order.txt"
@@ -1836,12 +1855,20 @@ cmd_enable_kargo() {
             local kargo_app_dir="${TARGET_DIR}/kargo/${app}"
             mkdir -p "$kargo_app_dir"
 
-            # Prompt for image repository per app (no tag -- Kargo discovers tags)
+            # Image repository per app (no tag -- Kargo discovers tags)
             local image_repo
-            while true; do
-                image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app}" --prompt "Image repo for ${app} (no tag): ")"
-                validate_image_repo "$image_repo" && break
-            done
+            local default_image_repo="ghcr.io/${REPO_OWNER}/${app}"
+            if [[ -v "image_repo_map[$app]" ]]; then
+                image_repo="${image_repo_map[$app]}"
+            elif [[ -t 0 ]]; then
+                while true; do
+                    image_repo="$(gum input --value "$default_image_repo" --prompt "Image repo for ${app} (no tag): ")"
+                    validate_image_repo "$image_repo" && break
+                done
+            else
+                image_repo="$default_image_repo"
+            fi
+            validate_image_repo "$image_repo"
 
             # Project
             if safe_render_template \
