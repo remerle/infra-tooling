@@ -7,7 +7,7 @@ Design decisions and conventions for AI agents working in this repository.
 Five independent bash scripts at the repository root:
 
 - **`infra-ctl.sh`** -- manages the GitOps repository structure (directories, templates, manifests). Git-only; does not interact with any cluster.
-- **`cluster-ctl.sh`** -- manages the local k3d cluster lifecycle (creation, ArgoCD Helm installation/upgrade, Kargo, teardown), ArgoCD operations (init, sync, status, doctor), and credential management (ArgoCD repo access, container registry auth, Kargo credentials). Interacts with Docker, Kubernetes, and Helm.
+- **`cluster-ctl.sh`** -- manages the local k3d cluster lifecycle (creation, ArgoCD Helm installation/upgrade, Kargo, teardown), ArgoCD operations (init, sync, status), credential management (ArgoCD repo access, container registry auth, Kargo credentials), and cross-cutting diagnostics (doctor). Interacts with Docker, Kubernetes, and Helm.
 - **`secret-ctl.sh`** -- manages per-environment secrets using Bitnami Sealed Secrets. Interacts with the cluster (for controller install and key management) and writes encrypted SealedSecret files to the repo.
 - **`user-ctl.sh`** -- manages RBAC roles, human users (x509 certs), and service accounts (short-lived tokens). Interacts with the cluster (CSR API, RBAC bindings, Helm upgrades) and writes to `helm/argocd-values.yaml` and `k8s/platform/`.
 - **`config-ctl.sh`** -- manages configMapGenerator literals in Kustomize configurations. Manipulates kustomization.yaml files via yq. Does not interact with the cluster.

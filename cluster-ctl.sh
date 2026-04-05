@@ -1102,6 +1102,18 @@ doctor_clean() {
     :
 }
 
+# Records a layer skip and prints the one-liner. Single source of truth for
+# skip rendering across scope/tool/cluster-unreachable skips.
+doctor_skip_layer() {
+    local layer_name="$1" reason="$2"
+    DOCTOR_SKIPPED_LAYERS+=("${layer_name} (${reason})")
+    local marker header reason_styled
+    marker="$(gum style --faint "○")"
+    header="$(gum style --bold "${layer_name}")"
+    reason_styled="$(gum style --faint "skipped (${reason})")"
+    printf "▸ %s %s %s\n" "$header" "$marker" "$reason_styled"
+}
+
 # Gate used by layers that require a live cluster. Appends to
 # DOCTOR_SKIPPED_LAYERS and prints a one-liner when the layer can't run.
 # Returns 0 when the layer can proceed, 1 when the caller should return early.
@@ -1115,12 +1127,7 @@ needs_cluster_or_skip() {
     else
         return 0
     fi
-    DOCTOR_SKIPPED_LAYERS+=("${layer_name} (${reason})")
-    local marker header reason_styled
-    marker="$(gum style --faint "○")"
-    header="$(gum style --bold "${layer_name}")"
-    reason_styled="$(gum style --faint "skipped (${reason})")"
-    printf "▸ %s %s %s\n" "$header" "$marker" "$reason_styled"
+    doctor_skip_layer "$layer_name" "$reason"
     return 1
 }
 
@@ -1132,6 +1139,32 @@ doctor_matches_filter() {
     [[ -n "$DOCTOR_APP" && -n "$app" && "$app" != "$DOCTOR_APP" ]] && return 1
     [[ -n "$DOCTOR_ENV" && -n "$env" && "$env" != "$DOCTOR_ENV" ]] && return 1
     return 0
+}
+
+# Renders an error- or warning-shaped finding block into $content.
+# Appends to caller's $content and mutates $first. Called by render_doctor_layer.
+# Usage: _render_doctor_findings <array-name> <icon>
+_render_doctor_findings() {
+    local -n _entries="$1"
+    local icon="$2"
+    local entry subject msg why fix evidence
+    local -a fields
+    for entry in "${_entries[@]}"; do
+        doctor_unpack_fields "$entry" fields
+        subject="${fields[0]}"; msg="${fields[1]}"; why="${fields[2]}"; fix="${fields[3]}"; evidence="${fields[4]}"
+        if [[ $first -eq 0 ]]; then content+=$'\n'; fi
+        first=0
+        content+="${icon} $(gum style --bold "${subject}")"$'\n'
+        content+="    ${msg}"$'\n'
+        content+="    $(gum style --faint "why:") ${why}"$'\n'
+        content+="    $(gum style --faint "fix:") ${fix}"
+        if [[ "$DOCTOR_VERBOSE" -eq 1 && -n "$evidence" ]]; then
+            content+=$'\n'"    $(gum style --faint "evidence:")"
+            while IFS= read -r line; do
+                content+=$'\n'"      ${line}"
+            done <<<"$evidence"
+        fi
+    done
 }
 
 # Reads DOCTOR_CURRENT_LAYER_* arrays and prints either a clean one-liner
@@ -1161,39 +1194,8 @@ render_doctor_layer() {
 
     local first=1
     local -a fields
-    for entry in "${DOCTOR_CURRENT_LAYER_ERRORS[@]}"; do
-        doctor_unpack_fields "$entry" fields
-        subject="${fields[0]}"; msg="${fields[1]}"; why="${fields[2]}"; fix="${fields[3]}"; evidence="${fields[4]}"
-        if [[ $first -eq 0 ]]; then content+=$'\n'; fi
-        first=0
-        content+="${icon_err} $(gum style --bold "${subject}")"$'\n'
-        content+="    ${msg}"$'\n'
-        content+="    $(gum style --faint "why:") ${why}"$'\n'
-        content+="    $(gum style --faint "fix:") ${fix}"
-        if [[ "$DOCTOR_VERBOSE" -eq 1 && -n "$evidence" ]]; then
-            content+=$'\n'"    $(gum style --faint "evidence:")"
-            while IFS= read -r line; do
-                content+=$'\n'"      ${line}"
-            done <<<"$evidence"
-        fi
-    done
-
-    for entry in "${DOCTOR_CURRENT_LAYER_WARNINGS[@]}"; do
-        doctor_unpack_fields "$entry" fields
-        subject="${fields[0]}"; msg="${fields[1]}"; why="${fields[2]}"; fix="${fields[3]}"; evidence="${fields[4]}"
-        if [[ $first -eq 0 ]]; then content+=$'\n'; fi
-        first=0
-        content+="${icon_warn} $(gum style --bold "${subject}")"$'\n'
-        content+="    ${msg}"$'\n'
-        content+="    $(gum style --faint "why:") ${why}"$'\n'
-        content+="    $(gum style --faint "fix:") ${fix}"
-        if [[ "$DOCTOR_VERBOSE" -eq 1 && -n "$evidence" ]]; then
-            content+=$'\n'"    $(gum style --faint "evidence:")"
-            while IFS= read -r line; do
-                content+=$'\n'"      ${line}"
-            done <<<"$evidence"
-        fi
-    done
+    _render_doctor_findings DOCTOR_CURRENT_LAYER_ERRORS "$icon_err"
+    _render_doctor_findings DOCTOR_CURRENT_LAYER_WARNINGS "$icon_warn"
 
     for entry in "${DOCTOR_CURRENT_LAYER_INFOS[@]}"; do
         doctor_unpack_fields "$entry" fields
@@ -1221,8 +1223,9 @@ doctor_exit_code() {
 }
 
 render_doctor_summary() {
-    local layers_checked=${DOCTOR_LAYERS_INVOKED:-0}
+    local scheduled=${DOCTOR_LAYERS_INVOKED:-0}
     local skipped=${#DOCTOR_SKIPPED_LAYERS[@]}
+    local layers_checked=$((scheduled - skipped))
     local code
     code="$(doctor_exit_code)"
 
@@ -1289,6 +1292,13 @@ doctor_layer_2_controllers() {
 
     local deploy avail
     for deploy in argocd-server argocd-repo-server argocd-applicationset-controller; do
+        if ! kubectl -n argocd get deploy "$deploy" &>/dev/null; then
+            doctor_error "$deploy" \
+                "ArgoCD deployment missing" \
+                "${deploy} does not exist in the argocd namespace" \
+                "Run 'cluster-ctl.sh init-cluster' or 'cluster-ctl.sh upgrade-argocd' to reinstall"
+            continue
+        fi
         avail="$(kubectl -n argocd get deploy "$deploy" -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
         if [[ -z "$avail" || "$avail" -eq 0 ]]; then
             doctor_error "$deploy" \
@@ -1299,32 +1309,53 @@ doctor_layer_2_controllers() {
     done
 
     if find "${TARGET_DIR}/k8s/apps" -type f -name 'sealed-secret.yaml' -path '*/overlays/*' 2>/dev/null | grep -q .; then
-        avail="$(kubectl -n kube-system get deploy sealed-secrets-controller -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
-        if [[ -z "$avail" || "$avail" -eq 0 ]]; then
+        if ! kubectl -n kube-system get deploy sealed-secrets-controller &>/dev/null; then
             doctor_error "sealed-secrets-controller" \
-                "sealed-secrets controller not Ready" \
-                "repo contains sealed-secret.yaml overlays but the controller has 0 available replicas" \
+                "sealed-secrets controller missing" \
+                "repo contains sealed-secret.yaml overlays but the controller is not installed" \
                 "Run 'secret-ctl.sh init' to install the sealed-secrets controller"
+        else
+            avail="$(kubectl -n kube-system get deploy sealed-secrets-controller -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
+            if [[ -z "$avail" || "$avail" -eq 0 ]]; then
+                doctor_error "sealed-secrets-controller" \
+                    "sealed-secrets controller not Ready" \
+                    "repo contains sealed-secret.yaml overlays but the controller has 0 available replicas" \
+                    "Check pod logs: 'kubectl -n kube-system describe deploy sealed-secrets-controller'"
+            fi
         fi
     fi
 
     if is_kargo_enabled; then
-        avail="$(kubectl -n cert-manager get deploy cert-manager-webhook -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
-        if [[ -z "$avail" || "$avail" -eq 0 ]]; then
+        if ! kubectl -n cert-manager get deploy cert-manager-webhook &>/dev/null; then
             doctor_error "cert-manager-webhook" \
-                "cert-manager webhook not Ready" \
-                "cert-manager-webhook has 0 available replicas; Kargo depends on cert-manager" \
+                "cert-manager webhook missing" \
+                "cert-manager is not installed; Kargo depends on cert-manager" \
                 "Run 'cluster-ctl.sh upgrade-kargo' or install cert-manager"
+        else
+            avail="$(kubectl -n cert-manager get deploy cert-manager-webhook -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
+            if [[ -z "$avail" || "$avail" -eq 0 ]]; then
+                doctor_error "cert-manager-webhook" \
+                    "cert-manager webhook not Ready" \
+                    "cert-manager-webhook has 0 available replicas; Kargo depends on cert-manager" \
+                    "Check pod logs: 'kubectl -n cert-manager describe deploy cert-manager-webhook'"
+            fi
         fi
 
         local kargo_deploy
         for kargo_deploy in kargo-api kargo-controller; do
+            if ! kubectl -n kargo get deploy "$kargo_deploy" &>/dev/null; then
+                doctor_error "$kargo_deploy" \
+                    "Kargo deployment missing" \
+                    "${kargo_deploy} does not exist in the kargo namespace" \
+                    "Run 'cluster-ctl.sh upgrade-kargo' to reinstall"
+                continue
+            fi
             avail="$(kubectl -n kargo get deploy "$kargo_deploy" -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
             if [[ -z "$avail" || "$avail" -eq 0 ]]; then
                 doctor_error "$kargo_deploy" \
                     "Kargo deployment not Ready" \
                     "${kargo_deploy} has 0 available replicas" \
-                    "Run 'cluster-ctl.sh upgrade-kargo'"
+                    "Check pod logs: 'kubectl -n kargo describe deploy ${kargo_deploy}'"
             fi
         done
     fi
@@ -1336,10 +1367,7 @@ doctor_layer_3_repo_structure() {
     doctor_begin_layer
 
     if [[ "$DOCTOR_SCOPE" == "cluster" ]]; then
-        DOCTOR_SKIPPED_LAYERS+=("Layer 3: Repo structure (scope=cluster)")
-        printf "▸ %s %s\n" \
-            "$(gum style --bold "Layer 3: Repo structure")" \
-            "$(gum style --faint "○ skipped (scope=cluster)")"
+        doctor_skip_layer "Layer 3: Repo structure" "scope=cluster"
         return 0
     fi
 
@@ -1397,16 +1425,24 @@ doctor_layer_3_repo_structure() {
 
     # Step 4: Kargo promotion-order envs
     if is_kargo_enabled; then
-        read_promotion_order
-        local promo_env
-        for promo_env in "${PROMOTION_ORDER[@]}"; do
-            if [[ ! -f "${TARGET_DIR}/k8s/namespaces/${promo_env}.yaml" ]]; then
-                doctor_warn "promotion-order" \
-                    "Promotion order references env without namespace" \
-                    "env '${promo_env}' in kargo/promotion-order.txt has no k8s/namespaces/${promo_env}.yaml" \
-                    "Run 'infra-ctl.sh add-env ${promo_env}' or remove from kargo/promotion-order.txt"
-            fi
-        done
+        local promo_file="${TARGET_DIR}/kargo/promotion-order.txt"
+        if [[ ! -f "$promo_file" ]]; then
+            doctor_warn "promotion-order" \
+                "KARGO_ENABLED=true but kargo/promotion-order.txt is missing" \
+                ".infra-ctl.conf enables Kargo but no promotion order file exists" \
+                "Run 'infra-ctl.sh init' to regenerate or create kargo/promotion-order.txt manually"
+        else
+            read_promotion_order
+            local promo_env
+            for promo_env in "${PROMOTION_ORDER[@]}"; do
+                if [[ ! -f "${TARGET_DIR}/k8s/namespaces/${promo_env}.yaml" ]]; then
+                    doctor_warn "promotion-order" \
+                        "Promotion order references env without namespace" \
+                        "env '${promo_env}' in kargo/promotion-order.txt has no k8s/namespaces/${promo_env}.yaml" \
+                        "Run 'infra-ctl.sh add-env ${promo_env}' or remove from kargo/promotion-order.txt"
+                fi
+            done
+        fi
     fi
 
     # Step 5: Repo URL drift
@@ -1557,10 +1593,7 @@ doctor_layer_4_alignment() {
     doctor_begin_layer
 
     if [[ "$DOCTOR_SCOPE" == "cluster" ]]; then
-        DOCTOR_SKIPPED_LAYERS+=("Layer 4: Alignment (scope=cluster)")
-        printf "▸ %s %s\n" \
-            "$(gum style --bold "Layer 4: Alignment")" \
-            "$(gum style --faint "○ skipped (scope=cluster)")"
+        doctor_skip_layer "Layer 4: Alignment" "scope=cluster"
         return 0
     fi
 
@@ -1905,30 +1938,9 @@ doctor_layer_7_images() {
     needs_cluster_or_skip "Layer 7: Image reachability" || return 0
 
     if ! command -v crane &>/dev/null; then
-        if [[ ! -t 0 ]]; then
-            DOCTOR_SKIPPED_LAYERS+=("Layer 7: Image reachability (crane not installed)")
-            printf "▸ %s %s\n" \
-                "$(gum style --bold "Layer 7: Image reachability")" \
-                "$(gum style --faint "○ skipped (crane not installed; run 'brew install crane' to enable)")"
-            return 0
-        fi
-        echo ""
-        if gum confirm "crane enables image reachability checks. Install via 'brew install crane'?"; then
-            if ! run_cmd "Installing crane..." \
-                --explain "crane is the google/go-containerregistry CLI for inspecting container image manifests. Doctor uses 'crane digest' to verify each image tag referenced by pods actually exists in its registry." \
-                brew install crane; then
-                doctor_info "crane" "crane install failed; skipping image reachability checks"
-                DOCTOR_SKIPPED_LAYERS+=("Layer 7: Image reachability (install failed)")
-                render_doctor_layer "Layer 7: Image reachability"
-                return 0
-            fi
-        else
-            DOCTOR_SKIPPED_LAYERS+=("Layer 7: Image reachability (crane not installed)")
-            printf "▸ %s %s\n" \
-                "$(gum style --bold "Layer 7: Image reachability")" \
-                "$(gum style --faint "○ skipped (install crane later to enable)")"
-            return 0
-        fi
+        doctor_skip_layer "Layer 7: Image reachability" \
+            "crane not installed; run 'brew install crane' to enable"
+        return 0
     fi
 
     # Collect target namespaces from ArgoCD Applications (same pattern as Layer 6).
@@ -2127,8 +2139,8 @@ doctor_layer_8_ingress() {
             local cert_sans
             cert_sans="$(timeout 5 openssl s_client -servername "$host" -connect "${host}:443" -showcerts </dev/null 2>/dev/null \
                 | openssl x509 -noout -ext subjectAltName 2>/dev/null \
-                | sed -n 's/.*DNS://p' \
                 | tr ',' '\n' \
+                | sed -n 's/.*DNS://p' \
                 | tr -d ' ')"
             if [[ -n "$cert_sans" ]]; then
                 if ! grep -Fxq "$host" <<<"$cert_sans"; then
@@ -2229,18 +2241,23 @@ doctor_layer_9_hygiene() {
 
 cmd_doctor() {
     # --- Doctor state (shared across layer_* functions) ---
-    # These globals are intentionally shared because each doctor_layer_* function
-    # needs to read DOCTOR_VERBOSE/DOCTOR_SCOPE/etc and mutate the counters.
-    # Declared here (not `local`) so layer functions can access them.
-    DOCTOR_ERRORS=0
-    DOCTOR_WARNINGS=0
-    DOCTOR_INFOS=0
+    # Doctor state is global (not local) so doctor_layer_* functions can
+    # read/mutate it. `local -g` keeps the variables global while documenting
+    # that cmd_doctor owns their lifecycle; this matters when cluster-ctl.sh
+    # is sourced rather than exec'd.
+    local -g DOCTOR_ERRORS=0
+    local -g DOCTOR_WARNINGS=0
+    local -g DOCTOR_INFOS=0
+    local -g DOCTOR_VERBOSE=0
+    local -g DOCTOR_SCOPE="all"
+    local -g DOCTOR_APP=""
+    local -g DOCTOR_ENV=""
+    local -g DOCTOR_CLUSTER_REACHABLE=0
+    local -g DOCTOR_LAYERS_INVOKED=0
     DOCTOR_SKIPPED_LAYERS=()
-    DOCTOR_VERBOSE=0
-    DOCTOR_SCOPE="all"
-    DOCTOR_APP=""
-    DOCTOR_ENV=""
-    DOCTOR_CLUSTER_REACHABLE=0
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
 
     # Parse flags
     while [[ $# -gt 0 ]]; do
@@ -2259,11 +2276,15 @@ cmd_doctor() {
                 ;;
             --app=*)
                 DOCTOR_APP="${1#*=}"
+                if [[ -z "$DOCTOR_APP" ]]; then
+                    print_error "--app requires a non-empty value"
+                    exit 1
+                fi
                 shift
                 ;;
             --app)
-                if [[ $# -lt 2 ]]; then
-                    print_error "--app requires a value"
+                if [[ $# -lt 2 || -z "$2" ]]; then
+                    print_error "--app requires a non-empty value"
                     exit 1
                 fi
                 DOCTOR_APP="$2"
@@ -2271,11 +2292,15 @@ cmd_doctor() {
                 ;;
             --env=*)
                 DOCTOR_ENV="${1#*=}"
+                if [[ -z "$DOCTOR_ENV" ]]; then
+                    print_error "--env requires a non-empty value"
+                    exit 1
+                fi
                 shift
                 ;;
             --env)
-                if [[ $# -lt 2 ]]; then
-                    print_error "--env requires a value"
+                if [[ $# -lt 2 || -z "$2" ]]; then
+                    print_error "--env requires a non-empty value"
                     exit 1
                 fi
                 DOCTOR_ENV="$2"

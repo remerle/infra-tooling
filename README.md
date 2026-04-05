@@ -461,6 +461,31 @@ Verifies that all required tools (`gum`, `gh`, `k3d`, `kubectl`, `jq`, `helm`, `
 cluster-ctl.sh preflight-check
 ```
 
+#### `doctor`
+
+Runs cross-layer diagnostic checks against the repo and cluster. Read-only; never mutates repo or cluster state. Each finding is reported with *what* is wrong, *why* it matters, and a concrete *fix*. Exits 0 (clean), 1 (warnings/infos only), or 2 (errors).
+
+```bash
+cluster-ctl.sh doctor                    # run all 9 layers
+cluster-ctl.sh doctor --scope=repo       # skip layers that need a cluster
+cluster-ctl.sh doctor --scope=cluster    # skip layers that read the repo
+cluster-ctl.sh doctor --app=backend      # filter app-scoped findings
+cluster-ctl.sh doctor --env=prod         # filter env-scoped findings
+cluster-ctl.sh doctor --verbose          # include evidence blocks
+```
+
+The nine layers:
+
+1. **Prerequisites** -- required CLI tools, Docker daemon, cluster reachability
+2. **Controllers** -- ArgoCD, sealed-secrets, cert-manager, Kargo deployments Ready
+3. **Repo structure** -- env/app/project manifests, Kargo promotion-order, REPO_URL drift
+4. **Alignment** -- ArgoCD Applications vs Kustomize overlays, namespace consistency
+5. **Credentials** -- argocd repo creds, registry pull secrets, Kargo credentials per namespace
+6. **Runtime** -- pod phases, PVC binding, recent warning events, Application health
+7. **Image reachability** -- `crane digest` against each image tag referenced by pods (skipped if `crane` is not installed)
+8. **Ingress reachability** -- DNS, HTTP/HTTPS probe, TLS cert validity and SAN coverage
+9. **Hygiene and drift** -- orphan Applications, unused overlays, stale sealed-secret certs
+
 ### Helm values (`helm/argocd-values.yaml`)
 
 `helm/argocd-values.yaml` ships with this tooling and is the source-of-truth Helm values file for ArgoCD. `init-cluster` applies it when installing ArgoCD, and `upgrade-argocd` re-applies it whenever you want to pick up edits. To customize your ArgoCD install (Ingress hostnames, resource limits, RBAC, plugins, dex config), edit this file in place and re-run `upgrade-argocd`.
