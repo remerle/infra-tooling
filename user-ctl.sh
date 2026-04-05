@@ -318,13 +318,29 @@ cmd_remove_role() {
     require_yq
     require_helm
 
-    local role_name="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name_flag="$2"; shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: user-ctl.sh remove-role [name] [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
+
+    local role_name="$name_flag"
 
     if [[ -z "$role_name" ]]; then
-        local policy
-        policy="$(yq '.configs.rbac."policy.csv" // ""' "$VALUES_FILE")" || true
-        role_name="$(echo "$policy" | grep -oE 'role:[^,[:space:]]+' | sed 's/^role://' | sort -u \
-            | choose_from "Select role to remove:" "No roles to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            local policy
+            policy="$(yq '.configs.rbac."policy.csv" // ""' "$VALUES_FILE")" || true
+            role_name="$(echo "$policy" | grep -oE 'role:[^,[:space:]]+' | sed 's/^role://' | sort -u \
+                | choose_from "Select role to remove:" "No roles to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
 
     if ! role_exists "$role_name" "$VALUES_FILE"; then
@@ -334,7 +350,7 @@ cmd_remove_role() {
 
     print_header "Remove Role: ${role_name}"
 
-    confirm_destructive_or_abort "Remove role '${role_name}'? This removes ArgoCD policy and k8s RBAC."
+    require_yes "$yes" "remove role '${role_name}' (removes ArgoCD policy and k8s RBAC)"
 
     # Remove k8s manifests
     local platform_dir="${TARGET_DIR}/k8s/platform"
@@ -490,12 +506,28 @@ cmd_remove() {
     require_yq
     require_helm
 
-    local username="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name_flag="$2"; shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: user-ctl.sh remove [username] [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
+
+    local username="$name_flag"
 
     if [[ -z "$username" ]]; then
-        username="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
-            | grep '^accounts\.' | sed 's/^accounts\.//' \
-            | choose_from "Select user to remove:" "No users to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            username="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
+                | grep '^accounts\.' | sed 's/^accounts\.//' \
+                | choose_from "Select user to remove:" "No users to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
 
     if ! account_exists "$username" "$VALUES_FILE"; then
@@ -505,7 +537,7 @@ cmd_remove() {
 
     print_header "Remove User: ${username}"
 
-    confirm_destructive_or_abort "Remove user '${username}'?"
+    require_yes "$yes" "remove user '${username}'"
 
     # Delete k8s CSR if it exists
     run_cmd_sh "Removing K8s CSR..." \
@@ -830,9 +862,14 @@ cmd_refresh_sa() {
 
     # Interactive selection if name not provided
     if [[ -z "$sa_name" ]]; then
-        require_yq
-        sa_name="$(detect_sa_accounts "$VALUES_FILE" "${TARGET_DIR}/users" \
-            | choose_from "Select service account to refresh:" "No service accounts found.")" || exit 0
+        if [[ -t 0 ]]; then
+            require_yq
+            sa_name="$(detect_sa_accounts "$VALUES_FILE" "${TARGET_DIR}/users" \
+                | choose_from "Select service account to refresh:" "No service accounts found.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
 
     # Verify SA exists
@@ -866,17 +903,33 @@ cmd_remove_sa() {
     require_yq
     require_helm
 
-    local sa_name="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name_flag="$2"; shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: user-ctl.sh remove-sa [name] [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
+
+    local sa_name="$name_flag"
 
     if [[ -z "$sa_name" ]]; then
-        require_yq
-        sa_name="$(detect_sa_accounts "$VALUES_FILE" "${TARGET_DIR}/users" \
-            | choose_from "Select service account to remove:" "No service accounts to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            require_yq
+            sa_name="$(detect_sa_accounts "$VALUES_FILE" "${TARGET_DIR}/users" \
+                | choose_from "Select service account to remove:" "No service accounts to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
 
     print_header "Remove Service Account: ${sa_name}"
 
-    confirm_destructive_or_abort "Remove service account '${sa_name}'?"
+    require_yes "$yes" "remove service account '${sa_name}'"
 
     # Delete ServiceAccount and RBAC bindings
     run_cmd_sh "Removing ServiceAccount and RBAC bindings..." \
