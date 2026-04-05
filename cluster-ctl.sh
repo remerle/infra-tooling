@@ -1394,6 +1394,93 @@ doctor_layer_3_repo_structure() {
     render_doctor_layer "Layer 3: Repo structure"
 }
 
+# Returns distinct Secret names referenced by a workload's base manifests.
+# Scans for secretKeyRef.name and envFrom[].secretRef.name in Deployment and
+# StatefulSet manifests under k8s/apps/<app>/base/.
+# Usage: scan_workload_secret_refs <app>
+scan_workload_secret_refs() {
+    local app="$1"
+    local base_dir="${TARGET_DIR}/k8s/apps/${app}/base"
+    [[ ! -d "$base_dir" ]] && return 0
+
+    local file
+    {
+        for file in "$base_dir"/*.yaml; do
+            [[ ! -f "$file" ]] && continue
+            yq eval '.. | select(has("secretKeyRef")).secretKeyRef.name' "$file" 2>/dev/null
+            yq eval '.. | select(has("secretRef")).secretRef.name' "$file" 2>/dev/null
+        done
+    } | grep -v '^null$' | grep -v '^$' | sort -u
+}
+
+# Returns distinct ConfigMap names referenced by a workload's base manifests.
+# Usage: scan_workload_configmap_refs <app>
+scan_workload_configmap_refs() {
+    local app="$1"
+    local base_dir="${TARGET_DIR}/k8s/apps/${app}/base"
+    [[ ! -d "$base_dir" ]] && return 0
+
+    local file
+    {
+        for file in "$base_dir"/*.yaml; do
+            [[ ! -f "$file" ]] && continue
+            yq eval '.. | select(has("configMapKeyRef")).configMapKeyRef.name' "$file" 2>/dev/null
+            yq eval '.. | select(has("configMapRef")).configMapRef.name' "$file" 2>/dev/null
+        done
+    } | grep -v '^null$' | grep -v '^$' | sort -u
+}
+
+# Returns 0 if the overlay supplies a Secret/SealedSecret with the given name,
+# 1 otherwise. Checks:
+#   (a) any file in the overlay's kustomization resources list defines a
+#       Secret or SealedSecret with metadata.name == <secret_name>
+#   (b) the overlay's kustomization has a secretGenerator with that name
+# Checks the base kustomization's secretGenerator as fallback.
+# Usage: overlay_has_secret_manifest <app> <env> <secret_name>
+overlay_has_secret_manifest() {
+    local app="$1" env="$2" secret_name="$3"
+    local overlay_kust="${TARGET_DIR}/k8s/apps/${app}/overlays/${env}/kustomization.yaml"
+    local overlay_dir="${TARGET_DIR}/k8s/apps/${app}/overlays/${env}"
+    local base_kust="${TARGET_DIR}/k8s/apps/${app}/base/kustomization.yaml"
+
+    # Check (b) overlay secretGenerator
+    if [[ -f "$overlay_kust" ]]; then
+        local gen_names
+        gen_names="$(yq eval '.secretGenerator[]?.name' "$overlay_kust" 2>/dev/null)"
+        if grep -Fqx -- "$secret_name" <<<"$gen_names"; then
+            return 0
+        fi
+    fi
+
+    # Check (a) resources listed in overlay kustomization that define the Secret
+    local resource resource_path
+    while IFS= read -r resource; do
+        [[ -z "$resource" ]] && continue
+        # Skip directory references and non-local refs
+        [[ "$resource" == *..* || "$resource" == /* || "$resource" == http* ]] && continue
+        resource_path="${overlay_dir}/${resource}"
+        [[ ! -f "$resource_path" ]] && continue
+        # Check if this file defines a Secret or SealedSecret with the right name.
+        # Files may contain multiple docs; use yq to select matching doc.
+        local found_name
+        found_name="$(yq eval 'select(.kind == "Secret" or .kind == "SealedSecret") | .metadata.name' "$resource_path" 2>/dev/null | grep -Fxv "" | head -n 1)"
+        if [[ "$found_name" == "$secret_name" ]]; then
+            return 0
+        fi
+    done < <(kustomization_resources "$overlay_kust")
+
+    # Check base kustomization's secretGenerator (rarely used but valid)
+    if [[ -f "$base_kust" ]]; then
+        local base_gen_names
+        base_gen_names="$(yq eval '.secretGenerator[]?.name' "$base_kust" 2>/dev/null)"
+        if grep -Fqx -- "$secret_name" <<<"$base_gen_names"; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 doctor_layer_4_alignment() {
     DOCTOR_CURRENT_LAYER_ERRORS=()
     DOCTOR_CURRENT_LAYER_WARNINGS=()
