@@ -69,10 +69,12 @@ cmd_init_cluster() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;
             --agents)
+                require_flag_value "--agents" "${2:-}"
                 agents_flag="$2"
                 shift 2
                 ;;
@@ -109,6 +111,7 @@ cmd_init_cluster() {
                 shift
                 ;;
             --kargo-password)
+                require_flag_value "--kargo-password" "${2:-}"
                 kargo_password_flag="$2"
                 shift 2
                 ;;
@@ -465,6 +468,7 @@ cmd_delete_cluster() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;
@@ -582,6 +586,7 @@ cmd_add_argo_creds() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --pat)
+                require_flag_value "--pat" "${2:-}"
                 pat_flag="$2"
                 shift 2
                 ;;
@@ -684,18 +689,22 @@ cmd_add_registry_creds() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --registry)
+                require_flag_value "--registry" "${2:-}"
                 registry_flag="$2"
                 shift 2
                 ;;
             --username)
+                require_flag_value "--username" "${2:-}"
                 username_flag="$2"
                 shift 2
                 ;;
             --token)
+                require_flag_value "--token" "${2:-}"
                 token_flag="$2"
                 shift 2
                 ;;
             --env)
+                require_flag_value "--env" "${2:-}"
                 env_flags+=("$2")
                 shift 2
                 ;;
@@ -875,10 +884,12 @@ cmd_add_kargo_creds() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --app)
+                require_flag_value "--app" "${2:-}"
                 app_flag="$2"
                 shift 2
                 ;;
             --pat)
+                require_flag_value "--pat" "${2:-}"
                 pat_flag="$2"
                 shift 2
                 ;;

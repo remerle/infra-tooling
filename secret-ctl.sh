@@ -115,14 +115,17 @@ cmd_add() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --app)
+                require_flag_value "--app" "${2:-}"
                 app_flag="$2"
                 shift 2
                 ;;
             --env)
+                require_flag_value "--env" "${2:-}"
                 env_flag="$2"
                 shift 2
                 ;;
             --secret-val)
+                require_flag_value "--secret-val" "${2:-}"
                 secret_val_entries+=("$2")
                 shift 2
                 ;;
@@ -420,10 +423,12 @@ cmd_remove() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --app)
+                require_flag_value "--app" "${2:-}"
                 app_flag="$2"
                 shift 2
                 ;;
             --env)
+                require_flag_value "--env" "${2:-}"
                 env_flag="$2"
                 shift 2
                 ;;
@@ -527,6 +532,7 @@ cmd_verify() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --env)
+                require_flag_value "--env" "${2:-}"
                 env_flag="$2"
                 shift 2
                 ;;

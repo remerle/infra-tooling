@@ -1189,10 +1189,12 @@ cmd_remove_ingress() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --app)
+                require_flag_value "--app" "${2:-}"
                 app_name_flag="$2"
                 shift 2
                 ;;
             --env)
+                require_flag_value "--env" "${2:-}"
                 env_flags+=("$2")
                 shift 2
                 ;;
@@ -1331,6 +1333,7 @@ cmd_add_env() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 env_name_flag="$2"
                 shift 2
                 ;;
@@ -1592,10 +1595,12 @@ cmd_add_project() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;
             --description)
+                require_flag_value "--description" "${2:-}"
                 desc_flag="$2"
                 shift 2
                 ;;
@@ -1608,10 +1613,12 @@ cmd_add_project() {
                 shift
                 ;;
             --source-repos)
+                require_flag_value "--source-repos" "${2:-}"
                 repos_flag="$2"
                 shift 2
                 ;;
             --namespaces)
+                require_flag_value "--namespaces" "${2:-}"
                 IFS=',' read -ra _ns <<<"$2"
                 ns_flags+=("${_ns[@]}")
                 restrict_ns_flag="true"
@@ -1802,10 +1809,12 @@ cmd_edit_project() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;
             --description)
+                require_flag_value "--description" "${2:-}"
                 desc_flag="$2"
                 shift 2
                 ;;
@@ -1818,10 +1827,12 @@ cmd_edit_project() {
                 shift
                 ;;
             --source-repos)
+                require_flag_value "--source-repos" "${2:-}"
                 repos_flag="$2"
                 shift 2
                 ;;
             --namespaces)
+                require_flag_value "--namespaces" "${2:-}"
                 IFS=',' read -ra _ns <<<"$2"
                 ns_flags+=("${_ns[@]}")
                 restrict_ns_flag="true"
@@ -2312,10 +2323,12 @@ cmd_remove_project() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;
             --reassign-to)
+                require_flag_value "--reassign-to" "${2:-}"
                 reassign_flag="$2"
                 shift 2
                 ;;
@@ -2469,6 +2482,7 @@ cmd_remove_app() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;
@@ -2581,6 +2595,7 @@ cmd_remove_env() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;

@@ -1125,6 +1125,21 @@ print_removed() {
 # stdin is a TTY, or die with a clear error otherwise. See AGENTS.md
 # "Flag-first command contract" for the mandatory rules.
 
+# Exits with a clear error if a flag's value was omitted on the CLI.
+# Call this from flag-parsing case arms before assigning $2 so that scripted
+# callers see a named-flag error instead of the unhelpful "$2: unbound variable"
+# that `set -u` would otherwise produce.
+# Usage inside a case arm:
+#   --name) require_flag_value "--name" "${2:-}"; name_flag="$2"; shift 2 ;;
+require_flag_value() {
+    local flag="$1"
+    local value="${2-__UNSET__}"
+    if [[ "$value" == "__UNSET__" || -z "$value" ]]; then
+        print_error "${flag} requires a value"
+        exit 1
+    fi
+}
+
 # Exits with a clear error if stdin is not a TTY. Call this before any
 # fallback prompt to guarantee scripted callers get an actionable
 # message naming the missing flag.

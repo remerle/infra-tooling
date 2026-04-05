@@ -21,30 +21,37 @@ cmd_add_role() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;
             --preset)
+                require_flag_value "--preset" "${2:-}"
                 preset_flag="$2"
                 shift 2
                 ;;
             --argocd-resources)
+                require_flag_value "--argocd-resources" "${2:-}"
                 argocd_resources_flag="$2"
                 shift 2
                 ;;
             --actions)
+                require_flag_value "--actions" "${2:-}"
                 actions_flag="$2"
                 shift 2
                 ;;
             --k8s-scope)
+                require_flag_value "--k8s-scope" "${2:-}"
                 k8s_scope_flag="$2"
                 shift 2
                 ;;
             --k8s-verbs)
+                require_flag_value "--k8s-verbs" "${2:-}"
                 k8s_verbs_flag="$2"
                 shift 2
                 ;;
             --namespace)
+                require_flag_value "--namespace" "${2:-}"
                 ns_flags+=("$2")
                 shift 2
                 ;;
@@ -359,6 +366,7 @@ cmd_remove_role() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;
@@ -565,6 +573,7 @@ cmd_remove() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;
@@ -719,6 +728,7 @@ cmd_add_sa() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --duration)
+                require_flag_value "--duration" "${2:-}"
                 duration="$2"
                 if [[ ! "$duration" =~ ^[0-9]+[hms]$ ]]; then
                     print_error "Invalid duration format: '${duration}'. Use <number><unit> where unit is h (hours), m (minutes), or s (seconds). Example: 2160h"
@@ -919,6 +929,7 @@ cmd_refresh_sa() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --duration)
+                require_flag_value "--duration" "${2:-}"
                 duration="$2"
                 if [[ ! "$duration" =~ ^[0-9]+[hms]$ ]]; then
                     print_error "Invalid duration format: '${duration}'. Use <number><unit> where unit is h (hours), m (minutes), or s (seconds). Example: 2160h"
@@ -980,6 +991,7 @@ cmd_remove_sa() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_flag_value "--name" "${2:-}"
                 name_flag="$2"
                 shift 2
                 ;;
