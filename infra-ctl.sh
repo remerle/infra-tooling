@@ -1036,7 +1036,21 @@ cmd_remove_ingress() {
     require_yq
     load_conf
 
-    local app_name="${1:-}"
+    local app_name_flag=""
+    local env_flags=()
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --app) app_name_flag="$2"; shift 2 ;;
+            --env) env_flags+=("$2"); shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: infra-ctl.sh remove-ingress <app> [--env <name>]... [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) if [[ -z "$app_name_flag" ]]; then app_name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
+
+    local app_name="$app_name_flag"
     if [[ -z "$app_name" ]]; then
         # Build list of apps that have at least one overlay ingress
         local apps_with_ingress=()
@@ -1054,7 +1068,12 @@ cmd_remove_ingress() {
             print_warning "No ingress resources found."
             return
         fi
-        app_name="$(printf "%s\n" "${apps_with_ingress[@]}" | gum choose --header "Select application:")"
+        if [[ -t 0 ]]; then
+            app_name="$(printf "%s\n" "${apps_with_ingress[@]}" | gum choose --header "Select application:")"
+        else
+            print_error "--app is required when not running interactively"
+            exit 1
+        fi
     fi
     validate_k8s_name "$app_name" "App name"
 
@@ -1078,16 +1097,28 @@ cmd_remove_ingress() {
         exit 1
     fi
 
-    # Multi-select envs to remove from (all pre-selected)
+    # Multi-select envs to remove from
     local selected=()
-    if [[ ${#envs_with_ingress[@]} -eq 1 ]]; then
+    if [[ ${#env_flags[@]} -gt 0 ]]; then
+        local ef e found
+        for ef in "${env_flags[@]}"; do
+            found=0
+            for e in "${envs_with_ingress[@]}"; do
+                [[ "$ef" == "$e" ]] && { found=1; break; }
+            done
+            [[ "$found" -eq 0 ]] && { print_error "Env '${ef}' has no ingress for '${app_name}'"; exit 1; }
+        done
+        selected=("${env_flags[@]}")
+    elif [[ ${#envs_with_ingress[@]} -eq 1 ]]; then
         selected=("${envs_with_ingress[0]}")
-    else
+    elif [[ -t 0 ]]; then
         local selected_csv
         selected_csv="$(printf '%s,' "${envs_with_ingress[@]}" | sed 's/,$//')"
         readarray -t selected < <(printf '%s\n' "${envs_with_ingress[@]}" \
             | gum choose --no-limit --selected="$selected_csv" \
                 --header "Remove ingress from which environments?")
+    else
+        selected=("${envs_with_ingress[@]}")
     fi
 
     if [[ ${#selected[@]} -eq 0 ]]; then
@@ -1102,7 +1133,7 @@ cmd_remove_ingress() {
         print_info "  ${env}.${app_name}.localhost"
     done
 
-    confirm_destructive_or_abort "Remove ingress from these environments?"
+    require_yes "$yes" "remove ingress for '${app_name}' from ${selected[*]}"
 
     local removed=()
     for env in "${selected[@]}"; do
