@@ -2122,6 +2122,77 @@ doctor_layer_9_hygiene() {
     DOCTOR_CURRENT_LAYER_ERRORS=()
     DOCTOR_CURRENT_LAYER_WARNINGS=()
     DOCTOR_CURRENT_LAYER_INFOS=()
+
+    needs_cluster_or_skip "Layer 9: Hygiene" || return 0
+
+    # --- Orphan Applications: in cluster but not in repo ----------------
+    local cluster_apps
+    cluster_apps="$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | sort -u)"
+
+    # Build the expected set from argocd/apps/*.yaml basenames, plus the
+    # well-known umbrella/parent app names.
+    local expected_apps=$'parent-app\nprojects\nkargo\n'
+    local f base
+    for f in "${TARGET_DIR}"/argocd/apps/*.yaml; do
+        [[ -f "$f" ]] || continue
+        base="$(basename "$f" .yaml)"
+        expected_apps+="${base}"$'\n'
+    done
+    expected_apps="$(printf '%s' "$expected_apps" | sort -u)"
+
+    local app_name
+    while IFS= read -r app_name; do
+        [[ -z "$app_name" ]] && continue
+        if ! grep -Fxq "$app_name" <<<"$expected_apps"; then
+            # Try to parse app-env from name for filter purposes (last
+            # hyphen split). If it doesn't contain a hyphen, skip filter.
+            local parsed_app="" parsed_env=""
+            if [[ "$app_name" == *-* ]]; then
+                parsed_env="${app_name##*-}"
+                parsed_app="${app_name%-*}"
+            fi
+            doctor_matches_filter "$parsed_app" "$parsed_env" || continue
+            doctor_warn "$app_name" \
+                "Orphan ArgoCD Application in cluster" \
+                "no matching file at argocd/apps/${app_name}.yaml and not a known umbrella app" \
+                "Remove with 'kubectl -n argocd delete app ${app_name}' or restore argocd/apps/${app_name}.yaml"
+        fi
+    done <<<"$cluster_apps"
+
+    # --- Orphan namespaces: env ns with no Application targeting it ----
+    local env targeting_apps
+    while IFS= read -r env; do
+        [[ -z "$env" ]] && continue
+        doctor_matches_filter "" "$env" || continue
+        kubectl get ns "$env" &>/dev/null || continue
+        targeting_apps="$(kubectl get applications -n argocd -o jsonpath="{range .items[?(@.spec.destination.namespace=='${env}')]}{.metadata.name}{'\n'}{end}" 2>/dev/null)"
+        if [[ -z "$targeting_apps" ]]; then
+            doctor_info "${env}" "Namespace exists but no Application targets it"
+        fi
+    done < <(detect_envs)
+
+    # --- Sealed-secrets cert drift -------------------------------------
+    local repo_cert="${TARGET_DIR}/.sealed-secrets-cert.pem"
+    if [[ -f "$repo_cert" ]]; then
+        if kubectl -n kube-system get deploy sealed-secrets-controller &>/dev/null; then
+            if ! command -v kubeseal &>/dev/null; then
+                doctor_info "kubeseal" "kubeseal not installed; skipping sealed-secrets cert drift check"
+            else
+                local live_cert_hash repo_cert_hash
+                live_cert_hash="$(kubeseal --fetch-cert 2>/dev/null | shasum -a 256 | awk '{print $1}')"
+                repo_cert_hash="$(shasum -a 256 < "$repo_cert" | awk '{print $1}')"
+                if [[ -n "$live_cert_hash" && "$live_cert_hash" != "$repo_cert_hash" ]]; then
+                    doctor_warn ".sealed-secrets-cert.pem" \
+                        "Sealed-secrets cert in repo differs from controller's active cert" \
+                        "the committed cert no longer matches the controller's public key; new sealed secrets encrypted against the old cert will fail to decrypt" \
+                        "Run 'kubeseal --fetch-cert > .sealed-secrets-cert.pem' in the repo root and commit the updated cert" \
+                        "repo cert sha256: ${repo_cert_hash}" \
+                        "live cert sha256: ${live_cert_hash}"
+                fi
+            fi
+        fi
+    fi
+
     render_doctor_layer "Layer 9: Hygiene"
 }
 
