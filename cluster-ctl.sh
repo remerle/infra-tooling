@@ -1481,10 +1481,144 @@ overlay_has_secret_manifest() {
     return 1
 }
 
+# Returns 0 if the overlay supplies a ConfigMap with the given name, 1 otherwise.
+# Mirrors overlay_has_secret_manifest but checks configMapGenerator and
+# kind: ConfigMap. Also checks the base kustomization's configMapGenerator.
+# Usage: overlay_has_configmap_manifest <app> <env> <cm_name>
+overlay_has_configmap_manifest() {
+    local app="$1" env="$2" cm_name="$3"
+    local overlay_kust="${TARGET_DIR}/k8s/apps/${app}/overlays/${env}/kustomization.yaml"
+    local overlay_dir="${TARGET_DIR}/k8s/apps/${app}/overlays/${env}"
+    local base_kust="${TARGET_DIR}/k8s/apps/${app}/base/kustomization.yaml"
+
+    # Check overlay configMapGenerator
+    if [[ -f "$overlay_kust" ]]; then
+        local gen_names
+        gen_names="$(yq eval '.configMapGenerator[]?.name' "$overlay_kust" 2>/dev/null)"
+        if grep -Fqx -- "$cm_name" <<<"$gen_names"; then
+            return 0
+        fi
+    fi
+
+    # Check resources listed in overlay kustomization that define the ConfigMap
+    local resource resource_path
+    while IFS= read -r resource; do
+        [[ -z "$resource" ]] && continue
+        [[ "$resource" == *..* || "$resource" == /* || "$resource" == http* ]] && continue
+        resource_path="${overlay_dir}/${resource}"
+        [[ ! -f "$resource_path" ]] && continue
+        local found_name
+        found_name="$(yq eval 'select(.kind == "ConfigMap") | .metadata.name' "$resource_path" 2>/dev/null | grep -Fxv "" | head -n 1)"
+        if [[ "$found_name" == "$cm_name" ]]; then
+            return 0
+        fi
+    done < <(kustomization_resources "$overlay_kust")
+
+    # Check base kustomization's configMapGenerator (typical case)
+    if [[ -f "$base_kust" ]]; then
+        local base_gen_names
+        base_gen_names="$(yq eval '.configMapGenerator[]?.name' "$base_kust" 2>/dev/null)"
+        if grep -Fqx -- "$cm_name" <<<"$base_gen_names"; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
 doctor_layer_4_alignment() {
     DOCTOR_CURRENT_LAYER_ERRORS=()
     DOCTOR_CURRENT_LAYER_WARNINGS=()
     DOCTOR_CURRENT_LAYER_INFOS=()
+
+    if [[ "$DOCTOR_SCOPE" == "cluster" ]]; then
+        DOCTOR_SKIPPED_LAYERS+=("Layer 4: Alignment (scope=cluster)")
+        printf "▸ %s %s\n" \
+            "$(gum style --bold "Layer 4: Alignment")" \
+            "$(gum style --faint "○ skipped (scope=cluster)")"
+        return 0
+    fi
+
+    local apps_dir="${TARGET_DIR}/argocd/apps"
+    local app_file basename_file meta_name app env
+
+    if [[ -d "$apps_dir" ]]; then
+        for app_file in "$apps_dir"/*.yaml; do
+            [[ -f "$app_file" ]] || continue
+            basename_file="$(basename "$app_file")"
+            [[ "$basename_file" == "projects.yaml" || "$basename_file" == "kargo.yaml" ]] && continue
+
+            meta_name="$(yq eval '.metadata.name // ""' "$app_file" 2>/dev/null)"
+            [[ -z "$meta_name" ]] && continue
+
+            if [[ "$meta_name" == *-* ]]; then
+                app="${meta_name%-*}"
+                env="${meta_name##*-}"
+            else
+                app="$meta_name"
+                env=""
+            fi
+
+            doctor_matches_filter "$app" "$env" || continue
+            seen_pairs+=("${app}:${env}")
+
+            # Secret refs
+            local secrets secret
+            secrets="$(scan_workload_secret_refs "$app" || true)"
+            while IFS= read -r secret; do
+                [[ -z "$secret" ]] && continue
+                if ! overlay_has_secret_manifest "$app" "$env" "$secret"; then
+                    doctor_error "${app}-${env}" \
+                        "Secret '${secret}' referenced but not in overlay" \
+                        "base manifest uses secretKeyRef/envFrom for '${secret}', but overlays/${env}/kustomization.yaml does not include a sealed-secret or secretGenerator for it" \
+                        "secret-ctl.sh add ${app} ${env}" \
+                        "k8s/apps/${app}/base/ references secretKeyRef.name: ${secret}" \
+                        "k8s/apps/${app}/overlays/${env}/kustomization.yaml does not provide the secret"
+                fi
+            done <<<"$secrets"
+
+            # ConfigMap refs (warnings)
+            local configmaps cm
+            configmaps="$(scan_workload_configmap_refs "$app" || true)"
+            while IFS= read -r cm; do
+                [[ -z "$cm" ]] && continue
+                if ! overlay_has_configmap_manifest "$app" "$env" "$cm"; then
+                    doctor_warn "${app}-${env}" \
+                        "ConfigMap '${cm}' referenced but not in overlay" \
+                        "base manifest uses configMapKeyRef/envFrom for '${cm}', but neither base nor overlays/${env}/kustomization.yaml provides a configMapGenerator or ConfigMap manifest for it" \
+                        "Add configMapGenerator to k8s/apps/${app}/base/kustomization.yaml or overlays/${env}/kustomization.yaml" \
+                        "k8s/apps/${app}/base/ references configMapRef/configMapKeyRef name: ${cm}" \
+                        "neither base nor overlays/${env} supplies a ConfigMap named '${cm}'"
+                fi
+            done <<<"$configmaps"
+        done
+    fi
+
+    # Orphaned sealed-secret check
+    local ss_file rel path_in_repo orphan_app orphan_env overlay_kust resources_list
+    for ss_file in "${TARGET_DIR}"/k8s/apps/*/overlays/*/sealed-secret.yaml; do
+        [[ -f "$ss_file" ]] || continue
+        # Extract app and env from path: .../k8s/apps/<app>/overlays/<env>/sealed-secret.yaml
+        rel="${ss_file#${TARGET_DIR}/k8s/apps/}"
+        orphan_app="${rel%%/*}"
+        rel="${rel#*/overlays/}"
+        orphan_env="${rel%%/*}"
+
+        doctor_matches_filter "$orphan_app" "$orphan_env" || continue
+
+        overlay_kust="${TARGET_DIR}/k8s/apps/${orphan_app}/overlays/${orphan_env}/kustomization.yaml"
+        [[ -f "$overlay_kust" ]] || continue
+        resources_list="$(kustomization_resources "$overlay_kust")"
+        if ! grep -Fqx -- "sealed-secret.yaml" <<<"$resources_list"; then
+            doctor_error "${orphan_app}-${orphan_env}" \
+                "sealed-secret.yaml exists but not wired into kustomization" \
+                "k8s/apps/${orphan_app}/overlays/${orphan_env}/sealed-secret.yaml is on disk but not listed in the kustomization's resources" \
+                "Add '- sealed-secret.yaml' to the resources list in k8s/apps/${orphan_app}/overlays/${orphan_env}/kustomization.yaml" \
+                "file exists: k8s/apps/${orphan_app}/overlays/${orphan_env}/sealed-secret.yaml" \
+                "overlay kustomization.yaml resources list does not reference it"
+        fi
+    done
+
     render_doctor_layer "Layer 4: Alignment"
 }
 
