@@ -147,7 +147,7 @@ _cluster_ctl() {
                         '--scope[Limit checks to repo, cluster, or all]:scope:(repo cluster all)' \
                         '--app[Limit checks to a single application]:app:_infra_complete_apps' \
                         '--env[Limit checks to a single environment]:env:_infra_complete_envs' \
-                        '--verbose[Show full command output for doctor checks]' \
+                        '--verbose[Show additional diagnostic detail]' \
                         '(-h --help)'{-h,--help}'[Show doctor usage]'
                     ;;
             esac

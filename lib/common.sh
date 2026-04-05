@@ -750,25 +750,6 @@ detect_service_port() {
     yq eval '.spec.ports[0].port' "$service_file"
 }
 
-# Thin yq wrapper with error handling. Returns empty string and prints warning
-# to stderr on yq error. yq is a hard dependency.
-# Usage: parse_yaml_field <file> <yq-expr>
-parse_yaml_field() {
-    local file="$1"
-    local expr="$2"
-    if [[ ! -f "$file" ]]; then
-        return 0
-    fi
-    local result
-    if ! result="$(yq eval "$expr" "$file" 2>/dev/null)"; then
-        print_warning "yq failed to parse $file with expression: $expr" >&2
-        return 0
-    fi
-    # yq returns "null" literal when key missing; normalize to empty.
-    [[ "$result" == "null" ]] && result=""
-    printf '%s' "$result"
-}
-
 # Returns one resource per line from a kustomization.yaml .resources list.
 # Empty output if .resources is missing or file doesn't exist.
 # Usage: kustomization_resources <kustomization.yaml>

@@ -1035,32 +1035,65 @@ DOCTOR_CURRENT_LAYER_ERRORS=()
 DOCTOR_CURRENT_LAYER_WARNINGS=()
 DOCTOR_CURRENT_LAYER_INFOS=()
 
+# Reset the per-layer finding buffers. Must be called at the top of every
+# doctor_layer_* function. Forgetting this call would leak the previous
+# layer's findings into the next one's box.
+doctor_begin_layer() {
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
+}
+
+# Strip the unit-separator (\x1f) delimiter from a string so that finding
+# fields (which embed kubectl/controller output) cannot corrupt the pack
+# boundary. kubectl/jq output should never contain \x1f, but sanitizing at
+# the pack site makes the invariant load-bearing rather than aspirational.
+_doctor_sanitize() { printf '%s' "${1//$'\x1f'/}"; }
+
 doctor_error() {
-    local subject="$1" msg="$2" why="$3" fix="$4"
+    local subject msg why fix
+    subject="$(_doctor_sanitize "$1")"
+    msg="$(_doctor_sanitize "$2")"
+    why="$(_doctor_sanitize "$3")"
+    fix="$(_doctor_sanitize "$4")"
     shift 4
     local evidence=""
     if [[ $# -gt 0 ]]; then
-        evidence="$(printf '%s\n' "$@")"
+        evidence="$(_doctor_sanitize "$(printf '%s\n' "$@")")"
     fi
     DOCTOR_CURRENT_LAYER_ERRORS+=("${subject}"$'\x1f'"${msg}"$'\x1f'"${why}"$'\x1f'"${fix}"$'\x1f'"${evidence}")
     DOCTOR_ERRORS=$((DOCTOR_ERRORS + 1))
 }
 
 doctor_warn() {
-    local subject="$1" msg="$2" why="$3" fix="$4"
+    local subject msg why fix
+    subject="$(_doctor_sanitize "$1")"
+    msg="$(_doctor_sanitize "$2")"
+    why="$(_doctor_sanitize "$3")"
+    fix="$(_doctor_sanitize "$4")"
     shift 4
     local evidence=""
     if [[ $# -gt 0 ]]; then
-        evidence="$(printf '%s\n' "$@")"
+        evidence="$(_doctor_sanitize "$(printf '%s\n' "$@")")"
     fi
     DOCTOR_CURRENT_LAYER_WARNINGS+=("${subject}"$'\x1f'"${msg}"$'\x1f'"${why}"$'\x1f'"${fix}"$'\x1f'"${evidence}")
     DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1))
 }
 
 doctor_info() {
-    local subject="$1" msg="$2"
+    local subject msg
+    subject="$(_doctor_sanitize "$1")"
+    msg="$(_doctor_sanitize "$2")"
     DOCTOR_CURRENT_LAYER_INFOS+=("${subject}"$'\x1f'"${msg}")
     DOCTOR_INFOS=$((DOCTOR_INFOS + 1))
+}
+
+# Unpacks a \x1f-delimited finding entry into the caller-supplied array name.
+# Usage: doctor_unpack_fields <entry> <dest-array-name>
+doctor_unpack_fields() {
+    local entry="$1"
+    local -n _dest="$2"
+    IFS=$'\x1f' read -r -d '' -a _dest < <(printf '%s\x1f\x00' "$entry")
 }
 
 # Marker for layers with no findings. No-op; render_doctor_layer handles the
@@ -1129,7 +1162,7 @@ render_doctor_layer() {
     local first=1
     local -a fields
     for entry in "${DOCTOR_CURRENT_LAYER_ERRORS[@]}"; do
-        IFS=$'\x1f' read -r -d '' -a fields < <(printf '%s\x1f\x00' "$entry")
+        doctor_unpack_fields "$entry" fields
         subject="${fields[0]}"; msg="${fields[1]}"; why="${fields[2]}"; fix="${fields[3]}"; evidence="${fields[4]}"
         if [[ $first -eq 0 ]]; then content+=$'\n'; fi
         first=0
@@ -1146,7 +1179,7 @@ render_doctor_layer() {
     done
 
     for entry in "${DOCTOR_CURRENT_LAYER_WARNINGS[@]}"; do
-        IFS=$'\x1f' read -r -d '' -a fields < <(printf '%s\x1f\x00' "$entry")
+        doctor_unpack_fields "$entry" fields
         subject="${fields[0]}"; msg="${fields[1]}"; why="${fields[2]}"; fix="${fields[3]}"; evidence="${fields[4]}"
         if [[ $first -eq 0 ]]; then content+=$'\n'; fi
         first=0
@@ -1163,7 +1196,7 @@ render_doctor_layer() {
     done
 
     for entry in "${DOCTOR_CURRENT_LAYER_INFOS[@]}"; do
-        IFS=$'\x1f' read -r -d '' -a fields < <(printf '%s\x1f\x00' "$entry")
+        doctor_unpack_fields "$entry" fields
         subject="${fields[0]}"; msg="${fields[1]}"
         if [[ $first -eq 0 ]]; then content+=$'\n'; fi
         first=0
@@ -1188,7 +1221,7 @@ doctor_exit_code() {
 }
 
 render_doctor_summary() {
-    local layers_checked=9
+    local layers_checked=${DOCTOR_LAYERS_INVOKED:-0}
     local skipped=${#DOCTOR_SKIPPED_LAYERS[@]}
     local code
     code="$(doctor_exit_code)"
@@ -1208,9 +1241,7 @@ render_doctor_summary() {
 }
 
 doctor_layer_1_prereqs() {
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
+    doctor_begin_layer
 
     local tool
     for tool in kubectl jq helm k3d docker curl; do
@@ -1244,9 +1275,7 @@ doctor_layer_1_prereqs() {
 }
 
 doctor_layer_2_controllers() {
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
+    doctor_begin_layer
     needs_cluster_or_skip "Layer 2: Controllers" || return 0
 
     if ! kubectl get ns argocd &>/dev/null; then
@@ -1304,9 +1333,7 @@ doctor_layer_2_controllers() {
 }
 
 doctor_layer_3_repo_structure() {
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
+    doctor_begin_layer
 
     if [[ "$DOCTOR_SCOPE" == "cluster" ]]; then
         DOCTOR_SKIPPED_LAYERS+=("Layer 3: Repo structure (scope=cluster)")
@@ -1463,10 +1490,9 @@ overlay_has_secret_manifest() {
         resource_path="${overlay_dir}/${resource}"
         [[ ! -f "$resource_path" ]] && continue
         # Check if this file defines a Secret or SealedSecret with the right name.
-        # Files may contain multiple docs; use yq to select matching doc.
-        local found_name
-        found_name="$(yq eval 'select(.kind == "Secret" or .kind == "SealedSecret") | .metadata.name' "$resource_path" 2>/dev/null | grep -Fxv "" | head -n 1)"
-        if [[ "$found_name" == "$secret_name" ]]; then
+        # yq eval returns one line per doc in a multi-doc file; grep for exact match.
+        if yq eval 'select(.kind == "Secret" or .kind == "SealedSecret") | .metadata.name' "$resource_path" 2>/dev/null \
+                | grep -Fqx -- "$secret_name"; then
             return 0
         fi
     done < <(kustomization_resources "$overlay_kust")
@@ -1509,9 +1535,8 @@ overlay_has_configmap_manifest() {
         [[ "$resource" == *..* || "$resource" == /* || "$resource" == http* ]] && continue
         resource_path="${overlay_dir}/${resource}"
         [[ ! -f "$resource_path" ]] && continue
-        local found_name
-        found_name="$(yq eval 'select(.kind == "ConfigMap") | .metadata.name' "$resource_path" 2>/dev/null | grep -Fxv "" | head -n 1)"
-        if [[ "$found_name" == "$cm_name" ]]; then
+        if yq eval 'select(.kind == "ConfigMap") | .metadata.name' "$resource_path" 2>/dev/null \
+                | grep -Fqx -- "$cm_name"; then
             return 0
         fi
     done < <(kustomization_resources "$overlay_kust")
@@ -1529,9 +1554,7 @@ overlay_has_configmap_manifest() {
 }
 
 doctor_layer_4_alignment() {
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
+    doctor_begin_layer
 
     if [[ "$DOCTOR_SCOPE" == "cluster" ]]; then
         DOCTOR_SKIPPED_LAYERS+=("Layer 4: Alignment (scope=cluster)")
@@ -1562,7 +1585,6 @@ doctor_layer_4_alignment() {
             fi
 
             doctor_matches_filter "$app" "$env" || continue
-            seen_pairs+=("${app}:${env}")
 
             # Secret refs
             local secrets secret
@@ -1625,9 +1647,7 @@ doctor_layer_4_alignment() {
 }
 
 doctor_layer_5_credentials() {
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
+    doctor_begin_layer
 
     needs_cluster_or_skip "Layer 5: Credentials" || return 0
 
@@ -1717,9 +1737,7 @@ doctor_layer_5_credentials() {
 }
 
 doctor_layer_6_runtime() {
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
+    doctor_begin_layer
 
     needs_cluster_or_skip "Layer 6: Runtime" || return 0
 
@@ -1849,41 +1867,51 @@ doctor_layer_6_runtime() {
     # --- Service endpoints scan: services with no ready backends ---
     # We check for services whose Endpoints object has no ready addresses across
     # all subsets. notReadyAddresses are excluded (e.g., pods stuck init/CCE).
-    local svc_name svc_list ready_count
+    # Batches endpoints per namespace (one kubectl get endpoints per ns, not per svc).
+    local svc_name empty_svc_list
     for ns in "${!target_namespaces[@]}"; do
         doctor_matches_filter "" "$ns" || continue
         kubectl get ns "$ns" >/dev/null 2>&1 || continue
-        svc_list="$(kubectl -n "$ns" get svc -o json 2>/dev/null | jq -r '
+        # Emit names of services that have a selector but zero ready endpoint addresses.
+        empty_svc_list="$(kubectl -n "$ns" get endpoints -o json 2>/dev/null | jq -r '
+            .items[]
+            | select(([(.subsets // [])[] | (.addresses // [])[]] | length) == 0)
+            | .metadata.name
+        ' 2>/dev/null)" || empty_svc_list=""
+        [[ -z "$empty_svc_list" ]] && continue
+        # Filter to only services that declare a selector (skip headless/ExternalName).
+        local selector_svcs
+        selector_svcs="$(kubectl -n "$ns" get svc -o json 2>/dev/null | jq -r '
             .items[]
             | select((.spec.selector // {}) | length > 0)
             | .metadata.name
-        ')" || svc_list=""
-        [[ -z "$svc_list" ]] && continue
+        ')" || selector_svcs=""
         while IFS= read -r svc_name; do
             [[ -z "$svc_name" ]] && continue
-            ready_count="$(kubectl -n "$ns" get endpoints "$svc_name" -o json 2>/dev/null \
-                | jq -r '[(.subsets // [])[] | (.addresses // [])[]] | length' 2>/dev/null)"
-            ready_count="${ready_count:-0}"
-            if [[ "$ready_count" == "0" ]]; then
-                doctor_warn "${ns}/${svc_name}" \
-                    "Service has no endpoints" \
-                    "selector may not match any ready pods" \
-                    "Verify pod labels match service selector; check 'kubectl -n ${ns} get endpoints ${svc_name}'"
-            fi
-        done <<<"$svc_list"
+            grep -Fqx "$svc_name" <<<"$selector_svcs" || continue
+            doctor_warn "${ns}/${svc_name}" \
+                "Service has no endpoints" \
+                "selector may not match any ready pods" \
+                "Verify pod labels match service selector; check 'kubectl -n ${ns} get endpoints ${svc_name}'"
+        done <<<"$empty_svc_list"
     done
 
     render_doctor_layer "Layer 6: Runtime"
 }
 
 doctor_layer_7_images() {
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
+    doctor_begin_layer
 
     needs_cluster_or_skip "Layer 7: Image reachability" || return 0
 
     if ! command -v crane &>/dev/null; then
+        if [[ ! -t 0 ]]; then
+            DOCTOR_SKIPPED_LAYERS+=("Layer 7: Image reachability (crane not installed)")
+            printf "▸ %s %s\n" \
+                "$(gum style --bold "Layer 7: Image reachability")" \
+                "$(gum style --faint "○ skipped (crane not installed; run 'brew install crane' to enable)")"
+            return 0
+        fi
         echo ""
         if gum confirm "crane enables image reachability checks. Install via 'brew install crane'?"; then
             if ! run_cmd "Installing crane..." \
@@ -1959,9 +1987,7 @@ doctor_layer_7_images() {
 }
 
 doctor_layer_8_ingress() {
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
+    doctor_begin_layer
 
     needs_cluster_or_skip "Layer 8: Ingress reachability" || return 0
 
@@ -2099,7 +2125,7 @@ doctor_layer_8_ingress() {
         # TLS SAN check (only if openssl present and we could connect)
         if [[ $has_openssl -eq 1 ]]; then
             local cert_sans
-            cert_sans="$(echo | openssl s_client -servername "$host" -connect "${host}:443" -showcerts 2>/dev/null \
+            cert_sans="$(timeout 5 openssl s_client -servername "$host" -connect "${host}:443" -showcerts </dev/null 2>/dev/null \
                 | openssl x509 -noout -ext subjectAltName 2>/dev/null \
                 | sed -n 's/.*DNS://p' \
                 | tr ',' '\n' \
@@ -2119,15 +2145,18 @@ doctor_layer_8_ingress() {
 }
 
 doctor_layer_9_hygiene() {
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
+    doctor_begin_layer
 
     needs_cluster_or_skip "Layer 9: Hygiene" || return 0
 
+    # Fetch Applications JSON once and reuse for both the orphan-app scan and
+    # the orphan-namespace scan below.
+    local apps_json
+    apps_json="$(kubectl get applications -n argocd -o json 2>/dev/null)" || apps_json=""
+
     # --- Orphan Applications: in cluster but not in repo ----------------
     local cluster_apps
-    cluster_apps="$(kubectl get applications -n argocd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | sort -u)"
+    cluster_apps="$(jq -r '.items[]?.metadata.name' <<<"${apps_json:-{\}}" 2>/dev/null | sort -u)"
 
     # Build the expected set from argocd/apps/*.yaml basenames, plus the
     # well-known umbrella/parent app names.
@@ -2165,7 +2194,9 @@ doctor_layer_9_hygiene() {
         [[ -z "$env" ]] && continue
         doctor_matches_filter "" "$env" || continue
         kubectl get ns "$env" &>/dev/null || continue
-        targeting_apps="$(kubectl get applications -n argocd -o jsonpath="{range .items[?(@.spec.destination.namespace=='${env}')]}{.metadata.name}{'\n'}{end}" 2>/dev/null)"
+        targeting_apps="$(jq -r --arg env "$env" '
+            .items[]? | select(.spec.destination.namespace == $env) | .metadata.name
+        ' <<<"${apps_json:-{\}}" 2>/dev/null)"
         if [[ -z "$targeting_apps" ]]; then
             doctor_info "${env}" "Namespace exists but no Application targets it"
         fi
@@ -2311,15 +2342,22 @@ cmd_doctor() {
 
     print_header "Cluster Doctor"
 
-    doctor_layer_1_prereqs
-    doctor_layer_2_controllers
-    doctor_layer_3_repo_structure
-    doctor_layer_4_alignment
-    doctor_layer_5_credentials
-    doctor_layer_6_runtime
-    doctor_layer_7_images
-    doctor_layer_8_ingress
-    doctor_layer_9_hygiene
+    local -a doctor_layers=(
+        doctor_layer_1_prereqs
+        doctor_layer_2_controllers
+        doctor_layer_3_repo_structure
+        doctor_layer_4_alignment
+        doctor_layer_5_credentials
+        doctor_layer_6_runtime
+        doctor_layer_7_images
+        doctor_layer_8_ingress
+        doctor_layer_9_hygiene
+    )
+    local layer_fn
+    for layer_fn in "${doctor_layers[@]}"; do
+        "$layer_fn"
+    done
+    DOCTOR_LAYERS_INVOKED=${#doctor_layers[@]}
 
     echo ""
     render_doctor_summary
