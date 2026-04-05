@@ -9,6 +9,28 @@ cmd_init() {
     require_gum
     require_gh
 
+    # --- Parse flags ---
+    local repo_url_flag=""
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --repo-url)
+                [[ -z "${2:-}" ]] && { print_error "--repo-url requires a value"; exit 1; }
+                repo_url_flag="$2"; shift 2 ;;
+            --yes|-y)
+                yes="true"; shift ;;
+            -h|--help)
+                echo "Usage: infra-ctl.sh init [--repo-url <url>] [--yes]"
+                echo "  --repo-url <url>  GitHub repository URL (default: detected from git remote)"
+                echo "  --yes, -y         Skip confirmation prompt"
+                exit 0 ;;
+            -*)
+                print_error "Unknown flag: $1"; exit 1 ;;
+            *)
+                print_error "Unexpected positional argument: $1"; exit 1 ;;
+        esac
+    done
+
     # Idempotency guard
     if [[ -d "${TARGET_DIR}/argocd" || -d "${TARGET_DIR}/k8s" ]]; then
         print_error "Repository already initialized (argocd/ or k8s/ exists in ${TARGET_DIR})."
@@ -28,8 +50,13 @@ cmd_init() {
         fi
     fi
 
+    # --- Resolve repo_url: flag wins, else prompt, else die ---
     local repo_url
-    repo_url="$(gum input --value "$default_url" --placeholder "https://github.com/owner/repo" --prompt "Repository URL: ")"
+    if [[ -n "$repo_url_flag" ]]; then
+        repo_url="$repo_url_flag"
+    else
+        repo_url=$(prompt_or_die "Repository URL" "--repo-url" "$default_url")
+    fi
 
     if [[ -z "$repo_url" ]]; then
         print_error "Repository URL is required."
@@ -43,7 +70,12 @@ cmd_init() {
     repo_owner="$(extract_repo_owner "$repo_url")"
     print_info "Detected repo owner: ${repo_owner}"
 
-    confirm_or_abort "Proceed with repo URL '${repo_url}' and owner '${repo_owner}'?"
+    if [[ "$yes" != "true" ]]; then
+        if [[ -t 0 ]]; then
+            confirm_or_abort "Proceed with repo URL '${repo_url}' and owner '${repo_owner}'?"
+        fi
+        # Non-interactive without --yes: proceed (init is non-destructive)
+    fi
 
     local created_files=()
 
