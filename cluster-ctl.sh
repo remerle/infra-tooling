@@ -1092,10 +1092,12 @@ needs_cluster_or_skip() {
 }
 
 # Returns 0 if the given app/env pass the --app / --env filters, 1 otherwise.
+# An empty app or env argument means "this dimension is not applicable to the
+# finding" and will not be checked against the corresponding filter.
 doctor_matches_filter() {
     local app="$1" env="$2"
-    [[ -n "$DOCTOR_APP" && "$app" != "$DOCTOR_APP" ]] && return 1
-    [[ -n "$DOCTOR_ENV" && "$env" != "$DOCTOR_ENV" ]] && return 1
+    [[ -n "$DOCTOR_APP" && -n "$app" && "$app" != "$DOCTOR_APP" ]] && return 1
+    [[ -n "$DOCTOR_ENV" && -n "$env" && "$env" != "$DOCTOR_ENV" ]] && return 1
     return 0
 }
 
@@ -1718,6 +1720,159 @@ doctor_layer_6_runtime() {
     DOCTOR_CURRENT_LAYER_ERRORS=()
     DOCTOR_CURRENT_LAYER_WARNINGS=()
     DOCTOR_CURRENT_LAYER_INFOS=()
+
+    needs_cluster_or_skip "Layer 6: Runtime" || return 0
+
+    local apps_json
+    apps_json="$(kubectl get applications -n argocd -o json 2>/dev/null)" || apps_json=""
+    if [[ -z "$apps_json" ]]; then
+        render_doctor_layer "Layer 6: Runtime"
+        return 0
+    fi
+
+    # --- ArgoCD Application health summary ---
+    # Emit rows: name<TAB>sync<TAB>health<TAB>destNs<TAB>condMsg
+    # Skip umbrella apps (projects, kargo, or destination ns == argocd).
+    local app_rows
+    app_rows="$(jq -r '
+        .items[]
+        | select(.metadata.name != "projects" and .metadata.name != "kargo")
+        | select((.spec.destination.namespace // "") != "argocd")
+        | [
+            .metadata.name,
+            (.status.sync.status // "Unknown"),
+            (.status.health.status // "Unknown"),
+            (.spec.destination.namespace // ""),
+            (.status.conditions[0].message // "")
+          ] | @tsv
+    ' <<<"$apps_json")"
+
+    # Collect the set of target namespaces from the filtered apps.
+    declare -A target_namespaces=()
+
+    local line name sync health dest_ns cond_msg app env why
+    while IFS=$'\t' read -r name sync health dest_ns cond_msg; do
+        [[ -z "$name" ]] && continue
+        # Parse app / env via last-hyphen split.
+        app="${name%-*}"
+        env="${name##*-}"
+        doctor_matches_filter "$app" "$env" || continue
+
+        # Record destination namespace for the pod/pvc/svc scans below.
+        [[ -n "$dest_ns" ]] && target_namespaces["$dest_ns"]=1
+
+        # Healthy + Synced: nothing to report.
+        if [[ "$health" == "Healthy" && "$sync" == "Synced" ]]; then
+            continue
+        fi
+
+        why="$cond_msg"
+        [[ -z "$why" ]] && why="sync=${sync} health=${health}"
+        if [[ ${#why} -gt 120 ]]; then
+            why="${why:0:117}..."
+        fi
+
+        if [[ "$health" == "Degraded" || "$health" == "Missing" ]]; then
+            doctor_error "$name" \
+                "ArgoCD Application is ${health}" \
+                "$why" \
+                "Check 'kubectl -n argocd describe app ${name}'"
+        elif [[ "$health" == "Progressing" ]]; then
+            doctor_warn "$name" \
+                "ArgoCD Application has not converged (Progressing)" \
+                "$why" \
+                "Check pod events: 'kubectl -n ${dest_ns} get events --sort-by=.lastTimestamp'"
+        elif [[ "$health" == "Unknown" || "$sync" == "Unknown" ]]; then
+            doctor_warn "$name" \
+                "ArgoCD Application status is Unknown" \
+                "$why" \
+                "Check 'kubectl -n argocd describe app ${name}'"
+        fi
+    done <<<"$app_rows"
+
+    # --- Pod failure scan across target namespaces ---
+    local ns pod_rows pod_name reason wait_msg
+    for ns in "${!target_namespaces[@]}"; do
+        doctor_matches_filter "" "$ns" || continue
+        kubectl get ns "$ns" >/dev/null 2>&1 || continue
+        pod_rows="$(kubectl get pods -n "$ns" -o json 2>/dev/null | jq -r '
+            .items[]
+            | select(
+                (.status.containerStatuses // []) | any(
+                    (.state.waiting.reason // "") as $r
+                    | $r == "CreateContainerConfigError"
+                      or $r == "ImagePullBackOff"
+                      or $r == "ErrImagePull"
+                      or $r == "CrashLoopBackOff"
+                )
+              )
+            | [
+                .metadata.name,
+                ((.status.containerStatuses // [])
+                    | map(select((.state.waiting.reason // "") != "")) | .[0].state.waiting.reason // ""),
+                ((.status.containerStatuses // [])
+                    | map(select((.state.waiting.reason // "") != "")) | .[0].state.waiting.message // "")
+              ] | @tsv
+        ')" || pod_rows=""
+        [[ -z "$pod_rows" ]] && continue
+        while IFS=$'\t' read -r pod_name reason wait_msg; do
+            [[ -z "$pod_name" ]] && continue
+            [[ -z "$wait_msg" ]] && wait_msg="check pod events"
+            if [[ ${#wait_msg} -gt 120 ]]; then
+                wait_msg="${wait_msg:0:117}..."
+            fi
+            doctor_error "${ns}/${pod_name}" \
+                "Pod in \`${reason}\` state" \
+                "$wait_msg" \
+                "Check 'kubectl -n ${ns} describe pod ${pod_name}'"
+        done <<<"$pod_rows"
+    done
+
+    # --- PVC scan: stuck Pending ---
+    local pvc_name pvc_rows
+    for ns in "${!target_namespaces[@]}"; do
+        doctor_matches_filter "" "$ns" || continue
+        kubectl get ns "$ns" >/dev/null 2>&1 || continue
+        pvc_rows="$(kubectl -n "$ns" get pvc -o json 2>/dev/null | jq -r '
+            .items[] | select(.status.phase == "Pending") | .metadata.name
+        ')" || pvc_rows=""
+        [[ -z "$pvc_rows" ]] && continue
+        while IFS= read -r pvc_name; do
+            [[ -z "$pvc_name" ]] && continue
+            doctor_error "${ns}/${pvc_name}" \
+                "PVC stuck in Pending" \
+                "no storage class or provisioner available" \
+                "Check 'kubectl get storageclass' and 'kubectl -n ${ns} describe pvc ${pvc_name}'"
+        done <<<"$pvc_rows"
+    done
+
+    # --- Service endpoints scan: services with no ready backends ---
+    # We check for services whose Endpoints object has no ready addresses across
+    # all subsets. notReadyAddresses are excluded (e.g., pods stuck init/CCE).
+    local svc_name svc_list ready_count
+    for ns in "${!target_namespaces[@]}"; do
+        doctor_matches_filter "" "$ns" || continue
+        kubectl get ns "$ns" >/dev/null 2>&1 || continue
+        svc_list="$(kubectl -n "$ns" get svc -o json 2>/dev/null | jq -r '
+            .items[]
+            | select((.spec.selector // {}) | length > 0)
+            | .metadata.name
+        ')" || svc_list=""
+        [[ -z "$svc_list" ]] && continue
+        while IFS= read -r svc_name; do
+            [[ -z "$svc_name" ]] && continue
+            ready_count="$(kubectl -n "$ns" get endpoints "$svc_name" -o json 2>/dev/null \
+                | jq -r '[(.subsets // [])[] | (.addresses // [])[]] | length' 2>/dev/null)"
+            ready_count="${ready_count:-0}"
+            if [[ "$ready_count" == "0" ]]; then
+                doctor_warn "${ns}/${svc_name}" \
+                    "Service has no endpoints" \
+                    "selector may not match any ready pods" \
+                    "Verify pod labels match service selector; check 'kubectl -n ${ns} get endpoints ${svc_name}'"
+            fi
+        done <<<"$svc_list"
+    done
+
     render_doctor_layer "Layer 6: Runtime"
 }
 
