@@ -256,15 +256,66 @@ Commands follow these naming patterns:
 
 **Interactive choosers are mandatory.** Any command that operates on an existing resource MUST present a `gum choose` picker when called without a name argument. Never show a bare usage error for commands that could list and prompt instead. The only commands that require arguments are `add-*` commands (you need a name to create something new) and commands that take non-resource arguments like `add <username> <group>`.
 
+### Flag-first command contract (MANDATORY)
+
+Every command MUST accept every piece of user-provided data via a long-form CLI flag. This is a hard requirement, not a style preference. Commands that require any user input MUST follow this contract:
+
+1. **Every prompt has a flag.** For every value the command needs from the user (names, choices, confirmations, repeatable values), there MUST be a corresponding `--flag-name` CLI argument. This includes values that today are only collected via `gum input`, `gum choose`, `gum choose --no-limit`, `gum confirm`, or `gum input --password`.
+
+2. **If a required value is not provided and stdin is a TTY, prompt interactively.** The existing `gum` prompt is the fallback when running attended. Users who pass every flag see no prompts.
+
+3. **If a required value is not provided and stdin is NOT a TTY, fail with a clear error.** The error message MUST name the missing flag. Example: `ERROR: --name is required when not running interactively`. This makes commands safe to script and CI-safe by default.
+
+4. **Confirmation prompts for destructive actions REQUIRE `--yes` (or `-y`).** Never auto-confirm destructive operations based on TTY detection alone — require an explicit flag. TTY detection governs prompting for *input*, not skipping *confirmation*.
+
+5. **Validation runs regardless of source.** Whether a value came from a flag or a prompt, it MUST pass the same validator (`validate_k8s_name`, `validate_port`, `validate_image_repo`, etc.). No validation-bypass paths.
+
+6. **Preset-specific placeholders use `--set KEY=VAL`.** For commands that consume preset frontmatter defaults (primarily `infra-ctl.sh add-app`), accept values through repeatable `--set KEY=VAL` flags. Validate keys against the selected preset's frontmatter schema at parse time; reject unknown keys.
+
+7. **Repeatable flags for multi-select.** `gum choose --no-limit` prompts MUST map to repeatable long flags (e.g., `--env dev --env staging`). Do not use comma-separated values for multi-select; they are harder to validate and don't play well with shell completions.
+
+8. **Positional argument shorthand is allowed** when a command has exactly one required primary identifier (e.g., `add-app <name>` is equivalent to `add-app --name <name>`). The first positional argument populates the primary flag if no `--name` was given. All other values MUST go through flags.
+
+**Flag vocabulary** (use these names consistently across all commands):
+
+| Flag | Meaning | Where used | Example |
+|---|---|---|---|
+| `--set KEY=VAL` | Preset template **placeholder** substitution (helm-style). Keys match the preset's frontmatter `defaults:` keys (e.g., `IMAGE`, `PORT`, `PROBE_PATH`, `STORAGE_SIZE`, `MOUNT_PATH`, `SECRET_NAME`). Validated against preset schema. | `infra-ctl add-app` | `--set IMAGE=nginx:latest --set PORT=3000` |
+| `--config KEY=VAL` | configMap entries that become container **env vars at runtime** (configMapGenerator literals). | `infra-ctl add-app`, `config-ctl add` | `--config LOG_LEVEL=info --config API_URL=http://backend:3000` |
+| `--secret-key NAME` | **Declares** a secret key the workload needs (generates `valueFrom.secretKeyRef`). No value. | `infra-ctl add-app` | `--secret-key DATABASE_URL --secret-key API_KEY` |
+| `--secret-val KEY=VAL` | Provides the **actual secret value** that gets sealed and committed. Value may be inline, `@file`, or `-` (stdin). | `secret-ctl add` | `--secret-val DATABASE_URL=postgres://u:p@h/db` |
+| `--env NAME` | K8s **environment** name (dev, staging, prod). Repeatable for multi-select. | `infra-ctl add-ingress`, `infra-ctl remove-ingress`, `secret-ctl add`, `config-ctl add`, `cluster-ctl add-registry-creds` | `--env dev --env staging` |
+| `--yes` / `-y` | Skip destructive confirmation | all destructive `remove-*`/`reset`/`delete-*` commands | |
+
+These four KEY=VAL flags (`--set`, `--config`, `--secret-key`, `--secret-val`) and `--env` are **reserved names** — do not redefine their meaning in any command.
+
+All command implementations MUST use the shared helpers in `lib/common.sh`:
+
+- `require_tty "<flag-name>"` — exits with a clear error if stdin is not a TTY
+- `prompt_or_die "<label>" "<flag-name>" [default]` — gum input fallback or die
+- `prompt_choose_or_die "<label>" "<flag-name>" <options...>` — gum choose fallback or die
+- `prompt_multi_or_die "<label>" "<flag-name>" <options...>` — gum choose --no-limit fallback or die
+- `prompt_confirm_or_die "<label>" "<flag-name>"` — gum confirm fallback or die (returns "yes"/"no")
+- `prompt_password_or_die "<label>" "<flag-name>"` — gum input --password fallback or die
+- `parse_set_kv "<KEY=VAL>" <assoc-array-name>` — parses --set input into a caller-provided associative array
+- `require_yes "<yes-flag-value>" "<action-description>"` — gated confirmation for destructive ops
+- `validate_preset_set_keys "<template>" <keys...>` — dies if any --set key is not declared in preset frontmatter
+
+When adding a NEW command, the checklist below applies. When modifying an existing command to add a new prompt, the new prompt MUST be added as a flag first, with the prompt as fallback.
+
 ### Checklist for adding a new command
 
-1. Add a `cmd_<name>` function following existing patterns (validate, preview, confirm, execute, summarize)
-2. Add a case in the `main()` dispatcher
-3. Add an entry in `usage()`
-4. Add the command to `completions.zsh`
-5. If the command accepts a resource name, add a dynamic completion entry in `completions.zsh` (see `_infra_complete_apps` for the pattern)
-6. If this is an `add-*` command, also add the `list-*` and `remove-*` counterparts
-7. If adding a new preset, place the template in `templates/k8s/` with frontmatter following the format in existing presets
+1. Add a `cmd_<name>` function following existing patterns (parse flags, validate, preview, confirm, execute, summarize)
+2. **Parse every user-provided value as a long-form flag** (see "Flag-first command contract")
+3. **For every flag, fall back to the appropriate `prompt_*_or_die` helper** if the value was not passed
+4. **Validate flag-provided and prompt-provided values through the same validator**
+5. Add a case in the `main()` dispatcher
+6. Add an entry in `usage()` that lists every flag the command accepts with types and whether they are required
+7. Add the command to `completions.zsh`, including flag completions
+8. If the command accepts a resource name, add a dynamic completion entry in `completions.zsh` (see `_infra_complete_apps` for the pattern)
+9. If this is an `add-*` command, also add the `list-*` and `remove-*` counterparts
+10. If adding a new preset, place the template in `templates/k8s/` with frontmatter following the format in existing presets
+11. **For destructive commands, require `--yes`/`-y` to skip the confirmation prompt**
 
 ### Other modifications
 
