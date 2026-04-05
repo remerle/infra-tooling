@@ -1410,7 +1410,7 @@ scan_workload_secret_refs() {
             yq eval '.. | select(has("secretKeyRef")).secretKeyRef.name' "$file" 2>/dev/null
             yq eval '.. | select(has("secretRef")).secretRef.name' "$file" 2>/dev/null
         done
-    } | grep -v '^null$' | grep -v '^$' | sort -u
+    } | awk 'NF && $0 != "null"' | sort -u
 }
 
 # Returns distinct ConfigMap names referenced by a workload's base manifests.
@@ -1427,7 +1427,7 @@ scan_workload_configmap_refs() {
             yq eval '.. | select(has("configMapKeyRef")).configMapKeyRef.name' "$file" 2>/dev/null
             yq eval '.. | select(has("configMapRef")).configMapRef.name' "$file" 2>/dev/null
         done
-    } | grep -v '^null$' | grep -v '^$' | sort -u
+    } | awk 'NF && $0 != "null"' | sort -u
 }
 
 # Returns 0 if the overlay supplies a Secret/SealedSecret with the given name,
@@ -1564,7 +1564,7 @@ doctor_layer_4_alignment() {
 
             # Secret refs
             local secrets secret
-            secrets="$(scan_workload_secret_refs "$app" || true)"
+            secrets="$(scan_workload_secret_refs "$app")"
             while IFS= read -r secret; do
                 [[ -z "$secret" ]] && continue
                 if ! overlay_has_secret_manifest "$app" "$env" "$secret"; then
@@ -1579,7 +1579,7 @@ doctor_layer_4_alignment() {
 
             # ConfigMap refs (warnings)
             local configmaps cm
-            configmaps="$(scan_workload_configmap_refs "$app" || true)"
+            configmaps="$(scan_workload_configmap_refs "$app")"
             while IFS= read -r cm; do
                 [[ -z "$cm" ]] && continue
                 if ! overlay_has_configmap_manifest "$app" "$env" "$cm"; then
