@@ -62,6 +62,46 @@ cmd_init_cluster() {
     require_cmd "docker" "https://docs.docker.com/get-docker/"
     require_helm
 
+    # --- Parse flags ---
+    local name_flag="" agents_flag=""
+    local expose_flag="" tls_flag="" argocd_flag="" kargo_flag=""
+    local kargo_password_flag=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)    name_flag="$2"; shift 2 ;;
+            --agents)  agents_flag="$2"; shift 2 ;;
+            --expose-ports)    expose_flag="true"; shift ;;
+            --no-expose-ports) expose_flag="false"; shift ;;
+            --tls)             tls_flag="true"; shift ;;
+            --no-tls)          tls_flag="false"; shift ;;
+            --argocd)          argocd_flag="true"; shift ;;
+            --no-argocd)       argocd_flag="false"; shift ;;
+            --kargo)           kargo_flag="true"; shift ;;
+            --no-kargo)        kargo_flag="false"; shift ;;
+            --kargo-password)  kargo_password_flag="$2"; shift 2 ;;
+            -h|--help)
+                cat <<EOF
+Usage: cluster-ctl.sh init-cluster [flags]
+
+Flags:
+  --name <string>        Cluster name (default: current dir basename)
+  --agents <n>           Agent node count (default: 3)
+  --expose-ports         Expose 80/443 on localhost (for ingress)
+  --no-expose-ports      Don't expose ports (default)
+  --tls                  Enable HTTPS via mkcert
+  --no-tls               Disable HTTPS (default)
+  --argocd               Install ArgoCD
+  --no-argocd            Skip ArgoCD (default)
+  --kargo                Install Kargo (requires --kargo-password non-interactively)
+  --no-kargo             Skip Kargo (default)
+  --kargo-password <pw>  Kargo admin password
+EOF
+                exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *)  print_error "Unexpected argument: $1"; exit 1 ;;
+        esac
+    done
+
     # Verify Docker daemon is running (docker CLI exists but daemon may be stopped)
     if ! docker info &>/dev/null; then
         print_error "Docker daemon is not running."
@@ -71,11 +111,17 @@ cmd_init_cluster() {
 
     print_header "Initialize k3d Cluster"
 
-    # Prompt for cluster name
+    # Cluster name: flag wins, else prompt, else default
     local default_name
     default_name="$(basename "${TARGET_DIR}")"
     local cluster_name
-    cluster_name="$(gum input --value "$default_name" --prompt "Cluster name: ")"
+    if [[ -n "$name_flag" ]]; then
+        cluster_name="$name_flag"
+    elif [[ -t 0 ]]; then
+        cluster_name="$(gum input --value "$default_name" --prompt "Cluster name: ")"
+    else
+        cluster_name="$default_name"
+    fi
 
     if [[ -z "$cluster_name" ]]; then
         print_error "Cluster name is required."
@@ -91,16 +137,29 @@ cmd_init_cluster() {
         exit 1
     fi
 
-    # Prompt for agent nodes
+    # Agent nodes: flag wins, else prompt, else 3
     local agents
-    while true; do
-        agents="$(gum input --value "3" --prompt "Agent nodes: ")"
-        validate_positive_integer "$agents" "Agent nodes" && break
-    done
+    if [[ -n "$agents_flag" ]]; then
+        agents="$agents_flag"
+    elif [[ -t 0 ]]; then
+        while true; do
+            agents="$(gum input --value "3" --prompt "Agent nodes: ")"
+            validate_positive_integer "$agents" "Agent nodes" && break
+        done
+    else
+        agents="3"
+    fi
+    validate_positive_integer "$agents" "Agent nodes" || exit 1
 
-    # Prompt for port exposure
+    # Port exposure: flag wins, else prompt, else no
     local port_args=()
-    if gum confirm "Expose ports 80/443 on localhost? (for ingress)"; then
+    local expose="no"
+    if [[ "$expose_flag" == "true" ]]; then expose="yes"
+    elif [[ "$expose_flag" == "false" ]]; then expose="no"
+    elif [[ -t 0 ]]; then
+        gum confirm "Expose ports 80/443 on localhost? (for ingress)" && expose="yes"
+    fi
+    if [[ "$expose" == "yes" ]]; then
         port_args=(-p "80:80@loadbalancer" -p "443:443@loadbalancer")
     fi
 
@@ -133,17 +192,31 @@ cmd_init_cluster() {
     local kargo_installed=false
     local tls_enabled=false
 
-    # Prompt for local HTTPS
-    if command -v mkcert &>/dev/null; then
-        if gum confirm "Enable HTTPS with trusted local certs? (via mkcert)"; then
-            apply_local_tls
-            tls_enabled=true
-            print_success "HTTPS enabled with trusted local certs."
+    # Local HTTPS: flag wins, else prompt, else no
+    local enable_tls="no"
+    if [[ "$tls_flag" == "true" ]]; then enable_tls="yes"
+    elif [[ "$tls_flag" == "false" ]]; then enable_tls="no"
+    elif command -v mkcert &>/dev/null && [[ -t 0 ]]; then
+        gum confirm "Enable HTTPS with trusted local certs? (via mkcert)" && enable_tls="yes"
+    fi
+    if [[ "$enable_tls" == "yes" ]]; then
+        if ! command -v mkcert &>/dev/null; then
+            print_error "--tls requires mkcert to be installed"
+            exit 1
         fi
+        apply_local_tls
+        tls_enabled=true
+        print_success "HTTPS enabled with trusted local certs."
     fi
 
-    # Prompt for ArgoCD installation
-    if gum confirm "Install ArgoCD?"; then
+    # ArgoCD install: flag wins, else prompt, else no
+    local install_argocd="no"
+    if [[ "$argocd_flag" == "true" ]]; then install_argocd="yes"
+    elif [[ "$argocd_flag" == "false" ]]; then install_argocd="no"
+    elif [[ -t 0 ]]; then
+        gum confirm "Install ArgoCD?" && install_argocd="yes"
+    fi
+    if [[ "$install_argocd" == "yes" ]]; then
         local values_file="${SCRIPT_DIR}/helm/argocd-values.yaml"
         if [[ ! -f "$values_file" ]]; then
             print_error "Helm values file not found: ${values_file}"
@@ -185,8 +258,14 @@ cmd_init_cluster() {
         rm -f "$argocd_log"
     fi
 
-    # Prompt for Kargo installation
-    if gum confirm "Install Kargo?"; then
+    # Kargo install: flag wins, else prompt, else no
+    local install_kargo="no"
+    if [[ "$kargo_flag" == "true" ]]; then install_kargo="yes"
+    elif [[ "$kargo_flag" == "false" ]]; then install_kargo="no"
+    elif [[ -t 0 ]]; then
+        gum confirm "Install Kargo?" && install_kargo="yes"
+    fi
+    if [[ "$install_kargo" == "yes" ]]; then
         # Kargo requires cert-manager for webhook server TLS certificates
         # (Kubernetes API server requires TLS for admission webhooks, and
         # Kargo uses cert-manager to generate self-signed certs for them)
@@ -201,20 +280,32 @@ cmd_init_cluster() {
             print_success "cert-manager installed."
         fi
 
-        local kargo_password kargo_password_confirm
-        while true; do
-            kargo_password="$(gum input --password --prompt "Kargo admin password: ")"
+        local kargo_password
+        if [[ -n "$kargo_password_flag" ]]; then
+            kargo_password="$kargo_password_flag"
             if [[ -z "$kargo_password" ]]; then
-                print_error "Password cannot be empty."
-                continue
+                print_error "--kargo-password cannot be empty"
+                exit 1
             fi
-            kargo_password_confirm="$(gum input --password --prompt "Confirm password: ")"
-            if [[ "$kargo_password" != "$kargo_password_confirm" ]]; then
-                print_error "Passwords do not match."
-                continue
-            fi
-            break
-        done
+        elif [[ -t 0 ]]; then
+            local kargo_password_confirm
+            while true; do
+                kargo_password="$(gum input --password --prompt "Kargo admin password: ")"
+                if [[ -z "$kargo_password" ]]; then
+                    print_error "Password cannot be empty."
+                    continue
+                fi
+                kargo_password_confirm="$(gum input --password --prompt "Confirm password: ")"
+                if [[ "$kargo_password" != "$kargo_password_confirm" ]]; then
+                    print_error "Passwords do not match."
+                    continue
+                fi
+                break
+            done
+        else
+            print_error "--kargo-password is required when installing Kargo non-interactively"
+            exit 1
+        fi
 
         local kargo_hash
         kargo_hash="$(htpasswd -bnBC 10 "" "$kargo_password" | tr -d ':\n')"
