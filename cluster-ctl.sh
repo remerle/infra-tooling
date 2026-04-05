@@ -1012,7 +1012,7 @@ Usage: cluster-ctl.sh doctor [options]
 Run cross-layer diagnostic checks against the repo and cluster.
 
 Options:
-  --scope=<val>       Limit checks to: repo | cluster | all (default: all)
+  --scope <val>       Limit checks to: repo | cluster | all (default: all)
   --app <name>        Limit checks to a single application
   --env <name>        Limit checks to a single environment
   --verbose           Show additional diagnostic detail
@@ -1057,6 +1057,10 @@ doctor_layer_9_hygiene() {
 }
 
 cmd_doctor() {
+    # --- Doctor state (shared across layer_* functions) ---
+    # These globals are intentionally shared because each doctor_layer_* function
+    # needs to read DOCTOR_VERBOSE/DOCTOR_SCOPE/etc and mutate the counters.
+    # Declared here (not `local`) so layer functions can access them.
     DOCTOR_ERRORS=0
     DOCTOR_WARNINGS=0
     DOCTOR_INFOS=0
@@ -1135,7 +1139,7 @@ cmd_doctor() {
     if [[ -n "$DOCTOR_APP" ]]; then
         local valid_apps
         valid_apps="$(detect_apps)"
-        if ! grep -qx "$DOCTOR_APP" <<<"$valid_apps"; then
+        if ! grep -Fqx -- "$DOCTOR_APP" <<<"$valid_apps"; then
             print_error "Unknown app: '$DOCTOR_APP'"
             if [[ -n "$valid_apps" ]]; then
                 print_info "Available apps:"
@@ -1152,7 +1156,7 @@ cmd_doctor() {
     if [[ -n "$DOCTOR_ENV" ]]; then
         local valid_envs
         valid_envs="$(detect_envs)"
-        if ! grep -qx "$DOCTOR_ENV" <<<"$valid_envs"; then
+        if ! grep -Fqx -- "$DOCTOR_ENV" <<<"$valid_envs"; then
             print_error "Unknown env: '$DOCTOR_ENV'"
             if [[ -n "$valid_envs" ]]; then
                 print_info "Available envs:"
