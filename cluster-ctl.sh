@@ -363,18 +363,18 @@ EOF
         # TLS termination happens at the Traefik level, not in Kargo;
         # api.tls.enabled=false disables TLS on the Kargo API server itself,
         # api.tls.terminatedUpstream=true signals that an upstream proxy already terminated TLS.
-        local kargo_log
-        kargo_log="$(mktemp)"
-        if run_cmd_sh "Installing Kargo via Helm (this may take a minute)..." \
+        # Use argv-form run_cmd so the bcrypt hash ($2y$10$...) and the random signing key
+        # are not re-expanded by bash -c (which would strip every $N as an empty positional param).
+        if run_cmd "Installing Kargo via Helm (this may take a minute)..." \
             --explain "Kargo is a progressive delivery tool that promotes container images through a pipeline of stages (e.g., dev -> staging -> prod). It tracks image versions in a Warehouse and applies promotions via Git commits. TLS is terminated at Traefik, so api.tls.enabled=false turns off TLS inside Kargo itself, and api.tls.terminatedUpstream=true tells Kargo an upstream proxy already handled TLS so it sets secure cookie flags correctly." \
-            "helm install kargo \
+            helm install kargo \
             oci://ghcr.io/akuity/kargo-charts/kargo \
             --namespace kargo --create-namespace \
-            --set \"api.adminAccount.passwordHash=${kargo_hash}\" \
-            --set \"api.adminAccount.tokenSigningKey=${kargo_signing_key}\" \
+            --set "api.adminAccount.passwordHash=${kargo_hash}" \
+            --set "api.adminAccount.tokenSigningKey=${kargo_signing_key}" \
             --set api.tls.enabled=false \
             --set api.tls.terminatedUpstream=true \
-            --wait --timeout 120s >\"$kargo_log\" 2>&1"; then
+            --wait --timeout 120s; then
             print_success "Kargo installed via Helm."
 
             # Create Ingress for Kargo dashboard
@@ -419,10 +419,8 @@ KARGOINGRESS"
 
             kargo_installed=true
         else
-            print_error "Kargo installation failed:"
-            cat "$kargo_log" >&2
+            print_error "Kargo installation failed."
         fi
-        rm -f "$kargo_log"
     fi
 
     # Summary
@@ -656,20 +654,22 @@ cmd_add_argo_creds() {
         exit 1
     fi
 
-    # Create or replace the secret
-    run_cmd_sh "Configuring ArgoCD repo credentials..." \
-        --explain "ArgoCD discovers repository credentials by watching for Secrets labeled with 'argocd.argoproj.io/secret-type=repository'. The label is the signal -- ArgoCD ignores unlabeled Secrets. Piping through 'kubectl label --local' adds the label before applying, avoiding a separate patch step." \
-        '
-        kubectl create secret generic repo-creds \
-            --namespace argocd \
-            --from-literal=type=git \
-            --from-literal=url="'"${REPO_URL}"'" \
-            --from-literal=username=git \
-            --from-literal=password="'"${pat}"'" \
-            --dry-run=client -o yaml \
-            | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml \
-            | kubectl apply -f -
-    '
+    # Create or replace the secret.
+    # Build YAML via kubectl subshells (no bash -c re-parse), then pipe to apply.
+    # This prevents $-containing values in REPO_URL or pat from being re-expanded.
+    print_info "Configuring ArgoCD repo credentials..."
+    if [[ "$EXPLAIN" == "1" ]]; then
+        gum style --faint --italic "    ArgoCD discovers repository credentials by watching for Secrets labeled with 'argocd.argoproj.io/secret-type=repository'. The label is the signal; piping through 'kubectl label --local' adds the label before applying."
+    fi
+    kubectl create secret generic repo-creds \
+        --namespace argocd \
+        --from-literal=type=git \
+        --from-literal=url="${REPO_URL}" \
+        --from-literal=username=git \
+        --from-literal=password="${pat}" \
+        --dry-run=client -o yaml \
+        | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml \
+        | kubectl apply -f -
 
     print_success "ArgoCD repository credentials configured for ${REPO_URL}"
 }
@@ -832,28 +832,34 @@ cmd_add_registry_creds() {
     print_info "Username:   ${username}"
     print_info "Namespaces: ${selected[*]}"
 
+    # All kubectl calls below use argv form + stdin piping so flag-sourced values
+    # ($registry, $username, $pat) cannot be re-parsed as shell.
     local ns
     for ns in "${selected[@]}"; do
         # Create namespace if it doesn't exist
-        run_cmd_sh "Ensuring namespace '${ns}' exists..." \
-            --explain "Namespaces must exist before Secrets can be created in them. ArgoCD normally creates namespaces via CreateNamespace=true during sync, but registry credentials must be in place before the first sync so kubelet can pull images. Creating the namespace ahead of time is harmless -- ArgoCD's CreateNamespace is a no-op if the namespace already exists." \
-            "kubectl create namespace \"$ns\" --dry-run=client -o yaml | kubectl apply -f -"
+        print_info "Ensuring namespace '${ns}' exists..."
+        if [[ "$EXPLAIN" == "1" ]]; then
+            gum style --faint --italic "    Namespaces must exist before Secrets can be created in them. Creating ahead of time is harmless; ArgoCD's CreateNamespace is a no-op if the namespace already exists."
+        fi
+        kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
 
-        # Create docker-registry secret
-        run_cmd_sh "Creating registry credentials in '${ns}'..." \
-            --explain "Kubelet (the node agent that pulls container images) needs its own credentials for private registries. ArgoCD's Git credentials only give ArgoCD access to read Git repos -- they do not help kubelet pull container images. A kubernetes.io/dockerconfigjson Secret stores registry auth in the format kubelet expects." \
-            "kubectl create secret docker-registry registry-creds \
-                --namespace \"$ns\" \
-                --docker-server=\"$registry\" \
-                --docker-username=\"$username\" \
-                --docker-password=\"$pat\" \
-                --dry-run=client -o yaml | kubectl apply -f -"
+        # Create docker-registry secret (argv form - no shell re-parse)
+        print_info "Creating registry credentials in '${ns}'..."
+        if [[ "$EXPLAIN" == "1" ]]; then
+            gum style --faint --italic "    Kubelet needs its own credentials for private registries; a kubernetes.io/dockerconfigjson Secret stores registry auth in the format kubelet expects."
+        fi
+        kubectl create secret docker-registry registry-creds \
+            --namespace "$ns" \
+            --docker-server="$registry" \
+            --docker-username="$username" \
+            --docker-password="$pat" \
+            --dry-run=client -o yaml | kubectl apply -f -
 
-        # Patch default ServiceAccount to use the secret
-        run_cmd_sh "Patching default ServiceAccount in '${ns}'..." \
-            --explain "Every pod that does not specify a serviceAccountName runs as the 'default' ServiceAccount. By adding imagePullSecrets to this ServiceAccount, all pods in the namespace automatically inherit the registry credentials without any changes to individual workload manifests." \
-            "kubectl patch serviceaccount default -n \"$ns\" \
-                -p '{\"imagePullSecrets\": [{\"name\": \"registry-creds\"}]}'"
+        # Patch default ServiceAccount to use the secret (argv form)
+        run_cmd "Patching default ServiceAccount in '${ns}'..." \
+            --explain "Every pod that does not specify a serviceAccountName runs as the 'default' ServiceAccount. By adding imagePullSecrets to this ServiceAccount, all pods in the namespace automatically inherit the registry credentials." \
+            kubectl patch serviceaccount default -n "$ns" \
+            -p '{"imagePullSecrets": [{"name": "registry-creds"}]}'
     done
 
     print_success "Registry credentials configured for: ${selected[*]}"
@@ -993,20 +999,20 @@ cmd_add_kargo_creds() {
         exit 1
     fi
 
-    # Create Git credential
-    run_cmd_sh "Configuring Kargo Git credentials..." \
-        --explain "Kargo discovers Git credentials by watching for Secrets labeled 'kargo.akuity.io/cred-type=git' inside the app's namespace (its Kargo Project namespace). Kargo needs write access to the GitOps repo so it can commit image tag updates when promoting a new image version through stages." \
-        '
-        kubectl create secret generic gitops-repo-creds \
-            --namespace "'"$app_name"'" \
-            --from-literal=type=git \
-            --from-literal=url="'"${REPO_URL}"'" \
-            --from-literal=username=git \
-            --from-literal=password="'"${pat}"'" \
-            --dry-run=client -o yaml \
-            | kubectl label --local -f - kargo.akuity.io/cred-type=git -o yaml \
-            | kubectl apply -f -
-    '
+    # Create Git credential (argv form + stdin pipes; no bash -c re-parse)
+    print_info "Configuring Kargo Git credentials..."
+    if [[ "$EXPLAIN" == "1" ]]; then
+        gum style --faint --italic "    Kargo discovers Git credentials by watching for Secrets labeled 'kargo.akuity.io/cred-type=git' inside the app's namespace. Kargo needs write access to commit image-tag promotions."
+    fi
+    kubectl create secret generic gitops-repo-creds \
+        --namespace "$app_name" \
+        --from-literal=type=git \
+        --from-literal=url="${REPO_URL}" \
+        --from-literal=username=git \
+        --from-literal=password="${pat}" \
+        --dry-run=client -o yaml \
+        | kubectl label --local -f - kargo.akuity.io/cred-type=git -o yaml \
+        | kubectl apply -f -
 
     print_success "Git credentials configured for ${REPO_URL}"
 
@@ -1020,19 +1026,19 @@ cmd_add_kargo_creds() {
         gum confirm "Is the container registry private?" && is_private="yes"
     fi
     if [[ "$is_private" == "yes" ]]; then
-        run_cmd_sh "Configuring registry credentials..." \
-            --explain "Kargo's Warehouse polls the container registry to detect new image tags. For private registries it needs pull credentials, stored as a Secret labeled 'kargo.akuity.io/cred-type=image' in the app namespace. The repoURL field scopes the credential to a specific registry/repository prefix." \
-            '
-            kubectl create secret generic registry-creds \
-                --namespace "'"$app_name"'" \
-                --from-literal=type=image \
-                --from-literal=repoURL="'"${image_repo}"'" \
-                --from-literal=username=git \
-                --from-literal=password="'"${pat}"'" \
-                --dry-run=client -o yaml \
-                | kubectl label --local -f - kargo.akuity.io/cred-type=image -o yaml \
-                | kubectl apply -f -
-        '
+        print_info "Configuring registry credentials..."
+        if [[ "$EXPLAIN" == "1" ]]; then
+            gum style --faint --italic "    Kargo's Warehouse polls the registry to detect new tags; private registries need a Secret labeled 'kargo.akuity.io/cred-type=image'. repoURL scopes the credential to a specific registry/repository prefix."
+        fi
+        kubectl create secret generic registry-creds \
+            --namespace "$app_name" \
+            --from-literal=type=image \
+            --from-literal=repoURL="${image_repo}" \
+            --from-literal=username=git \
+            --from-literal=password="${pat}" \
+            --dry-run=client -o yaml \
+            | kubectl label --local -f - kargo.akuity.io/cred-type=image -o yaml \
+            | kubectl apply -f -
 
         print_success "Registry credentials configured for ${image_repo}"
     fi
