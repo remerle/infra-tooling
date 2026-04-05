@@ -1305,6 +1305,92 @@ doctor_layer_3_repo_structure() {
     DOCTOR_CURRENT_LAYER_ERRORS=()
     DOCTOR_CURRENT_LAYER_WARNINGS=()
     DOCTOR_CURRENT_LAYER_INFOS=()
+
+    if [[ "$DOCTOR_SCOPE" == "cluster" ]]; then
+        DOCTOR_SKIPPED_LAYERS+=("Layer 3: Repo structure (scope=cluster)")
+        printf "▸ %s %s\n" \
+            "$(gum style --bold "Layer 3: Repo structure")" \
+            "$(gum style --faint "○ skipped (scope=cluster)")"
+        return 0
+    fi
+
+    local apps_dir="${TARGET_DIR}/argocd/apps"
+    local first_manifest_url=""
+    local app_file basename_file meta_name app env app_path app_repo app_project
+
+    if [[ -d "$apps_dir" ]]; then
+        for app_file in "$apps_dir"/*.yaml; do
+            [[ -f "$app_file" ]] || continue
+            basename_file="$(basename "$app_file")"
+            # Skip umbrella apps
+            [[ "$basename_file" == "projects.yaml" || "$basename_file" == "kargo.yaml" ]] && continue
+
+            meta_name="$(yq eval '.metadata.name // ""' "$app_file" 2>/dev/null)"
+            app_path="$(yq eval '.spec.source.path // ""' "$app_file" 2>/dev/null)"
+            app_repo="$(yq eval '.spec.source.repoURL // ""' "$app_file" 2>/dev/null)"
+            app_project="$(yq eval '.spec.project // ""' "$app_file" 2>/dev/null)"
+
+            # Parse app/env from metadata name: split on last hyphen
+            if [[ "$meta_name" == *-* ]]; then
+                app="${meta_name%-*}"
+                env="${meta_name##*-}"
+            else
+                app="$meta_name"
+                env=""
+            fi
+
+            doctor_matches_filter "$app" "$env" || continue
+
+            # Remember first manifest's repoURL for drift check
+            if [[ -z "$first_manifest_url" && -n "$app_repo" ]]; then
+                first_manifest_url="$app_repo"
+            fi
+
+            # Step 2: overlay path existence
+            if [[ -n "$app_path" && ! -d "${TARGET_DIR}/${app_path}" ]]; then
+                doctor_error "${meta_name}" \
+                    "Application references missing overlay path" \
+                    "'${app_path}' does not exist under ${TARGET_DIR}" \
+                    "Create the overlay directory or fix 'spec.source.path' in argocd/apps/${basename_file}"
+            fi
+
+            # Step 3: AppProject existence
+            if [[ -n "$app_project" && "$app_project" != "default" ]]; then
+                if [[ ! -f "${TARGET_DIR}/argocd/projects/${app_project}.yaml" ]]; then
+                    doctor_error "${meta_name}" \
+                        "Application references missing AppProject" \
+                        "project '${app_project}' has no manifest in argocd/projects/" \
+                        "Run 'infra-ctl.sh add-project <name>' or change to 'default' project"
+                fi
+            fi
+        done
+    fi
+
+    # Step 4: Kargo promotion-order envs
+    if is_kargo_enabled; then
+        read_promotion_order
+        local promo_env
+        for promo_env in "${PROMOTION_ORDER[@]}"; do
+            if [[ ! -f "${TARGET_DIR}/k8s/namespaces/${promo_env}.yaml" ]]; then
+                doctor_warn "promotion-order" \
+                    "Promotion order references env without namespace" \
+                    "env '${promo_env}' in kargo/promotion-order.txt has no k8s/namespaces/${promo_env}.yaml" \
+                    "Run 'infra-ctl.sh add-env ${promo_env}' or remove from kargo/promotion-order.txt"
+            fi
+        done
+    fi
+
+    # Step 5: Repo URL drift
+    if [[ -f "${TARGET_DIR}/.infra-ctl.conf" && -n "$first_manifest_url" ]]; then
+        load_conf
+        if [[ -n "$REPO_URL" && "$REPO_URL" != "$first_manifest_url" ]]; then
+            doctor_warn ".infra-ctl.conf" \
+                "REPO_URL differs from Application manifests" \
+                "conf says '${REPO_URL}', first Application manifest says '${first_manifest_url}'" \
+                "Update .infra-ctl.conf REPO_URL or fix Application manifests"
+        fi
+    fi
+
     render_doctor_layer "Layer 3: Repo structure"
 }
 
