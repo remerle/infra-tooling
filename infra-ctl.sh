@@ -1557,11 +1557,42 @@ cmd_add_project() {
 cmd_edit_project() {
     require_gum
 
-    local project_name="${1:-}"
+    local name_flag="" desc_flag="" repos_flag=""
+    local restrict_repos_flag=""
+    local restrict_ns_flag=""
+    local cluster_resources_flag=""
+    local ns_flags=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)         name_flag="$2"; shift 2 ;;
+            --description)  desc_flag="$2"; shift 2 ;;
+            --restrict-repos)    restrict_repos_flag="true"; shift ;;
+            --no-restrict-repos) restrict_repos_flag="false"; shift ;;
+            --source-repos) repos_flag="$2"; shift 2 ;;
+            --namespaces)
+                IFS=',' read -ra _ns <<<"$2"
+                ns_flags+=("${_ns[@]}")
+                restrict_ns_flag="true"
+                shift 2 ;;
+            --no-restrict-namespaces) restrict_ns_flag="false"; shift ;;
+            --cluster-resources)    cluster_resources_flag="true"; shift ;;
+            --no-cluster-resources) cluster_resources_flag="false"; shift ;;
+            -h|--help) echo "Usage: infra-ctl.sh edit-project [name] [flags]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *)  if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
+
+    local project_name="$name_flag"
 
     if [[ -z "$project_name" ]]; then
         load_conf
-        project_name="$(detect_projects | choose_from "Select project to edit:" "No projects to edit.")" || exit 0
+        if [[ -t 0 ]]; then
+            project_name="$(detect_projects | choose_from "Select project to edit:" "No projects to edit.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
 
     load_conf
@@ -1589,17 +1620,31 @@ cmd_edit_project() {
         current_ns_restricted=true
     fi
 
-    # Prompt for description
+    # Description: flag wins, else prompt (pre-filled), else keep current
     local description
-    description="$(gum input --value "$current_description" --prompt "Description: ")"
-
-    # Prompt for source repo restrictions
-    local source_repos_block
-    local confirm_msg="Restrict source repositories?"
-    if [[ "$current_repos_restricted" == true ]]; then
-        confirm_msg="Restrict source repositories? (currently restricted)"
+    if [[ -n "$desc_flag" ]]; then
+        description="$desc_flag"
+    elif [[ -t 0 ]]; then
+        description="$(gum input --value "$current_description" --prompt "Description: ")"
+    else
+        description="$current_description"
     fi
-    if gum confirm "$confirm_msg"; then
+
+    # Source repo restrictions
+    local restrict_repos
+    if [[ "$restrict_repos_flag" == "true" ]]; then restrict_repos="yes"
+    elif [[ "$restrict_repos_flag" == "false" ]]; then restrict_repos="no"
+    elif [[ -n "$repos_flag" ]]; then restrict_repos="yes"
+    elif [[ -t 0 ]]; then
+        local confirm_msg="Restrict source repositories?"
+        [[ "$current_repos_restricted" == true ]] && confirm_msg="Restrict source repositories? (currently restricted)"
+        if gum confirm "$confirm_msg"; then restrict_repos="yes"; else restrict_repos="no"; fi
+    else
+        restrict_repos=$([[ "$current_repos_restricted" == true ]] && echo "yes" || echo "no")
+    fi
+
+    local source_repos_block
+    if [[ "$restrict_repos" == "yes" ]]; then
         local current_repos=""
         if [[ "$current_repos_restricted" == true ]]; then
             current_repos="$(awk '/sourceRepos:/,/destinations:/{if(/- / && !/sourceRepos:/ && !/destinations:/) print}' "$project_file" | sed 's/.*- //' | tr '\n' ',' | sed 's/,$//')"
@@ -1607,7 +1652,13 @@ cmd_edit_project() {
             current_repos="${REPO_URL}"
         fi
         local repos_input
-        repos_input="$(gum input --value "$current_repos" --prompt "Allowed repos (comma-separated): ")"
+        if [[ -n "$repos_flag" ]]; then
+            repos_input="$repos_flag"
+        elif [[ -t 0 ]]; then
+            repos_input="$(gum input --value "$current_repos" --prompt "Allowed repos (comma-separated): ")"
+        else
+            repos_input="$current_repos"
+        fi
         source_repos_block=""
         IFS=',' read -ra repos <<<"$repos_input"
         local repo
@@ -1621,51 +1672,73 @@ cmd_edit_project() {
         source_repos_block="    - '*'"
     fi
 
-    # Prompt for destination namespace restrictions
-    local destinations_block
-    confirm_msg="Restrict destination namespaces?"
-    if [[ "$current_ns_restricted" == true ]]; then
-        confirm_msg="Restrict destination namespaces? (currently restricted)"
+    # Destination namespace restrictions
+    local restrict_ns
+    if [[ "$restrict_ns_flag" == "true" ]]; then restrict_ns="yes"
+    elif [[ "$restrict_ns_flag" == "false" ]]; then restrict_ns="no"
+    elif [[ ${#ns_flags[@]} -gt 0 ]]; then restrict_ns="yes"
+    elif [[ -t 0 ]]; then
+        local confirm_msg="Restrict destination namespaces?"
+        [[ "$current_ns_restricted" == true ]] && confirm_msg="Restrict destination namespaces? (currently restricted)"
+        if gum confirm "$confirm_msg"; then restrict_ns="yes"; else restrict_ns="no"; fi
+    else
+        restrict_ns=$([[ "$current_ns_restricted" == true ]] && echo "yes" || echo "no")
     fi
-    if gum confirm "$confirm_msg"; then
+
+    local destinations_block
+    if [[ "$restrict_ns" == "yes" ]]; then
         local envs=()
         while IFS= read -r env; do
             envs+=("$env")
         done < <(detect_envs)
 
-        local selected_namespaces
-        if [[ ${#envs[@]} -gt 0 ]]; then
-            selected_namespaces="$(printf "%s\n" "${envs[@]}" | gum choose --no-limit)"
+        local selected_namespaces=()
+        if [[ ${#ns_flags[@]} -gt 0 ]]; then
+            selected_namespaces=("${ns_flags[@]}")
+        elif [[ -t 0 ]] && [[ ${#envs[@]} -gt 0 ]]; then
+            mapfile -t selected_namespaces < <(printf "%s\n" "${envs[@]}" | gum choose --no-limit)
+        elif [[ -t 0 ]]; then
+            local ns_input
+            ns_input="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
+            IFS=',' read -ra selected_namespaces <<<"$ns_input"
         else
-            selected_namespaces="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
-            selected_namespaces="$(echo "$selected_namespaces" | tr ',' '\n' | xargs -I{} echo {})"
+            print_error "--namespaces is required when restricting namespaces non-interactively"
+            exit 1
         fi
 
         destinations_block=""
-        while IFS= read -r ns; do
+        local ns
+        for ns in "${selected_namespaces[@]}"; do
             ns="$(echo "$ns" | xargs)"
             [[ -z "$ns" ]] && continue
             destinations_block+="    - namespace: ${ns}"$'\n'
             destinations_block+="      server: https://kubernetes.default.svc"$'\n'
-        done <<<"$selected_namespaces"
+        done
         destinations_block="${destinations_block%$'\n'}"
     else
         destinations_block="    - namespace: '*'"$'\n'
         destinations_block+="      server: https://kubernetes.default.svc"
     fi
 
-    # Prompt for cluster-scoped resource access
+    # Cluster-scoped resource access
     local current_cluster_restricted=false
     if ! grep -q "clusterResourceWhitelist:" "$project_file" || ! grep -A1 "clusterResourceWhitelist:" "$project_file" | grep -q "group: '\*'"; then
         current_cluster_restricted=true
     fi
 
-    local cluster_resources_block
-    confirm_msg="Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)"
-    if [[ "$current_cluster_restricted" == true ]]; then
-        confirm_msg="Allow full cluster-scoped resource access? (currently restricted)"
+    local allow_cluster
+    if [[ "$cluster_resources_flag" == "true" ]]; then allow_cluster="yes"
+    elif [[ "$cluster_resources_flag" == "false" ]]; then allow_cluster="no"
+    elif [[ -t 0 ]]; then
+        local confirm_msg="Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)"
+        [[ "$current_cluster_restricted" == true ]] && confirm_msg="Allow full cluster-scoped resource access? (currently restricted)"
+        if gum confirm "$confirm_msg"; then allow_cluster="yes"; else allow_cluster="no"; fi
+    else
+        allow_cluster=$([[ "$current_cluster_restricted" == true ]] && echo "no" || echo "yes")
     fi
-    if gum confirm "$confirm_msg"; then
+
+    local cluster_resources_block
+    if [[ "$allow_cluster" == "yes" ]]; then
         cluster_resources_block="    - group: '*'"$'\n'
         cluster_resources_block+="      kind: '*'"
     else
