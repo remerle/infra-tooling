@@ -1152,12 +1152,22 @@ cmd_remove_ingress() {
 cmd_add_env() {
     require_gum
 
-    if [[ $# -eq 0 ]]; then
-        print_error "Usage: infra-ctl.sh add-env <env-name>"
-        exit 1
-    fi
+    local env_name_flag=""
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) env_name_flag="$2"; shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: infra-ctl.sh add-env <name> [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) if [[ -z "$env_name_flag" ]]; then env_name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
 
-    local env_name="$1"
+    local env_name="$env_name_flag"
+    if [[ -z "$env_name" ]]; then
+        env_name=$(prompt_or_die "Environment name" "--name")
+    fi
     validate_k8s_name "$env_name" "Environment name"
     load_conf
 
@@ -1207,7 +1217,9 @@ cmd_add_env() {
         fi
     fi
 
-    confirm_or_abort "Create these files?"
+    if [[ "$yes" != "true" ]] && [[ -t 0 ]]; then
+        confirm_or_abort "Create these files?"
+    fi
 
     local created_files=()
 
