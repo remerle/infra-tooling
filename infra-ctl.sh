@@ -2007,11 +2007,28 @@ cmd_list_projects() {
 cmd_remove_project() {
     require_gum
 
-    local project_name="${1:-}"
+    local name_flag="" reassign_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name_flag="$2"; shift 2 ;;
+            --reassign-to) reassign_flag="$2"; shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: infra-ctl.sh remove-project [name] [--reassign-to <project>] [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *)  if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
+
+    local project_name="$name_flag"
 
     if [[ -z "$project_name" ]]; then
         load_conf
-        project_name="$(detect_projects | choose_from "Select project to remove:" "No projects to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            project_name="$(detect_projects | choose_from "Select project to remove:" "No projects to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
 
     validate_k8s_name "$project_name" "Project name"
@@ -2058,12 +2075,25 @@ cmd_remove_project() {
         done < <(detect_projects)
 
         local reassign_to
-        reassign_to="$(printf '%s\n' "${other_projects[@]}" | gum choose --header "Reassign these apps to:")"
+        if [[ -n "$reassign_flag" ]]; then
+            # Validate target exists (or is "default")
+            local found=0 op
+            for op in "${other_projects[@]}"; do
+                [[ "$op" == "$reassign_flag" ]] && { found=1; break; }
+            done
+            [[ "$found" -eq 0 ]] && { print_error "Reassignment target '${reassign_flag}' not found. Known: ${other_projects[*]}"; exit 1; }
+            reassign_to="$reassign_flag"
+        elif [[ -t 0 ]]; then
+            reassign_to="$(printf '%s\n' "${other_projects[@]}" | gum choose --header "Reassign these apps to:")"
+        else
+            print_error "--reassign-to is required when not running interactively (apps currently assigned)"
+            exit 1
+        fi
 
         print_info "Apps will be reassigned to project '${reassign_to}'"
     fi
 
-    confirm_or_abort "Remove project '${project_name}'?"
+    require_yes "$yes" "remove project '${project_name}'"
 
     # Reassign apps if needed
     if [[ ${#assigned_apps[@]} -gt 0 ]]; then
