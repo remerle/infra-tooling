@@ -322,7 +322,7 @@ Every command listed above accepts flags for every value it would otherwise prom
 | `init` | `--repo-url <url>`, `--yes` |
 | `add-app` | `--name`, `--project`, `--workload-type`, `--preset`, `--set KEY=VAL` (repeatable, validated against preset), `--secret-key NAME` (repeatable), `--config KEY=VAL` (repeatable), `--kargo`/`--no-kargo`, `--image-repo`, `--custom`, `--image`, `--port`, `--secret-name`, `--probe-path`, `--yes` |
 | `add-env` | `--name`, `--yes` |
-| `add-project` | `--name`, `--description`, `--restrict-repos`/`--no-restrict-repos`, `--source-repos`, `--namespaces`, `--cluster-resources`/`--no-cluster-resources` |
+| `add-project` | `--name`, `--description`, `--restrict-repos`/`--no-restrict-repos`, `--source-repo URL` (repeatable), `--namespace NAME` (repeatable), `--cluster-resources`/`--no-cluster-resources` |
 | `edit-project` | same as `add-project` |
 | `add-ingress` | `--app`, `--env NAME` (repeatable), `--yes` |
 | `remove-ingress` | `--app`, `--env NAME` (repeatable), `--yes` |
@@ -556,7 +556,7 @@ config-ctl.sh verify dev
 | Command | Flags |
 |---|---|
 | `add` | `--app`, `--env`, `--config KEY=VAL` (repeatable) |
-| `remove` | `--app`, `--env`, `--key NAME` (repeatable, prefix match) |
+| `remove` | `--app`, `--env`, `--key NAME` (repeatable, prefix match), `--yes` |
 | `verify` | `--env`, `--walk`/`--no-walk` |
 
 Run `config-ctl.sh <command> --help` for details.
@@ -726,7 +726,7 @@ user-ctl.sh preflight-check
 
 | Command | Flags |
 |---|---|
-| `add-role` | `--name`, `--preset` (admin-readonly-settings/developer/viewer/custom), `--argocd-resources`, `--actions`, `--k8s-scope` (cluster-wide/namespace-scoped), `--k8s-verbs`, `--namespace NAME` (repeatable) |
+| `add-role` | `--name`, `--preset` (admin-readonly-settings/developer/viewer/custom), `--argocd-resource NAME` (repeatable), `--action NAME` (repeatable), `--k8s-scope` (cluster-wide/namespace-scoped), `--k8s-verb VERB` (repeatable), `--namespace NAME` (repeatable) |
 | `remove-role` | `--name`, `--yes` |
 | `remove` | `--name`, `--yes` |
 | `remove-sa` | `--name`, `--yes` |

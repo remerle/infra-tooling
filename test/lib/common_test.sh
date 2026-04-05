@@ -115,6 +115,51 @@ echo proceeded
 run_test "require_yes passes when yes=true" 0 "proceeded" \
     -- "$TMP/yes2.sh"
 
+# --- require_flag_value ---
+make_runner "$TMP/rfv1.sh" 'require_flag_value "--name" ""'
+run_test "require_flag_value dies on empty value" 1 "--name requires a value" \
+    -- "$TMP/rfv1.sh"
+
+make_runner "$TMP/rfv2.sh" 'require_flag_value "--name"'
+run_test "require_flag_value dies on missing arg" 1 "--name requires a value" \
+    -- "$TMP/rfv2.sh"
+
+make_runner "$TMP/rfv3.sh" '
+require_flag_value "--name" "backend"
+echo passed
+'
+run_test "require_flag_value passes on valid value" 0 "passed" \
+    -- "$TMP/rfv3.sh"
+
+# --- validate_configmap_key ---
+make_runner "$TMP/vck1.sh" 'validate_configmap_key "FOO" "test key"'
+run_test "validate_configmap_key accepts uppercase id" 0 "" \
+    -- "$TMP/vck1.sh"
+
+make_runner "$TMP/vck2.sh" 'validate_configmap_key "FOO_BAR_1"'
+run_test "validate_configmap_key accepts underscores and digits" 0 "" \
+    -- "$TMP/vck2.sh"
+
+make_runner "$TMP/vck3.sh" 'validate_configmap_key "BAD-KEY" "--config key"'
+run_test "validate_configmap_key rejects dashes" 1 "not a valid identifier" \
+    -- "$TMP/vck3.sh"
+
+make_runner "$TMP/vck4.sh" 'validate_configmap_key "1LEADING_DIGIT"'
+run_test "validate_configmap_key rejects leading digit" 1 "not a valid identifier" \
+    -- "$TMP/vck4.sh"
+
+make_runner "$TMP/vck5.sh" 'validate_configmap_key ""'
+run_test "validate_configmap_key rejects empty" 1 "cannot be empty" \
+    -- "$TMP/vck5.sh"
+
+# --- parse_set_kv key validation integration ---
+make_runner "$TMP/psv1.sh" '
+declare -A v
+parse_set_kv "BAD KEY=foo" v
+'
+run_test "parse_set_kv rejects keys with spaces" 1 "not a valid identifier" \
+    -- "$TMP/psv1.sh"
+
 echo ""
 echo "Passed: $PASSED"
 echo "Failed: $FAILED"

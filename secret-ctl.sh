@@ -255,7 +255,10 @@ cmd_add() {
                 fi
                 stdin_consumed=1
                 # Preserve trailing newlines (command substitution strips them)
-                value="$(cat; printf x)"
+                value="$(
+                    cat
+                    printf x
+                )"
                 value="${value%x}"
             elif [[ "$value" == @* ]]; then
                 local file="${value#@}"
@@ -271,7 +274,10 @@ cmd_add() {
                     exit 1
                 fi
                 # Preserve trailing newlines
-                value="$(cat "$file"; printf x)"
+                value="$(
+                    cat "$file"
+                    printf x
+                )"
                 value="${value%x}"
             fi
             validate_secret_key "$key"

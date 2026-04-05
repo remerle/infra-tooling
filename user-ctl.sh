@@ -123,7 +123,10 @@ EOF
         custom)
             local resources actions
             if [[ ${#argocd_resource_flags[@]} -gt 0 ]]; then
-                resources="$(IFS=,; echo "${argocd_resource_flags[*]}")"
+                resources="$(
+                    IFS=,
+                    echo "${argocd_resource_flags[*]}"
+                )"
             elif [[ -t 0 ]]; then
                 resources="$(gum choose --no-limit --header "Select ArgoCD resources:" \
                     "applications" "projects" "repositories" "clusters" \
@@ -139,7 +142,10 @@ EOF
             fi
 
             if [[ ${#action_flags[@]} -gt 0 ]]; then
-                actions="$(IFS=,; echo "${action_flags[*]}")"
+                actions="$(
+                    IFS=,
+                    echo "${action_flags[*]}"
+                )"
             elif [[ -t 0 ]]; then
                 actions="$(gum choose --no-limit --header "Select actions:" \
                     "get" "create" "update" "delete" "sync" "override" "action" "*" | paste -sd, -)"
@@ -237,7 +243,10 @@ EOF
             if [[ "$k8s_scope" == "cluster-wide (ClusterRole)" ]]; then
                 local k8s_verbs
                 if [[ ${#k8s_verb_flags[@]} -gt 0 ]]; then
-                    k8s_verbs="$(IFS=,; echo "${k8s_verb_flags[*]}")"
+                    k8s_verbs="$(
+                        IFS=,
+                        echo "${k8s_verb_flags[*]}"
+                    )"
                 elif [[ -t 0 ]]; then
                     k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
                         "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
@@ -272,7 +281,10 @@ EOF
 
                 local k8s_verbs
                 if [[ ${#k8s_verb_flags[@]} -gt 0 ]]; then
-                    k8s_verbs="$(IFS=,; echo "${k8s_verb_flags[*]}")"
+                    k8s_verbs="$(
+                        IFS=,
+                        echo "${k8s_verb_flags[*]}"
+                    )"
                 elif [[ -t 0 ]]; then
                     k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
                         "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"

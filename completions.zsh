@@ -133,8 +133,8 @@ _infra_ctl() {
                         '--description[Project description]:text:' \
                         '--restrict-repos[Restrict source repos to the main repo]' \
                         '--no-restrict-repos[Allow any source repo]' \
-                        '--source-repos[Comma-separated source repo URLs]:urls:' \
-                        '--namespaces[Comma-separated destination namespaces]:namespaces:' \
+                        '*--source-repo[Allowed source repo URL]:url:' \
+                        '*--namespace[Destination namespace]:namespace:_infra_complete_envs' \
                         '--cluster-resources[Allow cluster-scoped resources]' \
                         '--no-cluster-resources[Deny cluster-scoped resources]'
                     ;;
@@ -144,8 +144,8 @@ _infra_ctl() {
                         '--description[Project description]:text:' \
                         '--restrict-repos[Restrict source repos]' \
                         '--no-restrict-repos[Allow any repo]' \
-                        '--source-repos[Comma-separated repo URLs]:urls:' \
-                        '--namespaces[Comma-separated namespaces]:namespaces:' \
+                        '*--source-repo[Allowed source repo URL]:url:' \
+                        '*--namespace[Destination namespace]:namespace:_infra_complete_envs' \
                         '--cluster-resources[Allow cluster-scoped resources]' \
                         '--no-cluster-resources[Deny cluster-scoped resources]'
                     ;;
@@ -355,10 +355,10 @@ _user_ctl() {
                     _arguments \
                         '--name[Role name]:name:' \
                         '--preset[Permission preset]:preset:(admin-readonly-settings developer viewer custom)' \
-                        '--argocd-resources[Comma-separated ArgoCD resources]:resources:' \
-                        '--actions[Comma-separated ArgoCD actions]:actions:' \
+                        '*--argocd-resource[ArgoCD resource]:resource:(applications projects repositories clusters certificates accounts logs exec)' \
+                        '*--action[ArgoCD action]:action:(get create update delete sync override action \*)' \
                         '--k8s-scope[K8s access scope]:scope:(cluster-wide namespace-scoped)' \
-                        '--k8s-verbs[Comma-separated kubectl verbs]:verbs:' \
+                        '*--k8s-verb[kubectl verb]:verb:(get list watch create update patch delete \*)' \
                         '*--namespace[Namespace]:namespace:_infra_complete_envs'
                     ;;
                 remove-role)
@@ -414,7 +414,8 @@ _config_ctl() {
                     _arguments \
                         '--app[Application]:app:_infra_complete_apps' \
                         '--env[Environment]:env:_infra_complete_envs' \
-                        '*--key[Config key prefix]:key:'
+                        '*--key[Config key prefix]:key:' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
                     ;;
                 verify)
                     _arguments \
