@@ -2071,8 +2071,9 @@ doctor_layer_8_ingress() {
         local code
         code="$(curl -skI -o /dev/null -w '%{http_code}' --max-time 5 "https://${host}/" 2>/dev/null)" || code="000"
         case "$code" in
-            2*|3*|401|403|404)
-                # Reachable
+            2*|3*|401|403|404|405)
+                # Reachable. 405 = method not allowed (HEAD rejected, e.g. Kargo API)
+                # — the server is still responding, so the ingress is wired correctly.
                 ;;
             000)
                 doctor_error "$host" \
@@ -2090,7 +2091,7 @@ doctor_layer_8_ingress() {
             *)
                 doctor_warn "$host" \
                     "Unexpected HTTP response code: ${code}" \
-                    "curl got HTTP ${code} from https://${host}/; expected 2xx/3xx/401/403/404" \
+                    "curl got HTTP ${code} from https://${host}/; expected 2xx/3xx/401/403/404/405" \
                     "Inspect the ingress routing rules and backend service behavior"
                 ;;
         esac
