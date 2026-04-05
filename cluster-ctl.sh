@@ -1069,6 +1069,28 @@ doctor_clean() {
     :
 }
 
+# Gate used by layers that require a live cluster. Appends to
+# DOCTOR_SKIPPED_LAYERS and prints a one-liner when the layer can't run.
+# Returns 0 when the layer can proceed, 1 when the caller should return early.
+needs_cluster_or_skip() {
+    local layer_name="$1"
+    local reason=""
+    if [[ "$DOCTOR_SCOPE" == "repo" ]]; then
+        reason="scope=repo"
+    elif [[ "$DOCTOR_CLUSTER_REACHABLE" -eq 0 ]]; then
+        reason="cluster unreachable"
+    else
+        return 0
+    fi
+    DOCTOR_SKIPPED_LAYERS+=("${layer_name} (${reason})")
+    local marker header reason_styled
+    marker="$(gum style --faint "○")"
+    header="$(gum style --bold "${layer_name}")"
+    reason_styled="$(gum style --faint "skipped (${reason})")"
+    printf "▸ %s %s %s\n" "$header" "$marker" "$reason_styled"
+    return 1
+}
+
 # Returns 0 if the given app/env pass the --app / --env filters, 1 otherwise.
 doctor_matches_filter() {
     local app="$1" env="$2"
@@ -1223,6 +1245,59 @@ doctor_layer_2_controllers() {
     DOCTOR_CURRENT_LAYER_ERRORS=()
     DOCTOR_CURRENT_LAYER_WARNINGS=()
     DOCTOR_CURRENT_LAYER_INFOS=()
+    needs_cluster_or_skip "Layer 2: Controllers" || return 0
+
+    if ! kubectl get ns argocd &>/dev/null; then
+        doctor_error "argocd" \
+            "argocd namespace does not exist" \
+            "ArgoCD is not installed in this cluster" \
+            "Run 'cluster-ctl.sh init-cluster' to install ArgoCD"
+        render_doctor_layer "Layer 2: Controllers"
+        return 0
+    fi
+
+    local deploy avail
+    for deploy in argocd-server argocd-repo-server argocd-applicationset-controller; do
+        avail="$(kubectl -n argocd get deploy "$deploy" -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
+        if [[ -z "$avail" || "$avail" -eq 0 ]]; then
+            doctor_error "$deploy" \
+                "ArgoCD deployment not Ready" \
+                "${deploy} has 0 available replicas" \
+                "Check pod logs: 'kubectl -n argocd describe deploy ${deploy}'"
+        fi
+    done
+
+    if find "${TARGET_DIR}/k8s/apps" -type f -name 'sealed-secret.yaml' -path '*/overlays/*' 2>/dev/null | grep -q .; then
+        avail="$(kubectl -n kube-system get deploy sealed-secrets-controller -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
+        if [[ -z "$avail" || "$avail" -eq 0 ]]; then
+            doctor_error "sealed-secrets-controller" \
+                "sealed-secrets controller not Ready" \
+                "repo contains sealed-secret.yaml overlays but the controller has 0 available replicas" \
+                "Run 'secret-ctl.sh init' to install the sealed-secrets controller"
+        fi
+    fi
+
+    if is_kargo_enabled; then
+        avail="$(kubectl -n cert-manager get deploy cert-manager-webhook -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
+        if [[ -z "$avail" || "$avail" -eq 0 ]]; then
+            doctor_error "cert-manager-webhook" \
+                "cert-manager webhook not Ready" \
+                "cert-manager-webhook has 0 available replicas; Kargo depends on cert-manager" \
+                "Run 'cluster-ctl.sh upgrade-kargo' or install cert-manager"
+        fi
+
+        local kargo_deploy
+        for kargo_deploy in kargo-api kargo-controller; do
+            avail="$(kubectl -n kargo get deploy "$kargo_deploy" -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
+            if [[ -z "$avail" || "$avail" -eq 0 ]]; then
+                doctor_error "$kargo_deploy" \
+                    "Kargo deployment not Ready" \
+                    "${kargo_deploy} has 0 available replicas" \
+                    "Run 'cluster-ctl.sh upgrade-kargo'"
+            fi
+        done
+    fi
+
     render_doctor_layer "Layer 2: Controllers"
 }
 
