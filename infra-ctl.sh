@@ -2137,11 +2137,27 @@ cmd_remove_project() {
 cmd_remove_app() {
     require_gum
 
-    local app_name="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name_flag="$2"; shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: infra-ctl.sh remove-app [name] [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
+
+    local app_name="$name_flag"
 
     if [[ -z "$app_name" ]]; then
         load_conf
-        app_name="$(detect_apps | choose_from "Select application to remove:" "No applications to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            app_name="$(detect_apps | choose_from "Select application to remove:" "No applications to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
     validate_k8s_name "$app_name" "App name"
     load_conf
@@ -2189,7 +2205,7 @@ cmd_remove_app() {
         fi
     done
 
-    confirm_or_abort "Remove application '${app_name}' and all its resources?"
+    require_yes "$yes" "remove application '${app_name}' and all its resources"
 
     # Execute removal
     local removed_files=()
@@ -2215,11 +2231,27 @@ cmd_remove_app() {
 cmd_remove_env() {
     require_gum
 
-    local env_name="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name_flag="$2"; shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: infra-ctl.sh remove-env [name] [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
+
+    local env_name="$name_flag"
 
     if [[ -z "$env_name" ]]; then
         load_conf
-        env_name="$(detect_envs | choose_from "Select environment to remove:" "No environments to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            env_name="$(detect_envs | choose_from "Select environment to remove:" "No environments to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
     validate_k8s_name "$env_name" "Environment name"
     load_conf
@@ -2321,7 +2353,7 @@ cmd_remove_env() {
         print_info "Update: kargo/promotion-order.txt (remove '${env_name}')"
     fi
 
-    confirm_or_abort "Remove environment '${env_name}' and all its resources?"
+    require_yes "$yes" "remove environment '${env_name}' and all its resources"
 
     # Execute removal
     local removed_files=()
@@ -2415,6 +2447,16 @@ cmd_remove_env() {
 cmd_reset() {
     require_gum
 
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: infra-ctl.sh reset [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) print_error "Unexpected: $1"; exit 1 ;;
+        esac
+    done
+
     print_header "Reset GitOps Repository"
 
     local targets=()
@@ -2443,7 +2485,7 @@ cmd_reset() {
         print_info "  ${t#"${TARGET_DIR}/"}"
     done
 
-    confirm_destructive_or_abort "Reset this GitOps repository? This cannot be undone."
+    require_yes "$yes" "reset this GitOps repository (cannot be undone)"
 
     for t in "${targets[@]}"; do
         rm -rf "$t"
