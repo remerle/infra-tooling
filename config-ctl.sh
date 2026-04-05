@@ -105,6 +105,7 @@ cmd_add() {
                 print_error "--config expects KEY=VAL, got: ${e}"
                 exit 1
             fi
+            validate_configmap_key "${e%%=*}" "--config key"
             entries+=("$e")
         done
     elif [[ -t 0 ]]; then

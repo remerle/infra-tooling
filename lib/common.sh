@@ -432,6 +432,23 @@ validate_secret_key() {
     return 0
 }
 
+# Validates that a key is a legal k8s configMap/env-var identifier.
+# configMap keys must match [-._a-zA-Z0-9]+ but to be mountable as env vars
+# they must also be valid C identifiers ([A-Za-z_][A-Za-z0-9_]*).
+# Dies with a clear error if the key is malformed.
+validate_configmap_key() {
+    local key="$1"
+    local label="${2:-configMap key}"
+    if [[ -z "$key" ]]; then
+        print_error "${label} cannot be empty"
+        exit 1
+    fi
+    if ! [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        print_error "${label} '${key}' is not a valid identifier (must match [A-Za-z_][A-Za-z0-9_]*)"
+        exit 1
+    fi
+}
+
 # --- Argument parsing ---
 
 # Extracts global flags from arguments. Sets TARGET_DIR, SHOW_ME.
@@ -1248,6 +1265,7 @@ parse_set_kv() {
         print_error "--set expects KEY=VAL with a non-empty KEY, got: ${input}"
         exit 1
     fi
+    validate_configmap_key "$key" "--set key"
     _arr["$key"]="$val"
 }
 

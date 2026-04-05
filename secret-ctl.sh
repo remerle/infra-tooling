@@ -239,6 +239,7 @@ cmd_add() {
 
     if [[ ${#cli_pairs[@]} -gt 0 ]]; then
         # Parse KEY=value pairs (inline, @file, or - stdin)
+        local stdin_consumed=0
         local pair
         for pair in "${cli_pairs[@]}"; do
             if [[ "$pair" != *"="* ]]; then
@@ -248,14 +249,30 @@ cmd_add() {
             local key="${pair%%=*}"
             local value="${pair#*=}"
             if [[ "$value" == "-" ]]; then
-                value="$(cat)"
+                if [[ "$stdin_consumed" -eq 1 ]]; then
+                    print_error "Only one --secret-val may read from stdin (-) per invocation"
+                    exit 1
+                fi
+                stdin_consumed=1
+                # Preserve trailing newlines (command substitution strips them)
+                value="$(cat; printf x)"
+                value="${value%x}"
             elif [[ "$value" == @* ]]; then
                 local file="${value#@}"
                 if [[ ! -f "$file" ]]; then
                     print_error "File not found: ${file}"
                     exit 1
                 fi
-                value="$(cat "$file")"
+                # 1 MiB size guard - secrets larger than this are almost certainly a misconfiguration
+                local size
+                size="$(wc -c <"$file" | tr -d ' ')"
+                if [[ "$size" -gt 1048576 ]]; then
+                    print_error "Secret file '${file}' exceeds 1 MiB limit (${size} bytes)"
+                    exit 1
+                fi
+                # Preserve trailing newlines
+                value="$(cat "$file"; printf x)"
+                value="${value%x}"
             fi
             validate_secret_key "$key"
 
