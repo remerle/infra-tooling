@@ -1020,40 +1020,230 @@ Options:
 EOF
 }
 
+# --- Doctor finding emitters ---
+#
+# Each doctor_layer_* function resets the three DOCTOR_CURRENT_LAYER_* arrays
+# at entry, calls doctor_error/doctor_warn/doctor_info to append findings,
+# then calls render_doctor_layer at exit. Findings are stored as
+# unit-separator (\x1f) delimited strings to keep each finding as a single
+# array element while allowing multi-field payloads.
+#
+# Field layout:
+#   errors/warnings:  subject\x1fmessage\x1fwhy\x1ffix\x1fevidence
+#   infos:            subject\x1fmessage
+DOCTOR_CURRENT_LAYER_ERRORS=()
+DOCTOR_CURRENT_LAYER_WARNINGS=()
+DOCTOR_CURRENT_LAYER_INFOS=()
+
+doctor_error() {
+    local subject="$1" msg="$2" why="$3" fix="$4"
+    shift 4
+    local evidence=""
+    if [[ $# -gt 0 ]]; then
+        evidence="$(printf '%s\n' "$@")"
+    fi
+    DOCTOR_CURRENT_LAYER_ERRORS+=("${subject}"$'\x1f'"${msg}"$'\x1f'"${why}"$'\x1f'"${fix}"$'\x1f'"${evidence}")
+    DOCTOR_ERRORS=$((DOCTOR_ERRORS + 1))
+}
+
+doctor_warn() {
+    local subject="$1" msg="$2" why="$3" fix="$4"
+    shift 4
+    local evidence=""
+    if [[ $# -gt 0 ]]; then
+        evidence="$(printf '%s\n' "$@")"
+    fi
+    DOCTOR_CURRENT_LAYER_WARNINGS+=("${subject}"$'\x1f'"${msg}"$'\x1f'"${why}"$'\x1f'"${fix}"$'\x1f'"${evidence}")
+    DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1))
+}
+
+doctor_info() {
+    local subject="$1" msg="$2"
+    DOCTOR_CURRENT_LAYER_INFOS+=("${subject}"$'\x1f'"${msg}")
+    DOCTOR_INFOS=$((DOCTOR_INFOS + 1))
+}
+
+# Marker for layers with no findings. No-op; render_doctor_layer handles the
+# empty case directly.
+doctor_clean() {
+    :
+}
+
+# Returns 0 if the given app/env pass the --app / --env filters, 1 otherwise.
+doctor_matches_filter() {
+    local app="$1" env="$2"
+    [[ -n "$DOCTOR_APP" && "$app" != "$DOCTOR_APP" ]] && return 1
+    [[ -n "$DOCTOR_ENV" && "$env" != "$DOCTOR_ENV" ]] && return 1
+    return 0
+}
+
+# Reads DOCTOR_CURRENT_LAYER_* arrays and prints either a clean one-liner
+# or a gum-bordered box of findings.
+render_doctor_layer() {
+    local layer_name="$1"
+
+    if [[ ${#DOCTOR_CURRENT_LAYER_ERRORS[@]} -eq 0 \
+          && ${#DOCTOR_CURRENT_LAYER_WARNINGS[@]} -eq 0 \
+          && ${#DOCTOR_CURRENT_LAYER_INFOS[@]} -eq 0 ]]; then
+        local check
+        check="$(gum style --foreground 2 "✓")"
+        local header
+        header="$(gum style --bold "${layer_name}")"
+        printf "▸ %s %s\n" "$header" "$check"
+        return 0
+    fi
+
+    local content=""
+    content+="$(gum style --bold "${layer_name}")"$'\n'
+
+    local entry subject msg why fix evidence
+    local icon_err icon_warn icon_info
+    icon_err="$(gum style --foreground 1 --bold "✗")"
+    icon_warn="$(gum style --foreground 3 --bold "⚠")"
+    icon_info="$(gum style --faint "ℹ")"
+
+    local first=1
+    local -a fields
+    for entry in "${DOCTOR_CURRENT_LAYER_ERRORS[@]}"; do
+        IFS=$'\x1f' read -r -d '' -a fields < <(printf '%s\x1f\x00' "$entry")
+        subject="${fields[0]}"; msg="${fields[1]}"; why="${fields[2]}"; fix="${fields[3]}"; evidence="${fields[4]}"
+        if [[ $first -eq 0 ]]; then content+=$'\n'; fi
+        first=0
+        content+="${icon_err} $(gum style --bold "${subject}")"$'\n'
+        content+="    ${msg}"$'\n'
+        content+="    $(gum style --faint "why:") ${why}"$'\n'
+        content+="    $(gum style --faint "fix:") ${fix}"
+        if [[ "$DOCTOR_VERBOSE" -eq 1 && -n "$evidence" ]]; then
+            content+=$'\n'"    $(gum style --faint "evidence:")"
+            while IFS= read -r line; do
+                content+=$'\n'"      ${line}"
+            done <<<"$evidence"
+        fi
+    done
+
+    for entry in "${DOCTOR_CURRENT_LAYER_WARNINGS[@]}"; do
+        IFS=$'\x1f' read -r -d '' -a fields < <(printf '%s\x1f\x00' "$entry")
+        subject="${fields[0]}"; msg="${fields[1]}"; why="${fields[2]}"; fix="${fields[3]}"; evidence="${fields[4]}"
+        if [[ $first -eq 0 ]]; then content+=$'\n'; fi
+        first=0
+        content+="${icon_warn} $(gum style --bold "${subject}")"$'\n'
+        content+="    ${msg}"$'\n'
+        content+="    $(gum style --faint "why:") ${why}"$'\n'
+        content+="    $(gum style --faint "fix:") ${fix}"
+        if [[ "$DOCTOR_VERBOSE" -eq 1 && -n "$evidence" ]]; then
+            content+=$'\n'"    $(gum style --faint "evidence:")"
+            while IFS= read -r line; do
+                content+=$'\n'"      ${line}"
+            done <<<"$evidence"
+        fi
+    done
+
+    for entry in "${DOCTOR_CURRENT_LAYER_INFOS[@]}"; do
+        IFS=$'\x1f' read -r -d '' -a fields < <(printf '%s\x1f\x00' "$entry")
+        subject="${fields[0]}"; msg="${fields[1]}"
+        if [[ $first -eq 0 ]]; then content+=$'\n'; fi
+        first=0
+        content+="${icon_info} $(gum style --faint "${subject}"): ${msg}"
+    done
+
+    gum style --border rounded --padding "0 1" "$content"
+}
+
+# Returns the doctor exit code based on accumulated counters:
+#   0 = clean (nothing emitted)
+#   1 = warnings and/or infos only
+#   2 = any errors
+doctor_exit_code() {
+    if [[ "$DOCTOR_ERRORS" -gt 0 ]]; then
+        echo 2
+    elif [[ "$DOCTOR_WARNINGS" -gt 0 || "$DOCTOR_INFOS" -gt 0 ]]; then
+        echo 1
+    else
+        echo 0
+    fi
+}
+
+render_doctor_summary() {
+    local layers_checked=9
+    local skipped=${#DOCTOR_SKIPPED_LAYERS[@]}
+    local code
+    code="$(doctor_exit_code)"
+
+    local icon_err icon_warn icon_info
+    icon_err="$(gum style --foreground 1 --bold "✗")"
+    icon_warn="$(gum style --foreground 3 --bold "⚠")"
+    icon_info="$(gum style --faint "ℹ")"
+
+    local content=""
+    content+="$(gum style --bold "Summary")"$'\n'
+    content+="${layers_checked} layers checked, ${skipped} skipped"$'\n'
+    content+="${icon_err} ${DOCTOR_ERRORS} errors  ${icon_warn} ${DOCTOR_WARNINGS} warnings  ${icon_info} ${DOCTOR_INFOS} infos"$'\n'
+    content+="Exit: ${code}"
+
+    gum style --border rounded --padding "0 1" "$content"
+}
+
 doctor_layer_1_prereqs() {
-    print_info "▸ Layer 1: Prerequisites (stub)"
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
+    render_doctor_layer "Layer 1: Prerequisites"
 }
 
 doctor_layer_2_controllers() {
-    print_info "▸ Layer 2: Controllers (stub)"
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
+    render_doctor_layer "Layer 2: Controllers"
 }
 
 doctor_layer_3_repo_structure() {
-    print_info "▸ Layer 3: Repo structure (stub)"
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
+    render_doctor_layer "Layer 3: Repo structure"
 }
 
 doctor_layer_4_alignment() {
-    print_info "▸ Layer 4: Alignment (stub)"
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
+    render_doctor_layer "Layer 4: Alignment"
 }
 
 doctor_layer_5_credentials() {
-    print_info "▸ Layer 5: Credentials (stub)"
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
+    render_doctor_layer "Layer 5: Credentials"
 }
 
 doctor_layer_6_runtime() {
-    print_info "▸ Layer 6: Runtime (stub)"
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
+    render_doctor_layer "Layer 6: Runtime"
 }
 
 doctor_layer_7_images() {
-    print_info "▸ Layer 7: Images (stub)"
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
+    render_doctor_layer "Layer 7: Images"
 }
 
 doctor_layer_8_ingress() {
-    print_info "▸ Layer 8: Ingress (stub)"
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
+    render_doctor_layer "Layer 8: Ingress"
 }
 
 doctor_layer_9_hygiene() {
-    print_info "▸ Layer 9: Hygiene (stub)"
+    DOCTOR_CURRENT_LAYER_ERRORS=()
+    DOCTOR_CURRENT_LAYER_WARNINGS=()
+    DOCTOR_CURRENT_LAYER_INFOS=()
+    render_doctor_layer "Layer 9: Hygiene"
 }
 
 cmd_doctor() {
@@ -1182,7 +1372,8 @@ cmd_doctor() {
     doctor_layer_9_hygiene
 
     echo ""
-    print_info "Summary: errors=${DOCTOR_ERRORS} warnings=${DOCTOR_WARNINGS} infos=${DOCTOR_INFOS} (stub)"
+    render_doctor_summary
+    return "$(doctor_exit_code)"
 }
 
 # --- Usage ---
