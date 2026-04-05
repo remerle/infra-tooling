@@ -419,3 +419,14 @@ When adding a NEW command, the checklist below applies. When modifying an existi
 **Detection:**
 - `role_exists(role_name, values_file)` -- checks if a role exists in k8s/platform/ or the values file
 - `account_exists(username, values_file)` -- checks if an account exists in the values file
+
+**Flag-first prompt helpers** (in `lib/common.sh`):
+- `require_tty(flag)` -- exits with a clear error if stdin is not a TTY; flag is the CLI flag name to name in the error
+- `prompt_or_die(label, flag, [default])` -- gum input prompt; dies if no TTY
+- `prompt_password_or_die(label, flag)` -- gum input --password; dies if no TTY
+- `prompt_choose_or_die(label, flag, options...)` -- gum choose (single select); dies if no TTY
+- `prompt_multi_or_die(label, flag, options...)` -- gum choose --no-limit; dies if no TTY
+- `prompt_confirm_or_die(label, flag)` -- gum confirm; prints "yes"/"no"; dies if no TTY
+- `require_yes(yes_flag_value, action)` -- gates destructive operations; dies if --yes not passed and no TTY
+- `parse_set_kv(input, arr_name)` -- parses KEY=VAL into caller's associative array
+- `validate_preset_set_keys(template, keys...)` -- dies if any --set key is not declared in the preset frontmatter
