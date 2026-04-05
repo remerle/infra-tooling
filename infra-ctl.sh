@@ -526,8 +526,7 @@ cmd_add_app() {
                 "${TEMPLATE_DIR}/k8s/overlay-kustomization.yaml" \
                 "$overlay" \
                 "APP_NAME=${app_name}" \
-                "ENV=${env}" \
-                "REPO_OWNER=${REPO_OWNER}"; then
+                "ENV=${env}"; then
                 created_files+=("$overlay")
             fi
 
@@ -917,8 +916,7 @@ cmd_add_env() {
                 "${TEMPLATE_DIR}/k8s/overlay-kustomization.yaml" \
                 "$overlay" \
                 "APP_NAME=${app}" \
-                "ENV=${env_name}" \
-                "REPO_OWNER=${REPO_OWNER}"; then
+                "ENV=${env_name}"; then
                 created_files+=("$overlay")
             fi
 

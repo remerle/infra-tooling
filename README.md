@@ -223,6 +223,96 @@ Modifies an existing AppProject. Re-prompts for all fields with current values p
 infra-ctl.sh edit-project backend-team
 ```
 
+#### `list-apps`
+
+Lists all applications, with the project each is assigned to and the overlays that exist for it.
+
+```bash
+infra-ctl.sh list-apps
+```
+
+#### `list-envs`
+
+Lists all environments. When Kargo is enabled, also prints the current promotion order.
+
+```bash
+infra-ctl.sh list-envs
+```
+
+#### `list-projects`
+
+Lists all AppProjects with their descriptions.
+
+```bash
+infra-ctl.sh list-projects
+```
+
+#### `list-ingress`
+
+Lists every Ingress manifest found under `k8s/apps/*/overlays/*/ingress.yaml`, printing the app, env, and hostname.
+
+```bash
+infra-ctl.sh list-ingress
+```
+
+#### `remove-ingress [app]`
+
+Removes Ingress manifests for an app. Prompts for which environments to remove from (defaults to all envs that have an ingress). De-registers each `ingress.yaml` from its overlay `kustomization.yaml`.
+
+After removing ingresses, run `cluster-ctl.sh renew-tls` so the TLS cert no longer advertises the removed hostnames.
+
+```bash
+infra-ctl.sh remove-ingress frontend
+```
+
+#### `remove-app [name]`
+
+Removes an application and every file generated for it: the `k8s/apps/<name>/` tree (base + all overlays), all `argocd/apps/<name>-<env>.yaml` manifests, and any `kargo/<name>/` resources if Kargo is enabled. Prints a preview and requires confirmation; deletion cannot be undone.
+
+```bash
+infra-ctl.sh remove-app backend
+```
+
+#### `remove-env [name]`
+
+Removes an environment across every app: the namespace manifest, every app's `overlays/<name>/` directory, every `argocd/apps/<app>-<name>.yaml`, and any Kargo Stage manifests for that environment. Prints a preview and requires confirmation.
+
+```bash
+infra-ctl.sh remove-env staging
+```
+
+#### `remove-project [name]`
+
+Removes an AppProject manifest from `argocd/projects/`. Does not reassign apps that were using the project; ArgoCD will fall back to the `default` project once it is deleted. Prints a preview and requires confirmation.
+
+```bash
+infra-ctl.sh remove-project backend-team
+```
+
+#### `enable-kargo`
+
+Opts in to Kargo after the fact. `init` asks whether to enable Kargo on first run; if you answered no, use this later to flip `KARGO_ENABLED=true` in `.infra-ctl.conf`, generate `kargo/promotion-order.txt` from the existing environments, and create Kargo Project/Warehouse/Stage resources for every existing app that has a CI-built image.
+
+```bash
+infra-ctl.sh enable-kargo
+```
+
+#### `reset`
+
+Destructive inverse of `init`. Deletes `k8s/`, `argocd/`, `kargo/`, `helm/`, `.infra-ctl.conf`, `.sealed-secrets-cert.pem`, and `.sealed-secrets-key.json` from the target directory. Prints a preview and requires an explicit destructive confirmation.
+
+```bash
+infra-ctl.sh reset
+```
+
+#### `preflight-check`
+
+Verifies that `gum` and `gh` are installed. Non-interactive; safe to run in CI.
+
+```bash
+infra-ctl.sh preflight-check
+```
+
 ### Global options
 
 All scripts (`infra-ctl.sh`, `cluster-ctl.sh`, `secret-ctl.sh`, `user-ctl.sh`) accept these flags:
@@ -325,6 +415,56 @@ Configures kubelet to pull container images from a private registry. Creates a `
 cluster-ctl.sh add-registry-creds
 ```
 
+#### `add-kargo-creds <app>`
+
+Creates the Git and (optionally) container-registry credential Secrets that Kargo needs in the app's namespace. Kargo needs read+write access to the GitOps repo to push promotion commits, and read access to the registry if it's private. Prompts for a classic GitHub PAT; if the registry is private, the same PAT must carry the `read:packages` scope.
+
+The app's namespace must already exist when you run this, which means ArgoCD must have synced at least once (the Kargo Project resource creates the namespace).
+
+```bash
+cluster-ctl.sh add-kargo-creds backend
+```
+
+If `<app>` is omitted, picks interactively from the apps that have resources under `kargo/`.
+
+#### `upgrade-argocd`
+
+Re-applies the ArgoCD Helm release using `helm/argocd-values.yaml` as the source of truth. Run this after editing the values file (for example, to change Ingress hostnames, add plugins, or adjust resource limits). Waits for the rollout to complete.
+
+```bash
+cluster-ctl.sh upgrade-argocd
+```
+
+#### `upgrade-kargo`
+
+Re-applies the Kargo Helm release, pulling the latest chart from `oci://ghcr.io/akuity/kargo-charts/kargo`. Use this to pick up Kargo bug fixes or feature releases. Waits for the rollout to complete.
+
+```bash
+cluster-ctl.sh upgrade-kargo
+```
+
+#### `renew-tls`
+
+Regenerates the mkcert TLS certificate so it covers the current set of ingress hostnames as SANs, then updates the cluster Secret that Traefik reads. The cert always includes `localhost`, `argocd.localhost`, and `kargo.localhost`, plus every hostname found in `k8s/apps/*/overlays/*/ingress.yaml`.
+
+Run this after `add-ingress` or `remove-ingress` so the browser trusts the new hostnames.
+
+```bash
+cluster-ctl.sh renew-tls
+```
+
+#### `preflight-check`
+
+Verifies that all required tools (`gum`, `gh`, `k3d`, `kubectl`, `jq`, `helm`, `docker`) are installed and that the Docker daemon is running.
+
+```bash
+cluster-ctl.sh preflight-check
+```
+
+### Helm values (`helm/argocd-values.yaml`)
+
+`helm/argocd-values.yaml` ships with this tooling and is the source-of-truth Helm values file for ArgoCD. `init-cluster` applies it when installing ArgoCD, and `upgrade-argocd` re-applies it whenever you want to pick up edits. To customize your ArgoCD install (Ingress hostnames, resource limits, RBAC, plugins, dex config), edit this file in place and re-run `upgrade-argocd`.
+
 ### k3d cluster architecture
 
 k3d runs Kubernetes (k3s) inside Docker containers. Each cluster has several containers:
@@ -379,12 +519,163 @@ Scans all workload manifests in the given environment for `configMapKeyRef` refe
 config-ctl.sh verify dev
 ```
 
+## secret-ctl.sh
+
+Manages [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) in the GitOps repo. Sealed Secrets let you commit encrypted secret material to Git safely: the Sealed Secrets controller runs in-cluster with a private key, and only it can decrypt. You encrypt locally with the public cert (`.sealed-secrets-cert.pem`, safe to commit).
+
+### Commands
+
+#### `init`
+
+Installs the Sealed Secrets controller into the `kube-system` namespace, exports the public cert to `.sealed-secrets-cert.pem` (commit this), and backs up the private key to `.sealed-secrets-key.json` (auto-added to `.gitignore`). If a key backup already exists, offers to restore it so existing SealedSecrets stay decryptable.
+
+```bash
+secret-ctl.sh init
+```
+
+#### `add [app] [env] [KEY=value...]`
+
+Creates or updates a SealedSecret for the given app and environment. Key/value pairs can be passed on the command line or entered interactively. Writes the sealed manifest to `k8s/apps/<app>/overlays/<env>/sealed-secrets.yaml` and registers it in the overlay's `kustomization.yaml`. App and env can be omitted to pick interactively.
+
+```bash
+secret-ctl.sh add backend dev DATABASE_URL=postgresql://store:store@postgres:5432/store
+# Or fully interactive:
+secret-ctl.sh add
+```
+
+#### `list [app] [env]`
+
+Lists the app/environment pairs that have sealed secrets in the repo, and the keys each one holds.
+
+```bash
+secret-ctl.sh list
+secret-ctl.sh list backend dev
+```
+
+#### `remove [app] [env]`
+
+Removes the SealedSecret manifest for the given app and environment and de-registers it from the overlay kustomization.
+
+```bash
+secret-ctl.sh remove backend dev
+```
+
+#### `verify [env]`
+
+Scans every workload manifest in the environment for `secretKeyRef` / `envFrom.secretRef` references and reports which keys are already covered by a SealedSecret and which are missing. Prints the exact `secret-ctl.sh add` command to create anything missing.
+
+```bash
+secret-ctl.sh verify dev
+```
+
+#### `preflight-check`
+
+Verifies that `gum`, `kubectl`, `kubeseal`, and `jq` are installed.
+
+```bash
+secret-ctl.sh preflight-check
+```
+
+## user-ctl.sh
+
+Manages RBAC: roles (ArgoCD CSV policies + Kubernetes Role/RoleBinding), human users (signed x509 client certs for `kubectl` auth), and service accounts (with renewable tokens). Generates manifests into `k8s/platform/`, which is then deployed by ArgoCD like any other app.
+
+### Commands
+
+#### `add-role <name>`
+
+Creates a new RBAC role. Choose from one of three presets or define a custom one:
+
+- `admin-readonly-settings` -- full read/write on apps, projects, repositories; read-only on clusters, certificates, accounts; pod logs + exec.
+- `developer` -- full read/write on apps; pod logs + exec.
+- `viewer` -- read-only on apps, projects, repositories, clusters, certificates, accounts; pod logs.
+- `custom` -- prompts for resources and actions interactively.
+
+Role presets are defined in `lib/user-ctl-helpers.sh`.
+
+```bash
+user-ctl.sh add-role developer
+```
+
+#### `remove-role [name]`
+
+Removes an RBAC role. Prompts if no name is given. Fails if users are still bound to the role.
+
+```bash
+user-ctl.sh remove-role developer
+```
+
+#### `list-roles`
+
+Lists all configured roles.
+
+```bash
+user-ctl.sh list-roles
+```
+
+#### `add <username> <group>`
+
+Creates a human user. Generates an x509 client certificate signed by the cluster CA, a `kubectl` kubeconfig snippet, and the RoleBinding that ties the user (via its group) to the role of the same name. The group must already exist as a role (run `add-role <group>` first).
+
+```bash
+user-ctl.sh add alice developer
+```
+
+#### `remove [username]`
+
+Removes a human user (cert + kubeconfig snippet + RoleBinding entry). Prompts if no username is given.
+
+```bash
+user-ctl.sh remove alice
+```
+
+#### `list`
+
+Lists all humans and service accounts with their groups.
+
+```bash
+user-ctl.sh list
+```
+
+#### `add-sa <name> <group> [--duration <hours>h]`
+
+Creates a Kubernetes ServiceAccount with a time-bounded token and binds it to the role of the same name. Default token duration is 2160h (90 days). The token and matching kubeconfig snippet are printed so you can copy them into CI.
+
+```bash
+user-ctl.sh add-sa ci-bot developer --duration 720h
+```
+
+#### `remove-sa [name]`
+
+Removes a service account (SA + RoleBinding entry). Prompts if no name is given.
+
+```bash
+user-ctl.sh remove-sa ci-bot
+```
+
+#### `refresh-sa [name]`
+
+Regenerates the token for an existing service account without changing its role bindings. Use this when a token is about to expire or has leaked.
+
+```bash
+user-ctl.sh refresh-sa ci-bot
+```
+
+#### `preflight-check`
+
+Verifies that all required tools are installed.
+
+```bash
+user-ctl.sh preflight-check
+```
+
 ## Templates
 
 Templates live in `templates/` and use `{{PLACEHOLDER}}` markers that get replaced when generating files. They're organized by where their output ends up:
 
 - `templates/argocd/` -- ArgoCD Application and AppProject manifests
-- `templates/k8s/` -- Kubernetes resources (namespaces, Kustomize configurations)
+- `templates/k8s/` -- Kubernetes resources (namespaces, workloads, services, ingresses, Kustomize configurations)
+- `templates/kargo/` -- Kargo Project, Warehouse, and Stage manifests
 
 | Template file | Generates |
 |---------------|-----------|
@@ -393,11 +684,37 @@ Templates live in `templates/` and use `{{PLACEHOLDER}}` markers that get replac
 | `templates/argocd/kargo-apps.yaml` | The Application that watches for Kargo resources (`argocd/apps/kargo.yaml`, Kargo-only) |
 | `templates/argocd/app-env.yaml` | Per-app, per-environment Application manifests (`argocd/apps/<name>-<env>.yaml`) |
 | `templates/argocd/appproject.yaml` | AppProject resources (`argocd/projects/<name>.yaml`) |
-| `templates/k8s/base-kustomization.yaml` | Base Kustomize config for an app (`k8s/apps/<name>/base/kustomization.yaml`) |
+| `templates/k8s/deployment-web.yaml` | Deployment workload manifest for the `web` preset (`k8s/apps/<name>/base/deployment.yaml`) |
+| `templates/k8s/statefulset-postgres.yaml` | StatefulSet workload manifest for the `postgres` preset (`k8s/apps/<name>/base/statefulset.yaml`) |
+| `templates/k8s/service.yaml` | ClusterIP Service for Deployment workloads (`k8s/apps/<name>/base/service.yaml`) |
+| `templates/k8s/service-headless.yaml` | Headless Service for StatefulSet workloads (`k8s/apps/<name>/base/service.yaml`) |
+| `templates/k8s/ingress.yaml` | Per-env Ingress manifest (`k8s/apps/<app>/overlays/<env>/ingress.yaml`) |
+| `templates/k8s/base-kustomization-deployment.yaml` | Base Kustomize config for Deployment apps (`k8s/apps/<name>/base/kustomization.yaml`) |
+| `templates/k8s/base-kustomization-statefulset.yaml` | Base Kustomize config for StatefulSet apps (`k8s/apps/<name>/base/kustomization.yaml`) |
 | `templates/k8s/overlay-kustomization.yaml` | Per-environment overlay (`k8s/apps/<name>/overlays/<env>/kustomization.yaml`) |
 | `templates/k8s/namespace.yaml` | Namespace resource (`k8s/namespaces/<name>.yaml`) |
+| `templates/kargo/project.yaml` | Kargo Project resource (`kargo/<app>/project.yaml`) |
+| `templates/kargo/warehouse.yaml` | Kargo Warehouse watching a container registry (`kargo/<app>/warehouse.yaml`) |
+| `templates/kargo/stage-direct.yaml` | First Stage in the pipeline, subscribed to the Warehouse (`kargo/<app>/<env>-stage.yaml`) |
+| `templates/kargo/stage-promoted.yaml` | Subsequent Stages, subscribed to the previous Stage (`kargo/<app>/<env>-stage.yaml`) |
+| `templates/gitignore` | Starter `.gitignore` written into the target repo during `init` |
+
+The base-kustomization template is chosen at runtime based on the workload type selected during `add-app`: Deployment apps use `base-kustomization-deployment.yaml`, StatefulSet apps use `base-kustomization-statefulset.yaml`.
 
 You don't need to edit templates for normal usage. They define the structure; the scripts fill in the values.
+
+## Development
+
+The `Makefile` wraps the shell linting and formatting tooling used on every script under the repo root and `lib/`.
+
+| Target | Purpose |
+|--------|---------|
+| `make validate` | Runs `fmt-check` and `lint` back-to-back. Use this as the single pre-commit/CI check. |
+| `make fmt` | Rewrites shell scripts in place with `shfmt -i 4 -bn -ci`. |
+| `make fmt-check` | Reports formatting drift without modifying files (diff mode). |
+| `make lint` | Runs `shellcheck -s bash` across all scripts, silencing `SC2153` (false positive for the `load_conf` pattern). |
+
+Dependencies: `shfmt` (`brew install shfmt`) and `shellcheck` (`brew install shellcheck`).
 
 ## Adding RBAC restrictions later
 
