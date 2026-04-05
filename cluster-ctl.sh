@@ -1005,6 +1005,182 @@ cmd_argo_status() {
     done
 }
 
+doctor_usage() {
+    cat <<EOF
+Usage: cluster-ctl.sh doctor [options]
+
+Run cross-layer diagnostic checks against the repo and cluster.
+
+Options:
+  --scope=<val>       Limit checks to: repo | cluster | all (default: all)
+  --app <name>        Limit checks to a single application
+  --env <name>        Limit checks to a single environment
+  --verbose           Show additional diagnostic detail
+  -h, --help          Show this help message
+EOF
+}
+
+doctor_layer_1_prereqs() {
+    print_info "▸ Layer 1: Prerequisites (stub)"
+}
+
+doctor_layer_2_controllers() {
+    print_info "▸ Layer 2: Controllers (stub)"
+}
+
+doctor_layer_3_repo_structure() {
+    print_info "▸ Layer 3: Repo structure (stub)"
+}
+
+doctor_layer_4_alignment() {
+    print_info "▸ Layer 4: Alignment (stub)"
+}
+
+doctor_layer_5_credentials() {
+    print_info "▸ Layer 5: Credentials (stub)"
+}
+
+doctor_layer_6_runtime() {
+    print_info "▸ Layer 6: Runtime (stub)"
+}
+
+doctor_layer_7_images() {
+    print_info "▸ Layer 7: Images (stub)"
+}
+
+doctor_layer_8_ingress() {
+    print_info "▸ Layer 8: Ingress (stub)"
+}
+
+doctor_layer_9_hygiene() {
+    print_info "▸ Layer 9: Hygiene (stub)"
+}
+
+cmd_doctor() {
+    DOCTOR_ERRORS=0
+    DOCTOR_WARNINGS=0
+    DOCTOR_INFOS=0
+    DOCTOR_SKIPPED_LAYERS=()
+    DOCTOR_VERBOSE=0
+    DOCTOR_SCOPE="all"
+    DOCTOR_APP=""
+    DOCTOR_ENV=""
+    DOCTOR_CLUSTER_REACHABLE=0
+
+    # Parse flags
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --scope=*)
+                DOCTOR_SCOPE="${1#*=}"
+                shift
+                ;;
+            --scope)
+                if [[ $# -lt 2 ]]; then
+                    print_error "--scope requires a value (repo|cluster|all)"
+                    exit 1
+                fi
+                DOCTOR_SCOPE="$2"
+                shift 2
+                ;;
+            --app=*)
+                DOCTOR_APP="${1#*=}"
+                shift
+                ;;
+            --app)
+                if [[ $# -lt 2 ]]; then
+                    print_error "--app requires a value"
+                    exit 1
+                fi
+                DOCTOR_APP="$2"
+                shift 2
+                ;;
+            --env=*)
+                DOCTOR_ENV="${1#*=}"
+                shift
+                ;;
+            --env)
+                if [[ $# -lt 2 ]]; then
+                    print_error "--env requires a value"
+                    exit 1
+                fi
+                DOCTOR_ENV="$2"
+                shift 2
+                ;;
+            --verbose)
+                DOCTOR_VERBOSE=1
+                shift
+                ;;
+            -h | --help)
+                doctor_usage
+                exit 0
+                ;;
+            *)
+                print_error "Unknown flag: $1"
+                doctor_usage
+                exit 1
+                ;;
+        esac
+    done
+
+    # Validate scope
+    case "$DOCTOR_SCOPE" in
+        repo | cluster | all) ;;
+        *)
+            print_error "Invalid --scope value: '$DOCTOR_SCOPE' (must be repo|cluster|all)"
+            exit 1
+            ;;
+    esac
+
+    # Validate --app against detect_apps
+    if [[ -n "$DOCTOR_APP" ]]; then
+        local valid_apps
+        valid_apps="$(detect_apps)"
+        if ! grep -qx "$DOCTOR_APP" <<<"$valid_apps"; then
+            print_error "Unknown app: '$DOCTOR_APP'"
+            if [[ -n "$valid_apps" ]]; then
+                print_info "Available apps:"
+                while IFS= read -r a; do
+                    [[ -z "$a" ]] && continue
+                    print_info "  - $a"
+                done <<<"$valid_apps"
+            fi
+            exit 1
+        fi
+    fi
+
+    # Validate --env against detect_envs
+    if [[ -n "$DOCTOR_ENV" ]]; then
+        local valid_envs
+        valid_envs="$(detect_envs)"
+        if ! grep -qx "$DOCTOR_ENV" <<<"$valid_envs"; then
+            print_error "Unknown env: '$DOCTOR_ENV'"
+            if [[ -n "$valid_envs" ]]; then
+                print_info "Available envs:"
+                while IFS= read -r e; do
+                    [[ -z "$e" ]] && continue
+                    print_info "  - $e"
+                done <<<"$valid_envs"
+            fi
+            exit 1
+        fi
+    fi
+
+    print_header "Cluster Doctor"
+
+    doctor_layer_1_prereqs
+    doctor_layer_2_controllers
+    doctor_layer_3_repo_structure
+    doctor_layer_4_alignment
+    doctor_layer_5_credentials
+    doctor_layer_6_runtime
+    doctor_layer_7_images
+    doctor_layer_8_ingress
+    doctor_layer_9_hygiene
+
+    echo ""
+    print_info "Summary: errors=${DOCTOR_ERRORS} warnings=${DOCTOR_WARNINGS} infos=${DOCTOR_INFOS} (stub)"
+}
+
 # --- Usage ---
 
 cmd_preflight_check() {
@@ -1042,6 +1218,7 @@ Commands:
   argo-init           Bootstrap ArgoCD by applying the parent-app to the cluster
   argo-sync           Force ArgoCD to sync all applications immediately
   argo-status         Show sync status, health, and errors for all ArgoCD applications
+  doctor              Run cross-layer diagnostic checks against repo and cluster
   renew-tls           Regenerate mkcert certificates and update the cluster
   status              Show cluster and ArgoCD health
   preflight-check     Verify all required tools are installed
@@ -1074,6 +1251,7 @@ main() {
         argo-init) cmd_argo_init "$@" ;;
         argo-sync) cmd_argo_sync "$@" ;;
         argo-status) cmd_argo_status "$@" ;;
+        doctor) cmd_doctor "$@" ;;
         renew-tls) cmd_renew_tls "$@" ;;
         status) cmd_status "$@" ;;
         preflight-check) cmd_preflight_check "$@" ;;
