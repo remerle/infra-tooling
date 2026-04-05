@@ -716,6 +716,53 @@ The `Makefile` wraps the shell linting and formatting tooling used on every scri
 
 Dependencies: `shfmt` (`brew install shfmt`) and `shellcheck` (`brew install shellcheck`).
 
+## Scripting and CI
+
+Every user-provided value that these scripts collect at an interactive prompt also has a long-form CLI flag. This lets you drive the tools from shell scripts, CI jobs, or test harnesses without a TTY.
+
+**The contract:**
+
+- If a required value is passed as a flag, it is used directly (and validated the same as prompted input).
+- If a required value is *not* passed and stdin is a TTY, the command falls back to its `gum` prompt.
+- If a required value is *not* passed and stdin is *not* a TTY, the command fails immediately with a clear error naming the missing flag, for example `ERROR: --name is required when not running interactively`.
+- Destructive commands (`remove-*`, `reset`, `delete-cluster`) never auto-confirm based on TTY detection; they always require an explicit `--yes` / `-y`.
+
+**Reserved flag vocabulary** (same meaning across all scripts):
+
+| Flag | Meaning |
+|---|---|
+| `--set KEY=VAL` | Preset template placeholder (e.g. `--set IMAGE=nginx:latest`). Keys are validated against the selected preset's frontmatter. Only used by `infra-ctl add-app`. |
+| `--config KEY=VAL` | configMap entry mounted as a container env var. Repeatable. |
+| `--secret-key NAME` | Declares a secret key the workload needs (generates a `valueFrom.secretKeyRef`). Repeatable. No value. |
+| `--secret-val KEY=VAL` | Provides the actual secret value to seal (secret-ctl only). Supports `--secret-val KEY=@file` and `--secret-val KEY=-` (stdin). |
+| `--env NAME` | Kubernetes environment name (dev/staging/prod). Repeatable for multi-select. |
+| `--yes` / `-y` | Skip destructive confirmation. |
+
+For the full per-command flag list, run any command with `-h`/`--help`, or read the command sections above.
+
+**End-to-end scripted workflow:**
+
+```bash
+TMP=$(mktemp -d) && cd "$TMP" && git init -q
+
+infra-ctl.sh --target-dir "$TMP" init --repo-url https://github.com/me/gitops --yes
+infra-ctl.sh --target-dir "$TMP" add-project platform \
+    --description "Platform apps" --no-restrict-repos --no-cluster-resources
+infra-ctl.sh --target-dir "$TMP" add-env dev --yes
+infra-ctl.sh --target-dir "$TMP" add-env staging --yes
+infra-ctl.sh --target-dir "$TMP" add-app backend \
+    --project platform --preset web --no-kargo \
+    --set IMAGE=ghcr.io/me/backend:1.0.0 \
+    --set PORT=3000 \
+    --set SECRET_NAME=backend-secrets \
+    --set PROBE_PATH=/api/health \
+    --secret-key DATABASE_URL \
+    --yes
+infra-ctl.sh --target-dir "$TMP" add-ingress backend --env dev --env staging --yes
+```
+
+This runs end-to-end with no prompts. Swap in your own values for a real deployment.
+
 ## Adding RBAC restrictions later
 
 ArgoCD projects support restricting what can be deployed where. When you're ready:
