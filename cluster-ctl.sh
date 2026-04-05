@@ -415,18 +415,33 @@ cmd_delete_cluster() {
     require_cmd "k3d" "brew install k3d"
     require_cmd "jq" "brew install jq"
 
-    local cluster_name="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name) name_flag="$2"; shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: cluster-ctl.sh delete-cluster [name] [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
+
+    local cluster_name="$name_flag"
 
     if [[ -z "$cluster_name" ]]; then
-        print_header "Delete k3d Cluster"
-
-        cluster_name="$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name' \
-            | choose_from "Select cluster to delete:" "No k3d clusters found.")" || exit 0
+        if [[ -t 0 ]]; then
+            print_header "Delete k3d Cluster"
+            cluster_name="$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name' \
+                | choose_from "Select cluster to delete:" "No k3d clusters found.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     else
         print_header "Delete k3d Cluster: ${cluster_name}"
     fi
 
-    confirm_destructive_or_abort "Delete cluster '${cluster_name}'? This cannot be undone."
+    require_yes "$yes" "delete cluster '${cluster_name}' (cannot be undone)"
 
     run_cmd "Deleting cluster '${cluster_name}'..." \
         --explain "k3d cluster delete stops and removes all Docker containers that make up the cluster (server, agents, load balancer) and cleans up the kubeconfig entry. This is irreversible -- all workloads and persistent volumes in the cluster are destroyed." \
@@ -499,6 +514,17 @@ cmd_add_argo_creds() {
     require_cmd "kubectl" "brew install kubectl"
     load_conf
 
+    local pat_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pat) pat_flag="$2"; shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: cluster-ctl.sh add-argo-creds [--pat <token>] [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) print_error "Unexpected: $1"; exit 1 ;;
+        esac
+    done
+
     print_header "Configure ArgoCD Repository Credentials"
 
     # Verify ArgoCD is installed
@@ -515,26 +541,39 @@ cmd_add_argo_creds() {
     existing="$(kubectl get secret repo-creds -n argocd -o name 2>/dev/null)" || true
     if [[ -n "$existing" ]]; then
         print_warning "Repository credentials already exist."
-        confirm_or_abort "Overwrite existing credentials?"
+        if [[ "$yes" != "true" ]] && [[ -t 0 ]]; then
+            confirm_or_abort "Overwrite existing credentials?"
+        fi
     fi
 
-    # Prompt for PAT
-    print_info "A classic GitHub PAT is required. Create one at:"
-    print_info "  https://github.com/settings/tokens/new"
-    print_info ""
-    print_info "Required scope: repo"
+    # PAT: flag wins, else prompt, else die
     local pat
-    while true; do
-        pat="$(gum input --password --prompt "GitHub PAT: ")"
-        if [[ -z "$pat" ]]; then
-            print_error "A GitHub PAT is required."
-            continue
+    if [[ -n "$pat_flag" ]]; then
+        pat="$pat_flag"
+        if ! validate_github_pat "$pat" "repo"; then
+            print_error "--pat did not validate with required scope 'repo'"
+            exit 1
         fi
-        if validate_github_pat "$pat" "repo"; then
-            break
-        fi
-        print_info "Please enter a valid PAT with the required scopes."
-    done
+    elif [[ -t 0 ]]; then
+        print_info "A classic GitHub PAT is required. Create one at:"
+        print_info "  https://github.com/settings/tokens/new"
+        print_info ""
+        print_info "Required scope: repo"
+        while true; do
+            pat="$(gum input --password --prompt "GitHub PAT: ")"
+            if [[ -z "$pat" ]]; then
+                print_error "A GitHub PAT is required."
+                continue
+            fi
+            if validate_github_pat "$pat" "repo"; then
+                break
+            fi
+            print_info "Please enter a valid PAT with the required scopes."
+        done
+    else
+        print_error "--pat is required when not running interactively"
+        exit 1
+    fi
 
     # Create or replace the secret
     run_cmd_sh "Configuring ArgoCD repo credentials..." \
@@ -559,50 +598,89 @@ cmd_add_registry_creds() {
     require_cmd "kubectl" "brew install kubectl"
     load_conf
 
+    local registry_flag="" username_flag="" token_flag=""
+    local env_flags=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --registry) registry_flag="$2"; shift 2 ;;
+            --username) username_flag="$2"; shift 2 ;;
+            --token)    token_flag="$2"; shift 2 ;;
+            --env)      env_flags+=("$2"); shift 2 ;;
+            -h|--help) echo "Usage: cluster-ctl.sh add-registry-creds [--registry <host>] [--username <user>] [--token <pat>] [--env <ns>]..."; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) print_error "Unexpected: $1"; exit 1 ;;
+        esac
+    done
+
     print_header "Configure Container Registry Credentials"
 
-    # Prompt for registry server
+    # Registry: flag wins, else prompt, else ghcr.io
     local registry
-    registry="$(gum input --value "ghcr.io" --prompt "Registry server: ")"
+    if [[ -n "$registry_flag" ]]; then
+        registry="$registry_flag"
+    elif [[ -t 0 ]]; then
+        registry="$(gum input --value "ghcr.io" --prompt "Registry server: ")"
+    else
+        registry="ghcr.io"
+    fi
     if [[ -z "$registry" ]]; then
         print_error "Registry server is required."
         exit 1
     fi
 
-    # Prompt for username
+    # Username: flag wins, else prompt, else die
     local default_username="${REPO_OWNER:-}"
     local username
-    username="$(gum input --value "$default_username" --prompt "Registry username: ")"
+    if [[ -n "$username_flag" ]]; then
+        username="$username_flag"
+    elif [[ -t 0 ]]; then
+        username="$(gum input --value "$default_username" --prompt "Registry username: ")"
+    elif [[ -n "$default_username" ]]; then
+        username="$default_username"
+    else
+        print_error "--username is required when not running interactively"
+        exit 1
+    fi
     if [[ -z "$username" ]]; then
         print_error "Username is required."
         exit 1
     fi
 
-    # Prompt for PAT
-    local pat_hint="A token with read access to the container registry."
-    if [[ "$registry" == "ghcr.io" ]]; then
-        pat_hint="A classic GitHub PAT is required."
-        print_info "Create one at: https://github.com/settings/tokens/new"
-        print_info "Required scope: read:packages"
-    fi
-    print_info "$pat_hint"
-
+    # Token: flag wins, else prompt, else die
     local pat
-    while true; do
-        pat="$(gum input --password --prompt "Registry token: ")"
-        if [[ -z "$pat" ]]; then
-            print_error "A token is required."
-            continue
+    if [[ -n "$token_flag" ]]; then
+        pat="$token_flag"
+        if [[ "$registry" == "ghcr.io" ]] && ! validate_github_pat "$pat" "read:packages"; then
+            print_error "--token did not validate with required scope 'read:packages'"
+            exit 1
         fi
+    elif [[ -t 0 ]]; then
+        local pat_hint="A token with read access to the container registry."
         if [[ "$registry" == "ghcr.io" ]]; then
-            if validate_github_pat "$pat" "read:packages"; then
+            pat_hint="A classic GitHub PAT is required."
+            print_info "Create one at: https://github.com/settings/tokens/new"
+            print_info "Required scope: read:packages"
+        fi
+        print_info "$pat_hint"
+        while true; do
+            pat="$(gum input --password --prompt "Registry token: ")"
+            if [[ -z "$pat" ]]; then
+                print_error "A token is required."
+                continue
+            fi
+            if [[ "$registry" == "ghcr.io" ]]; then
+                if validate_github_pat "$pat" "read:packages"; then
+                    break
+                fi
+                print_info "Please enter a valid PAT with the read:packages scope."
+            else
                 break
             fi
-            print_info "Please enter a valid PAT with the read:packages scope."
-        else
-            break
-        fi
-    done
+        done
+    else
+        print_error "--token is required when not running interactively"
+        exit 1
+    fi
 
     # Detect environments from GitOps repo
     local envs=()
@@ -614,15 +692,27 @@ cmd_add_registry_creds() {
         exit 1
     fi
 
-    # Multi-select namespaces (all selected by default)
+    # Multi-select namespaces: flags win, else prompt, else all
     local selected=()
-    if [[ ${#envs[@]} -eq 1 ]]; then
+    if [[ ${#env_flags[@]} -gt 0 ]]; then
+        local ef e found
+        for ef in "${env_flags[@]}"; do
+            found=0
+            for e in "${envs[@]}"; do
+                [[ "$ef" == "$e" ]] && { found=1; break; }
+            done
+            [[ "$found" -eq 0 ]] && { print_error "Env '${ef}' not found in k8s/namespaces/"; exit 1; }
+        done
+        selected=("${env_flags[@]}")
+    elif [[ ${#envs[@]} -eq 1 ]]; then
         selected=("${envs[0]}")
         print_info "Namespace: ${selected[0]}"
-    else
+    elif [[ -t 0 ]]; then
         readarray -t selected < <(printf '%s\n' "${envs[@]}" \
             | gum choose --no-limit --selected="$(printf '%s,' "${envs[@]}" | sed 's/,$//')" \
                 --header "Select namespaces:")
+    else
+        selected=("${envs[@]}")
     fi
 
     if [[ ${#selected[@]} -eq 0 ]]; then
@@ -667,11 +757,22 @@ cmd_add_kargo_creds() {
     require_cmd "kubectl" "brew install kubectl"
     load_conf
 
-    local app_name=""
+    local app_flag="" pat_flag="" private_flag=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --app) app_flag="$2"; shift 2 ;;
+            --pat) pat_flag="$2"; shift 2 ;;
+            --private-registry)    private_flag="true"; shift ;;
+            --no-private-registry) private_flag="false"; shift ;;
+            -h|--help) echo "Usage: cluster-ctl.sh add-kargo-creds [app] [--pat <token>] [--private-registry]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) if [[ -z "$app_flag" ]]; then app_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
 
-    if [[ $# -gt 0 ]]; then
-        app_name="$1"
-    else
+    local app_name="$app_flag"
+
+    if [[ -z "$app_name" ]]; then
         # Detect apps with Kargo resources and let user pick
         local kargo_apps=()
         local dir
@@ -688,8 +789,11 @@ cmd_add_kargo_creds() {
 
         if [[ ${#kargo_apps[@]} -eq 1 ]]; then
             app_name="${kargo_apps[0]}"
-        else
+        elif [[ -t 0 ]]; then
             app_name="$(printf '%s\n' "${kargo_apps[@]}" | gum choose --header "Select app:")"
+        else
+            print_error "--app is required when not running interactively"
+            exit 1
         fi
     fi
 
@@ -727,24 +831,35 @@ cmd_add_kargo_creds() {
         exit 1
     fi
 
-    # Prompt for PAT
-    print_info "A classic GitHub PAT is required. Kargo needs write access to"
-    print_info "commit image tag updates during promotions. Create one at:"
-    print_info "  https://github.com/settings/tokens/new"
-    print_info ""
-    print_info "Required scopes: repo, read:packages (if the container registry is private)"
+    # PAT: flag wins, else prompt, else die
     local pat
-    while true; do
-        pat="$(gum input --password --prompt "GitHub PAT: ")"
-        if [[ -z "$pat" ]]; then
-            print_error "A GitHub PAT is required."
-            continue
+    if [[ -n "$pat_flag" ]]; then
+        pat="$pat_flag"
+        if ! validate_github_pat "$pat" "repo" "read:packages"; then
+            print_error "--pat did not validate with required scopes 'repo' and 'read:packages'"
+            exit 1
         fi
-        if validate_github_pat "$pat" "repo" "read:packages"; then
-            break
-        fi
-        print_info "Please enter a valid PAT with the required scopes."
-    done
+    elif [[ -t 0 ]]; then
+        print_info "A classic GitHub PAT is required. Kargo needs write access to"
+        print_info "commit image tag updates during promotions. Create one at:"
+        print_info "  https://github.com/settings/tokens/new"
+        print_info ""
+        print_info "Required scopes: repo, read:packages (if the container registry is private)"
+        while true; do
+            pat="$(gum input --password --prompt "GitHub PAT: ")"
+            if [[ -z "$pat" ]]; then
+                print_error "A GitHub PAT is required."
+                continue
+            fi
+            if validate_github_pat "$pat" "repo" "read:packages"; then
+                break
+            fi
+            print_info "Please enter a valid PAT with the required scopes."
+        done
+    else
+        print_error "--pat is required when not running interactively"
+        exit 1
+    fi
 
     # Create Git credential
     run_cmd_sh "Configuring Kargo Git credentials..." \
@@ -764,7 +879,13 @@ cmd_add_kargo_creds() {
     print_success "Git credentials configured for ${REPO_URL}"
 
     # Optionally create registry credential
-    if gum confirm "Is the container registry private?"; then
+    local is_private="no"
+    if [[ "$private_flag" == "true" ]]; then is_private="yes"
+    elif [[ "$private_flag" == "false" ]]; then is_private="no"
+    elif [[ -t 0 ]]; then
+        gum confirm "Is the container registry private?" && is_private="yes"
+    fi
+    if [[ "$is_private" == "yes" ]]; then
         run_cmd_sh "Configuring registry credentials..." \
             --explain "Kargo's Warehouse polls the container registry to detect new image tags. For private registries it needs pull credentials, stored as a Secret labeled 'kargo.akuity.io/cred-type=image' in the app namespace. The repoURL field scopes the credential to a specific registry/repository prefix." \
             '
