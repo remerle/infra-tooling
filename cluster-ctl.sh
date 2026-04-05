@@ -1880,7 +1880,82 @@ doctor_layer_7_images() {
     DOCTOR_CURRENT_LAYER_ERRORS=()
     DOCTOR_CURRENT_LAYER_WARNINGS=()
     DOCTOR_CURRENT_LAYER_INFOS=()
-    render_doctor_layer "Layer 7: Images"
+
+    needs_cluster_or_skip "Layer 7: Image reachability" || return 0
+
+    if ! command -v crane &>/dev/null; then
+        echo ""
+        if gum confirm "crane enables image reachability checks. Install via 'brew install crane'?"; then
+            if ! run_cmd "Installing crane..." \
+                --explain "crane is the google/go-containerregistry CLI for inspecting container image manifests. Doctor uses 'crane digest' to verify each image tag referenced by pods actually exists in its registry." \
+                brew install crane; then
+                doctor_info "crane" "crane install failed; skipping image reachability checks"
+                DOCTOR_SKIPPED_LAYERS+=("Layer 7: Image reachability (install failed)")
+                render_doctor_layer "Layer 7: Image reachability"
+                return 0
+            fi
+        else
+            DOCTOR_SKIPPED_LAYERS+=("Layer 7: Image reachability (crane not installed)")
+            printf "▸ %s %s\n" \
+                "$(gum style --bold "Layer 7: Image reachability")" \
+                "$(gum style --faint "○ skipped (install crane later to enable)")"
+            return 0
+        fi
+    fi
+
+    # Collect target namespaces from ArgoCD Applications (same pattern as Layer 6).
+    local apps_json
+    apps_json="$(kubectl get applications -n argocd -o json 2>/dev/null)" || apps_json=""
+    if [[ -z "$apps_json" ]]; then
+        render_doctor_layer "Layer 7: Image reachability"
+        return 0
+    fi
+
+    local app_rows
+    app_rows="$(jq -r '
+        .items[]
+        | select(.metadata.name != "projects" and .metadata.name != "kargo")
+        | select((.spec.destination.namespace // "") != "argocd")
+        | [
+            .metadata.name,
+            (.spec.destination.namespace // "")
+          ] | @tsv
+    ' <<<"$apps_json")"
+
+    declare -A target_namespaces=()
+    local line name dest_ns app env
+    while IFS=$'\t' read -r name dest_ns; do
+        [[ -z "$name" ]] && continue
+        app="${name%-*}"
+        env="${name##*-}"
+        doctor_matches_filter "$app" "$env" || continue
+        [[ -n "$dest_ns" ]] && target_namespaces["$dest_ns"]=1
+    done <<<"$app_rows"
+
+    # Collect distinct image refs from pods in target namespaces.
+    local -A seen_images=()
+    local ns image
+    for ns in "${!target_namespaces[@]}"; do
+        doctor_matches_filter "" "$ns" || continue
+        kubectl get ns "$ns" >/dev/null 2>&1 || continue
+        while IFS= read -r image; do
+            [[ -z "$image" ]] && continue
+            seen_images["$image"]=1
+        done < <(kubectl -n "$ns" get pods -o jsonpath='{.items[*].spec.containers[*].image}' 2>/dev/null | tr ' ' '\n' | sort -u)
+    done
+
+    # Check each distinct image via 'crane digest'.
+    for image in "${!seen_images[@]}"; do
+        if ! crane digest "$image" &>/dev/null; then
+            doctor_warn "$image" \
+                "Image tag not resolvable via registry" \
+                "'crane digest' could not fetch the manifest for this image; tag may be wrong, the image may not exist, or the registry may require authentication" \
+                "Check for typos in the image ref; if private registry, run 'cluster-ctl.sh add-registry-creds'" \
+                "crane digest ${image} → failed"
+        fi
+    done
+
+    render_doctor_layer "Layer 7: Image reachability"
 }
 
 doctor_layer_8_ingress() {
