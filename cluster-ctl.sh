@@ -1626,6 +1626,91 @@ doctor_layer_5_credentials() {
     DOCTOR_CURRENT_LAYER_ERRORS=()
     DOCTOR_CURRENT_LAYER_WARNINGS=()
     DOCTOR_CURRENT_LAYER_INFOS=()
+
+    needs_cluster_or_skip "Layer 5: Credentials" || return 0
+
+    # --- Private repo check: ArgoCD repo credentials ---
+    local is_private="" repo_full_name=""
+    if [[ -f "${TARGET_DIR}/.infra-ctl.conf" ]]; then
+        load_conf
+        if [[ -n "${REPO_URL:-}" ]]; then
+            repo_full_name="$(echo "$REPO_URL" | sed -E 's|^https?://github\.com/||; s|\.git$||')"
+            if command -v gh >/dev/null 2>&1; then
+                is_private="$(gh repo view "$repo_full_name" --json isPrivate -q .isPrivate 2>/dev/null)" || is_private=""
+            fi
+        fi
+    else
+        doctor_info ".infra-ctl.conf" "missing; skipping private-repo credential checks"
+    fi
+
+    if [[ "$is_private" == "true" ]]; then
+        local repo_secrets_count
+        repo_secrets_count="$(kubectl -n argocd get secrets -l argocd.argoproj.io/secret-type=repository -o name 2>/dev/null | wc -l | tr -d ' ')"
+        if [[ "$repo_secrets_count" == "0" ]]; then
+            doctor_error "argocd-repo-creds" \
+                "Private repo without ArgoCD repo credentials" \
+                "ArgoCD cannot sync from a private repository without authentication; repo ${repo_full_name} is private" \
+                "Run 'cluster-ctl.sh add-argo-creds'"
+        fi
+    elif [[ -z "$is_private" && -n "$repo_full_name" ]]; then
+        doctor_info "gh" "could not determine privacy of ${repo_full_name}; skipping ArgoCD repo-cred check"
+    fi
+
+    # --- Registry credentials check per environment ---
+    declare -A seen=()
+    local env
+    while IFS= read -r env; do
+        [[ -z "$env" ]] && continue
+        doctor_matches_filter "" "$env" || continue
+        # Namespace may not exist yet
+        kubectl get ns "$env" >/dev/null 2>&1 || continue
+        local images
+        images="$(kubectl -n "$env" get pods -o jsonpath='{.items[*].spec.containers[*].image}' 2>/dev/null | tr ' ' '\n' | sort -u)"
+        [[ -z "$images" ]] && continue
+        local has_pull_secrets
+        has_pull_secrets="$(kubectl -n "$env" get sa default -o jsonpath='{.imagePullSecrets}' 2>/dev/null)"
+        local image first_segment registry key
+        while IFS= read -r image; do
+            [[ -z "$image" ]] && continue
+            first_segment="${image%%/*}"
+            if [[ "$image" == *"/"* && ( "$first_segment" == *.* || "$first_segment" == *:* || "$first_segment" == "localhost" ) ]]; then
+                registry="$first_segment"
+            else
+                registry="docker.io"
+            fi
+            [[ "$registry" == "docker.io" ]] && continue
+            [[ -n "$has_pull_secrets" ]] && continue
+            key="${env}:${registry}"
+            if [[ -z "${seen[$key]:-}" ]]; then
+                seen[$key]=1
+                doctor_warn "${env}/${registry}" \
+                    "Non-docker.io image without imagePullSecret" \
+                    "pods in namespace '${env}' use images from '${registry}', but the namespace's default ServiceAccount has no imagePullSecrets configured" \
+                    "Run 'cluster-ctl.sh add-registry-creds'"
+            fi
+        done <<<"$images"
+    done < <(detect_envs)
+
+    # --- Kargo git credentials check (private repo + Kargo enabled) ---
+    if is_kargo_enabled && [[ "$is_private" == "true" ]]; then
+        local kargo_app_dir kargo_ns kargo_git_secrets
+        if [[ -d "${TARGET_DIR}/kargo" ]]; then
+            for kargo_app_dir in "${TARGET_DIR}"/kargo/*/; do
+                [[ -d "$kargo_app_dir" ]] || continue
+                kargo_ns="$(basename "$kargo_app_dir")"
+                # Namespace may not exist yet; skip silently
+                kubectl get ns "$kargo_ns" >/dev/null 2>&1 || continue
+                kargo_git_secrets="$(kubectl -n "$kargo_ns" get secrets -l kargo.akuity.io/cred-type=git -o name 2>/dev/null | wc -l | tr -d ' ')"
+                if [[ "$kargo_git_secrets" == "0" ]]; then
+                    doctor_warn "${kargo_ns}" \
+                        "Kargo missing git credentials for private repo" \
+                        "Kargo cannot discover freight from a private git repo without credentials" \
+                        "Run 'cluster-ctl.sh add-kargo-creds'"
+                fi
+            done
+        fi
+    fi
+
     render_doctor_layer "Layer 5: Credentials"
 }
 
