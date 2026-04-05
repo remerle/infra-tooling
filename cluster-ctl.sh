@@ -68,18 +68,51 @@ cmd_init_cluster() {
     local kargo_password_flag=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name)    name_flag="$2"; shift 2 ;;
-            --agents)  agents_flag="$2"; shift 2 ;;
-            --expose-ports)    expose_flag="true"; shift ;;
-            --no-expose-ports) expose_flag="false"; shift ;;
-            --tls)             tls_flag="true"; shift ;;
-            --no-tls)          tls_flag="false"; shift ;;
-            --argocd)          argocd_flag="true"; shift ;;
-            --no-argocd)       argocd_flag="false"; shift ;;
-            --kargo)           kargo_flag="true"; shift ;;
-            --no-kargo)        kargo_flag="false"; shift ;;
-            --kargo-password)  kargo_password_flag="$2"; shift 2 ;;
-            -h|--help)
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --agents)
+                agents_flag="$2"
+                shift 2
+                ;;
+            --expose-ports)
+                expose_flag="true"
+                shift
+                ;;
+            --no-expose-ports)
+                expose_flag="false"
+                shift
+                ;;
+            --tls)
+                tls_flag="true"
+                shift
+                ;;
+            --no-tls)
+                tls_flag="false"
+                shift
+                ;;
+            --argocd)
+                argocd_flag="true"
+                shift
+                ;;
+            --no-argocd)
+                argocd_flag="false"
+                shift
+                ;;
+            --kargo)
+                kargo_flag="true"
+                shift
+                ;;
+            --no-kargo)
+                kargo_flag="false"
+                shift
+                ;;
+            --kargo-password)
+                kargo_password_flag="$2"
+                shift 2
+                ;;
+            -h | --help)
                 cat <<EOF
 Usage: cluster-ctl.sh init-cluster [flags]
 
@@ -96,9 +129,16 @@ Flags:
   --no-kargo             Skip Kargo (default)
   --kargo-password <pw>  Kargo admin password
 EOF
-                exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *)  print_error "Unexpected argument: $1"; exit 1 ;;
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
         esac
     done
 
@@ -154,8 +194,10 @@ EOF
     # Port exposure: flag wins, else prompt, else no
     local port_args=()
     local expose="no"
-    if [[ "$expose_flag" == "true" ]]; then expose="yes"
-    elif [[ "$expose_flag" == "false" ]]; then expose="no"
+    if [[ "$expose_flag" == "true" ]]; then
+        expose="yes"
+    elif [[ "$expose_flag" == "false" ]]; then
+        expose="no"
     elif [[ -t 0 ]]; then
         gum confirm "Expose ports 80/443 on localhost? (for ingress)" && expose="yes"
     fi
@@ -194,8 +236,10 @@ EOF
 
     # Local HTTPS: flag wins, else prompt, else no
     local enable_tls="no"
-    if [[ "$tls_flag" == "true" ]]; then enable_tls="yes"
-    elif [[ "$tls_flag" == "false" ]]; then enable_tls="no"
+    if [[ "$tls_flag" == "true" ]]; then
+        enable_tls="yes"
+    elif [[ "$tls_flag" == "false" ]]; then
+        enable_tls="no"
     elif command -v mkcert &>/dev/null && [[ -t 0 ]]; then
         gum confirm "Enable HTTPS with trusted local certs? (via mkcert)" && enable_tls="yes"
     fi
@@ -211,8 +255,10 @@ EOF
 
     # ArgoCD install: flag wins, else prompt, else no
     local install_argocd="no"
-    if [[ "$argocd_flag" == "true" ]]; then install_argocd="yes"
-    elif [[ "$argocd_flag" == "false" ]]; then install_argocd="no"
+    if [[ "$argocd_flag" == "true" ]]; then
+        install_argocd="yes"
+    elif [[ "$argocd_flag" == "false" ]]; then
+        install_argocd="no"
     elif [[ -t 0 ]]; then
         gum confirm "Install ArgoCD?" && install_argocd="yes"
     fi
@@ -260,8 +306,10 @@ EOF
 
     # Kargo install: flag wins, else prompt, else no
     local install_kargo="no"
-    if [[ "$kargo_flag" == "true" ]]; then install_kargo="yes"
-    elif [[ "$kargo_flag" == "false" ]]; then install_kargo="no"
+    if [[ "$kargo_flag" == "true" ]]; then
+        install_kargo="yes"
+    elif [[ "$kargo_flag" == "false" ]]; then
+        install_kargo="no"
     elif [[ -t 0 ]]; then
         gum confirm "Install Kargo?" && install_kargo="yes"
     fi
@@ -418,11 +466,29 @@ cmd_delete_cluster() {
     local name_flag="" yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name) name_flag="$2"; shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: cluster-ctl.sh delete-cluster [name] [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: cluster-ctl.sh delete-cluster [name] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -517,11 +583,26 @@ cmd_add_argo_creds() {
     local pat_flag="" yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --pat) pat_flag="$2"; shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: cluster-ctl.sh add-argo-creds [--pat <token>] [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) print_error "Unexpected: $1"; exit 1 ;;
+            --pat)
+                pat_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: cluster-ctl.sh add-argo-creds [--pat <token>] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected: $1"
+                exit 1
+                ;;
         esac
     done
 
@@ -602,13 +683,34 @@ cmd_add_registry_creds() {
     local env_flags=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --registry) registry_flag="$2"; shift 2 ;;
-            --username) username_flag="$2"; shift 2 ;;
-            --token)    token_flag="$2"; shift 2 ;;
-            --env)      env_flags+=("$2"); shift 2 ;;
-            -h|--help) echo "Usage: cluster-ctl.sh add-registry-creds [--registry <host>] [--username <user>] [--token <pat>] [--env <ns>]..."; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) print_error "Unexpected: $1"; exit 1 ;;
+            --registry)
+                registry_flag="$2"
+                shift 2
+                ;;
+            --username)
+                username_flag="$2"
+                shift 2
+                ;;
+            --token)
+                token_flag="$2"
+                shift 2
+                ;;
+            --env)
+                env_flags+=("$2")
+                shift 2
+                ;;
+            -h | --help)
+                echo "Usage: cluster-ctl.sh add-registry-creds [--registry <host>] [--username <user>] [--token <pat>] [--env <ns>]..."
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected: $1"
+                exit 1
+                ;;
         esac
     done
 
@@ -699,9 +801,15 @@ cmd_add_registry_creds() {
         for ef in "${env_flags[@]}"; do
             found=0
             for e in "${envs[@]}"; do
-                [[ "$ef" == "$e" ]] && { found=1; break; }
+                [[ "$ef" == "$e" ]] && {
+                    found=1
+                    break
+                }
             done
-            [[ "$found" -eq 0 ]] && { print_error "Env '${ef}' not found in k8s/namespaces/"; exit 1; }
+            [[ "$found" -eq 0 ]] && {
+                print_error "Env '${ef}' not found in k8s/namespaces/"
+                exit 1
+            }
         done
         selected=("${env_flags[@]}")
     elif [[ ${#envs[@]} -eq 1 ]]; then
@@ -760,13 +868,37 @@ cmd_add_kargo_creds() {
     local app_flag="" pat_flag="" private_flag=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --app) app_flag="$2"; shift 2 ;;
-            --pat) pat_flag="$2"; shift 2 ;;
-            --private-registry)    private_flag="true"; shift ;;
-            --no-private-registry) private_flag="false"; shift ;;
-            -h|--help) echo "Usage: cluster-ctl.sh add-kargo-creds [app] [--pat <token>] [--private-registry]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) if [[ -z "$app_flag" ]]; then app_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+            --app)
+                app_flag="$2"
+                shift 2
+                ;;
+            --pat)
+                pat_flag="$2"
+                shift 2
+                ;;
+            --private-registry)
+                private_flag="true"
+                shift
+                ;;
+            --no-private-registry)
+                private_flag="false"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: cluster-ctl.sh add-kargo-creds [app] [--pat <token>] [--private-registry]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$app_flag" ]]; then app_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -880,8 +1012,10 @@ cmd_add_kargo_creds() {
 
     # Optionally create registry credential
     local is_private="no"
-    if [[ "$private_flag" == "true" ]]; then is_private="yes"
-    elif [[ "$private_flag" == "false" ]]; then is_private="no"
+    if [[ "$private_flag" == "true" ]]; then
+        is_private="yes"
+    elif [[ "$private_flag" == "false" ]]; then
+        is_private="no"
     elif [[ -t 0 ]]; then
         gum confirm "Is the container registry private?" && is_private="yes"
     fi

@@ -15,12 +15,30 @@ cmd_add() {
     local cli_positional=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --app) app_flag="$2"; shift 2 ;;
-            --env) env_flag="$2"; shift 2 ;;
-            --config) config_flag_entries+=("$2"); shift 2 ;;
-            -h|--help) echo "Usage: config-ctl.sh add <app> <env|base> [--config KEY=VAL]..."; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) cli_positional+=("$1"); shift ;;
+            --app)
+                app_flag="$2"
+                shift 2
+                ;;
+            --env)
+                env_flag="$2"
+                shift 2
+                ;;
+            --config)
+                config_flag_entries+=("$2")
+                shift 2
+                ;;
+            -h | --help)
+                echo "Usage: config-ctl.sh add <app> <env|base> [--config KEY=VAL]..."
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                cli_positional+=("$1")
+                shift
+                ;;
         esac
     done
 
@@ -250,12 +268,30 @@ cmd_remove() {
     local cli_positional=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --app) app_flag="$2"; shift 2 ;;
-            --env) env_flag="$2"; shift 2 ;;
-            --key) key_flags+=("$2"); shift 2 ;;
-            -h|--help) echo "Usage: config-ctl.sh remove <app> <env|base> [--key <name>]..."; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) cli_positional+=("$1"); shift ;;
+            --app)
+                app_flag="$2"
+                shift 2
+                ;;
+            --env)
+                env_flag="$2"
+                shift 2
+                ;;
+            --key)
+                key_flags+=("$2")
+                shift 2
+                ;;
+            -h | --help)
+                echo "Usage: config-ctl.sh remove <app> <env|base> [--key <name>]..."
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                cli_positional+=("$1")
+                shift
+                ;;
         esac
     done
 
@@ -367,12 +403,30 @@ cmd_verify() {
     local cli_positional=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --env) env_flag="$2"; shift 2 ;;
-            --walk)    walk_flag="true"; shift ;;
-            --no-walk) walk_flag="false"; shift ;;
-            -h|--help) echo "Usage: config-ctl.sh verify [env] [--walk | --no-walk]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) cli_positional+=("$1"); shift ;;
+            --env)
+                env_flag="$2"
+                shift 2
+                ;;
+            --walk)
+                walk_flag="true"
+                shift
+                ;;
+            --no-walk)
+                walk_flag="false"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: config-ctl.sh verify [env] [--walk | --no-walk]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                cli_positional+=("$1")
+                shift
+                ;;
         esac
     done
 
@@ -478,8 +532,10 @@ cmd_verify() {
         print_warning "${missing_count} missing configmap(s) found."
         if command -v gum &>/dev/null; then
             local walk="no"
-            if [[ "$walk_flag" == "true" ]]; then walk="yes"
-            elif [[ "$walk_flag" == "false" ]]; then walk="no"
+            if [[ "$walk_flag" == "true" ]]; then
+                walk="yes"
+            elif [[ "$walk_flag" == "false" ]]; then
+                walk="no"
             elif [[ -t 0 ]]; then
                 gum confirm "Walk through adding missing config values?" && walk="yes"
             fi

@@ -15,19 +15,31 @@ cmd_init() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --repo-url)
-                [[ -z "${2:-}" ]] && { print_error "--repo-url requires a value"; exit 1; }
-                repo_url_flag="$2"; shift 2 ;;
-            --yes|-y)
-                yes="true"; shift ;;
-            -h|--help)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--repo-url requires a value"
+                    exit 1
+                }
+                repo_url_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
                 echo "Usage: infra-ctl.sh init [--repo-url <url>] [--yes]"
                 echo "  --repo-url <url>  GitHub repository URL (default: detected from git remote)"
                 echo "  --yes, -y         Skip confirmation prompt"
-                exit 0 ;;
+                exit 0
+                ;;
             -*)
-                print_error "Unknown flag: $1"; exit 1 ;;
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
             *)
-                print_error "Unexpected positional argument: $1"; exit 1 ;;
+                print_error "Unexpected positional argument: $1"
+                exit 1
+                ;;
         esac
     done
 
@@ -191,7 +203,7 @@ cmd_add_app() {
     declare -A set_values=()
     local secret_keys_flag=()
     local config_flag_entries=()
-    local kargo_flag=""       # "", "true", "false"
+    local kargo_flag="" # "", "true", "false"
     local image_repo_flag=""
     local custom_flag=false
     local image_flag=""
@@ -202,36 +214,119 @@ cmd_add_app() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name)         [[ -z "${2:-}" ]] && { print_error "--name requires a value"; exit 1; }
-                            app_name_flag="$2"; shift 2 ;;
-            --project)      [[ -z "${2:-}" ]] && { print_error "--project requires a value"; exit 1; }
-                            project_flag="$2"; shift 2 ;;
+            --name)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--name requires a value"
+                    exit 1
+                }
+                app_name_flag="$2"
+                shift 2
+                ;;
+            --project)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--project requires a value"
+                    exit 1
+                }
+                project_flag="$2"
+                shift 2
+                ;;
             --workload-type)
-                            [[ -z "${2:-}" ]] && { print_error "--workload-type requires a value"; exit 1; }
-                            workload_type_flag="$(tr '[:upper:]' '[:lower:]' <<<"$2")"; shift 2 ;;
-            --preset)       [[ -z "${2:-}" ]] && { print_error "--preset requires a value"; exit 1; }
-                            preset_flag="$2"; shift 2 ;;
-            --set)          [[ -z "${2:-}" ]] && { print_error "--set requires KEY=VAL"; exit 1; }
-                            parse_set_kv "$2" set_values; shift 2 ;;
-            --secret-key)   [[ -z "${2:-}" ]] && { print_error "--secret-key requires a value"; exit 1; }
-                            secret_keys_flag+=("$2"); shift 2 ;;
-            --config)       [[ -z "${2:-}" ]] && { print_error "--config requires KEY=VAL"; exit 1; }
-                            config_flag_entries+=("$2"); shift 2 ;;
-            --kargo)        kargo_flag="true"; shift ;;
-            --no-kargo)     kargo_flag="false"; shift ;;
-            --image-repo)   [[ -z "${2:-}" ]] && { print_error "--image-repo requires a value"; exit 1; }
-                            image_repo_flag="$2"; shift 2 ;;
-            --custom)       custom_flag=true; shift ;;
-            --image)        [[ -z "${2:-}" ]] && { print_error "--image requires a value"; exit 1; }
-                            image_flag="$2"; shift 2 ;;
-            --port)         [[ -z "${2:-}" ]] && { print_error "--port requires a value"; exit 1; }
-                            port_flag="$2"; shift 2 ;;
-            --secret-name)  [[ -z "${2:-}" ]] && { print_error "--secret-name requires a value"; exit 1; }
-                            secret_name_flag="$2"; shift 2 ;;
-            --probe-path)   [[ -z "${2:-}" ]] && { print_error "--probe-path requires a value"; exit 1; }
-                            probe_path_flag="$2"; shift 2 ;;
-            --yes|-y)       yes="true"; shift ;;
-            -h|--help)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--workload-type requires a value"
+                    exit 1
+                }
+                workload_type_flag="$(tr '[:upper:]' '[:lower:]' <<<"$2")"
+                shift 2
+                ;;
+            --preset)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--preset requires a value"
+                    exit 1
+                }
+                preset_flag="$2"
+                shift 2
+                ;;
+            --set)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--set requires KEY=VAL"
+                    exit 1
+                }
+                parse_set_kv "$2" set_values
+                shift 2
+                ;;
+            --secret-key)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--secret-key requires a value"
+                    exit 1
+                }
+                secret_keys_flag+=("$2")
+                shift 2
+                ;;
+            --config)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--config requires KEY=VAL"
+                    exit 1
+                }
+                config_flag_entries+=("$2")
+                shift 2
+                ;;
+            --kargo)
+                kargo_flag="true"
+                shift
+                ;;
+            --no-kargo)
+                kargo_flag="false"
+                shift
+                ;;
+            --image-repo)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--image-repo requires a value"
+                    exit 1
+                }
+                image_repo_flag="$2"
+                shift 2
+                ;;
+            --custom)
+                custom_flag=true
+                shift
+                ;;
+            --image)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--image requires a value"
+                    exit 1
+                }
+                image_flag="$2"
+                shift 2
+                ;;
+            --port)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--port requires a value"
+                    exit 1
+                }
+                port_flag="$2"
+                shift 2
+                ;;
+            --secret-name)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--secret-name requires a value"
+                    exit 1
+                }
+                secret_name_flag="$2"
+                shift 2
+                ;;
+            --probe-path)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--probe-path requires a value"
+                    exit 1
+                }
+                probe_path_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
                 cat <<EOF
 Usage: infra-ctl.sh add-app <name> [flags]
 
@@ -252,14 +347,21 @@ Flags:
   --probe-path <path>           HTTP probe path (custom flow)
   --yes, -y                     Skip confirmation prompt
 EOF
-                exit 0 ;;
-            -*)             print_error "Unknown flag: $1"; exit 1 ;;
-            *)              if [[ -z "$app_name_flag" ]]; then
-                                app_name_flag="$1"
-                            else
-                                print_error "Unexpected argument: $1"; exit 1
-                            fi
-                            shift ;;
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$app_name_flag" ]]; then
+                    app_name_flag="$1"
+                else
+                    print_error "Unexpected argument: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -297,7 +399,10 @@ EOF
         if [[ "$project_flag" != "default" ]]; then
             local found=0 p
             for p in "${projects[@]}"; do
-                [[ "$p" == "$project_flag" ]] && { found=1; break; }
+                [[ "$p" == "$project_flag" ]] && {
+                    found=1
+                    break
+                }
             done
             if [[ "$found" -eq 0 ]]; then
                 print_error "Project '${project_flag}' does not exist. Known: default ${projects[*]}"
@@ -313,9 +418,12 @@ EOF
     local workload_type
     if [[ -n "$workload_type_flag" ]]; then
         case "$workload_type_flag" in
-            deployment)  workload_type="Deployment" ;;
+            deployment) workload_type="Deployment" ;;
             statefulset) workload_type="StatefulSet" ;;
-            *) print_error "--workload-type must be 'deployment' or 'statefulset', got: ${workload_type_flag}"; exit 1 ;;
+            *)
+                print_error "--workload-type must be 'deployment' or 'statefulset', got: ${workload_type_flag}"
+                exit 1
+                ;;
         esac
     elif [[ -t 0 ]]; then
         workload_type=$(prompt_choose_or_die "Workload type" "--workload-type" "Deployment" "StatefulSet")
@@ -348,7 +456,10 @@ EOF
         elif [[ -n "$preset_flag" ]]; then
             local found=0 p
             for p in "${presets[@]}"; do
-                [[ "$p" == "$preset_flag" ]] && { found=1; break; }
+                [[ "$p" == "$preset_flag" ]] && {
+                    found=1
+                    break
+                }
             done
             if [[ "$found" -eq 0 ]]; then
                 print_error "Unknown preset: ${preset_flag}. Known: ${presets[*]}"
@@ -475,7 +586,10 @@ EOF
         declare -A config_flag_map=()
         local cfe
         for cfe in "${config_flag_entries[@]}"; do
-            [[ "$cfe" != *"="* ]] && { print_error "--config expects KEY=VAL, got: ${cfe}"; exit 1; }
+            [[ "$cfe" != *"="* ]] && {
+                print_error "--config expects KEY=VAL, got: ${cfe}"
+                exit 1
+            }
             config_flag_map["${cfe%%=*}"]="${cfe#*=}"
         done
 
@@ -485,7 +599,7 @@ EOF
             local cfg_val=""
             if [[ -v "config_flag_map[$key]" ]]; then
                 cfg_val="${config_flag_map[$key]}"
-                unset config_flag_map["$key"]
+                unset 'config_flag_map[$key]'
             elif [[ -t 0 ]]; then
                 cfg_val="$(gum input --value "$default_val" --prompt "Config ${key}: ")"
             else
@@ -586,7 +700,10 @@ EOF
     if [[ "$preset_choice" == "custom" ]]; then
         local cfe
         for cfe in "${config_flag_entries[@]}"; do
-            [[ "$cfe" != *"="* ]] && { print_error "--config expects KEY=VAL, got: ${cfe}"; exit 1; }
+            [[ "$cfe" != *"="* ]] && {
+                print_error "--config expects KEY=VAL, got: ${cfe}"
+                exit 1
+            }
             config_entries+=("$cfe")
         done
     fi
@@ -867,19 +984,43 @@ cmd_add_ingress() {
     local yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --app)  [[ -z "${2:-}" ]] && { print_error "--app requires a value"; exit 1; }
-                    app_name_flag="$2"; shift 2 ;;
-            --env)  [[ -z "${2:-}" ]] && { print_error "--env requires a value"; exit 1; }
-                    env_flags+=("$2"); shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help)
+            --app)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--app requires a value"
+                    exit 1
+                }
+                app_name_flag="$2"
+                shift 2
+                ;;
+            --env)
+                [[ -z "${2:-}" ]] && {
+                    print_error "--env requires a value"
+                    exit 1
+                }
+                env_flags+=("$2")
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
                 echo "Usage: infra-ctl.sh add-ingress <app> [--env <name>]... [--yes]"
-                exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *)  if [[ -z "$app_name_flag" ]]; then app_name_flag="$1"
-                else print_error "Unexpected argument: $1"; exit 1
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$app_name_flag" ]]; then
+                    app_name_flag="$1"
+                else
+                    print_error "Unexpected argument: $1"
+                    exit 1
                 fi
-                shift ;;
+                shift
+                ;;
         esac
     done
 
@@ -942,9 +1083,15 @@ cmd_add_ingress() {
         for ef in "${env_flags[@]}"; do
             found=0
             for e in "${available_envs[@]}"; do
-                [[ "$ef" == "$e" ]] && { found=1; break; }
+                [[ "$ef" == "$e" ]] && {
+                    found=1
+                    break
+                }
             done
-            [[ "$found" -eq 0 ]] && { print_error "Env '${ef}' has no overlay for '${app_name}' without an existing ingress"; exit 1; }
+            [[ "$found" -eq 0 ]] && {
+                print_error "Env '${ef}' has no overlay for '${app_name}' without an existing ingress"
+                exit 1
+            }
         done
         selected=("${env_flags[@]}")
     elif [[ ${#available_envs[@]} -eq 1 ]]; then
@@ -1041,12 +1188,33 @@ cmd_remove_ingress() {
     local yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --app) app_name_flag="$2"; shift 2 ;;
-            --env) env_flags+=("$2"); shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: infra-ctl.sh remove-ingress <app> [--env <name>]... [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) if [[ -z "$app_name_flag" ]]; then app_name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+            --app)
+                app_name_flag="$2"
+                shift 2
+                ;;
+            --env)
+                env_flags+=("$2")
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh remove-ingress <app> [--env <name>]... [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$app_name_flag" ]]; then app_name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -1104,9 +1272,15 @@ cmd_remove_ingress() {
         for ef in "${env_flags[@]}"; do
             found=0
             for e in "${envs_with_ingress[@]}"; do
-                [[ "$ef" == "$e" ]] && { found=1; break; }
+                [[ "$ef" == "$e" ]] && {
+                    found=1
+                    break
+                }
             done
-            [[ "$found" -eq 0 ]] && { print_error "Env '${ef}' has no ingress for '${app_name}'"; exit 1; }
+            [[ "$found" -eq 0 ]] && {
+                print_error "Env '${ef}' has no ingress for '${app_name}'"
+                exit 1
+            }
         done
         selected=("${env_flags[@]}")
     elif [[ ${#envs_with_ingress[@]} -eq 1 ]]; then
@@ -1156,11 +1330,29 @@ cmd_add_env() {
     local yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name) env_name_flag="$2"; shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: infra-ctl.sh add-env <name> [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) if [[ -z "$env_name_flag" ]]; then env_name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+            --name)
+                env_name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh add-env <name> [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$env_name_flag" ]]; then env_name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -1393,28 +1585,65 @@ cmd_add_project() {
     require_gum
 
     local name_flag="" desc_flag="" repos_flag=""
-    local restrict_repos_flag=""         # "", "true", "false"
-    local restrict_ns_flag=""            # "", "true", "false"
-    local cluster_resources_flag=""      # "", "true", "false"
+    local restrict_repos_flag=""    # "", "true", "false"
+    local restrict_ns_flag=""       # "", "true", "false"
+    local cluster_resources_flag="" # "", "true", "false"
     local ns_flags=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name)         name_flag="$2"; shift 2 ;;
-            --description)  desc_flag="$2"; shift 2 ;;
-            --restrict-repos)    restrict_repos_flag="true"; shift ;;
-            --no-restrict-repos) restrict_repos_flag="false"; shift ;;
-            --source-repos) repos_flag="$2"; shift 2 ;;
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --description)
+                desc_flag="$2"
+                shift 2
+                ;;
+            --restrict-repos)
+                restrict_repos_flag="true"
+                shift
+                ;;
+            --no-restrict-repos)
+                restrict_repos_flag="false"
+                shift
+                ;;
+            --source-repos)
+                repos_flag="$2"
+                shift 2
+                ;;
             --namespaces)
                 IFS=',' read -ra _ns <<<"$2"
                 ns_flags+=("${_ns[@]}")
                 restrict_ns_flag="true"
-                shift 2 ;;
-            --no-restrict-namespaces) restrict_ns_flag="false"; shift ;;
-            --cluster-resources)    cluster_resources_flag="true"; shift ;;
-            --no-cluster-resources) cluster_resources_flag="false"; shift ;;
-            -h|--help) echo "Usage: infra-ctl.sh add-project <name> [flags: --description, --restrict-repos, --source-repos, --namespaces, --cluster-resources]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *)  if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+                shift 2
+                ;;
+            --no-restrict-namespaces)
+                restrict_ns_flag="false"
+                shift
+                ;;
+            --cluster-resources)
+                cluster_resources_flag="true"
+                shift
+                ;;
+            --no-cluster-resources)
+                cluster_resources_flag="false"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh add-project <name> [flags: --description, --restrict-repos, --source-repos, --namespaces, --cluster-resources]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -1447,9 +1676,12 @@ cmd_add_project() {
 
     # Source repo restrictions
     local restrict_repos="no"
-    if [[ "$restrict_repos_flag" == "true" ]]; then restrict_repos="yes"
-    elif [[ "$restrict_repos_flag" == "false" ]]; then restrict_repos="no"
-    elif [[ -n "$repos_flag" ]]; then restrict_repos="yes"  # providing --source-repos implies restriction
+    if [[ "$restrict_repos_flag" == "true" ]]; then
+        restrict_repos="yes"
+    elif [[ "$restrict_repos_flag" == "false" ]]; then
+        restrict_repos="no"
+    elif [[ -n "$repos_flag" ]]; then
+        restrict_repos="yes" # providing --source-repos implies restriction
     elif [[ -t 0 ]]; then
         gum confirm "Restrict source repositories?" && restrict_repos="yes"
     fi
@@ -1479,9 +1711,12 @@ cmd_add_project() {
 
     # Destination namespace restrictions
     local restrict_ns="no"
-    if [[ "$restrict_ns_flag" == "true" ]]; then restrict_ns="yes"
-    elif [[ "$restrict_ns_flag" == "false" ]]; then restrict_ns="no"
-    elif [[ ${#ns_flags[@]} -gt 0 ]]; then restrict_ns="yes"
+    if [[ "$restrict_ns_flag" == "true" ]]; then
+        restrict_ns="yes"
+    elif [[ "$restrict_ns_flag" == "false" ]]; then
+        restrict_ns="no"
+    elif [[ ${#ns_flags[@]} -gt 0 ]]; then
+        restrict_ns="yes"
     elif [[ -t 0 ]]; then
         gum confirm "Restrict destination namespaces?" && restrict_ns="yes"
     fi
@@ -1523,8 +1758,10 @@ cmd_add_project() {
 
     # Cluster-scoped resource access
     local allow_cluster="no"
-    if [[ "$cluster_resources_flag" == "true" ]]; then allow_cluster="yes"
-    elif [[ "$cluster_resources_flag" == "false" ]]; then allow_cluster="no"
+    if [[ "$cluster_resources_flag" == "true" ]]; then
+        allow_cluster="yes"
+    elif [[ "$cluster_resources_flag" == "false" ]]; then
+        allow_cluster="no"
     elif [[ -t 0 ]]; then
         gum confirm "Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)" && allow_cluster="yes"
     fi
@@ -1564,22 +1801,59 @@ cmd_edit_project() {
     local ns_flags=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name)         name_flag="$2"; shift 2 ;;
-            --description)  desc_flag="$2"; shift 2 ;;
-            --restrict-repos)    restrict_repos_flag="true"; shift ;;
-            --no-restrict-repos) restrict_repos_flag="false"; shift ;;
-            --source-repos) repos_flag="$2"; shift 2 ;;
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --description)
+                desc_flag="$2"
+                shift 2
+                ;;
+            --restrict-repos)
+                restrict_repos_flag="true"
+                shift
+                ;;
+            --no-restrict-repos)
+                restrict_repos_flag="false"
+                shift
+                ;;
+            --source-repos)
+                repos_flag="$2"
+                shift 2
+                ;;
             --namespaces)
                 IFS=',' read -ra _ns <<<"$2"
                 ns_flags+=("${_ns[@]}")
                 restrict_ns_flag="true"
-                shift 2 ;;
-            --no-restrict-namespaces) restrict_ns_flag="false"; shift ;;
-            --cluster-resources)    cluster_resources_flag="true"; shift ;;
-            --no-cluster-resources) cluster_resources_flag="false"; shift ;;
-            -h|--help) echo "Usage: infra-ctl.sh edit-project [name] [flags]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *)  if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+                shift 2
+                ;;
+            --no-restrict-namespaces)
+                restrict_ns_flag="false"
+                shift
+                ;;
+            --cluster-resources)
+                cluster_resources_flag="true"
+                shift
+                ;;
+            --no-cluster-resources)
+                cluster_resources_flag="false"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh edit-project [name] [flags]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -1632,9 +1906,12 @@ cmd_edit_project() {
 
     # Source repo restrictions
     local restrict_repos
-    if [[ "$restrict_repos_flag" == "true" ]]; then restrict_repos="yes"
-    elif [[ "$restrict_repos_flag" == "false" ]]; then restrict_repos="no"
-    elif [[ -n "$repos_flag" ]]; then restrict_repos="yes"
+    if [[ "$restrict_repos_flag" == "true" ]]; then
+        restrict_repos="yes"
+    elif [[ "$restrict_repos_flag" == "false" ]]; then
+        restrict_repos="no"
+    elif [[ -n "$repos_flag" ]]; then
+        restrict_repos="yes"
     elif [[ -t 0 ]]; then
         local confirm_msg="Restrict source repositories?"
         [[ "$current_repos_restricted" == true ]] && confirm_msg="Restrict source repositories? (currently restricted)"
@@ -1674,9 +1951,12 @@ cmd_edit_project() {
 
     # Destination namespace restrictions
     local restrict_ns
-    if [[ "$restrict_ns_flag" == "true" ]]; then restrict_ns="yes"
-    elif [[ "$restrict_ns_flag" == "false" ]]; then restrict_ns="no"
-    elif [[ ${#ns_flags[@]} -gt 0 ]]; then restrict_ns="yes"
+    if [[ "$restrict_ns_flag" == "true" ]]; then
+        restrict_ns="yes"
+    elif [[ "$restrict_ns_flag" == "false" ]]; then
+        restrict_ns="no"
+    elif [[ ${#ns_flags[@]} -gt 0 ]]; then
+        restrict_ns="yes"
     elif [[ -t 0 ]]; then
         local confirm_msg="Restrict destination namespaces?"
         [[ "$current_ns_restricted" == true ]] && confirm_msg="Restrict destination namespaces? (currently restricted)"
@@ -1727,8 +2007,10 @@ cmd_edit_project() {
     fi
 
     local allow_cluster
-    if [[ "$cluster_resources_flag" == "true" ]]; then allow_cluster="yes"
-    elif [[ "$cluster_resources_flag" == "false" ]]; then allow_cluster="no"
+    if [[ "$cluster_resources_flag" == "true" ]]; then
+        allow_cluster="yes"
+    elif [[ "$cluster_resources_flag" == "false" ]]; then
+        allow_cluster="no"
     elif [[ -t 0 ]]; then
         local confirm_msg="Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)"
         [[ "$current_cluster_restricted" == true ]] && confirm_msg="Allow full cluster-scoped resource access? (currently restricted)"
@@ -1770,15 +2052,34 @@ cmd_enable_kargo() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --image-repo)
-                [[ -z "${2:-}" ]] && { print_error "--image-repo requires <app>=<url>"; exit 1; }
+                [[ -z "${2:-}" ]] && {
+                    print_error "--image-repo requires <app>=<url>"
+                    exit 1
+                }
                 local _k="${2%%=*}" _v="${2#*=}"
-                [[ -z "$_k" || "$_k" == "$_v" ]] && { print_error "--image-repo expects <app>=<url>, got: $2"; exit 1; }
+                [[ -z "$_k" || "$_k" == "$_v" ]] && {
+                    print_error "--image-repo expects <app>=<url>, got: $2"
+                    exit 1
+                }
                 image_repo_map["$_k"]="$_v"
-                shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: infra-ctl.sh enable-kargo [--image-repo <app>=<url>]... [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *)  print_error "Unexpected argument: $1"; exit 1 ;;
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh enable-kargo [--image-repo <app>=<url>]... [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
         esac
     done
 
@@ -2010,12 +2311,33 @@ cmd_remove_project() {
     local name_flag="" reassign_flag="" yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name) name_flag="$2"; shift 2 ;;
-            --reassign-to) reassign_flag="$2"; shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: infra-ctl.sh remove-project [name] [--reassign-to <project>] [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *)  if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --reassign-to)
+                reassign_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh remove-project [name] [--reassign-to <project>] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -2079,9 +2401,15 @@ cmd_remove_project() {
             # Validate target exists (or is "default")
             local found=0 op
             for op in "${other_projects[@]}"; do
-                [[ "$op" == "$reassign_flag" ]] && { found=1; break; }
+                [[ "$op" == "$reassign_flag" ]] && {
+                    found=1
+                    break
+                }
             done
-            [[ "$found" -eq 0 ]] && { print_error "Reassignment target '${reassign_flag}' not found. Known: ${other_projects[*]}"; exit 1; }
+            [[ "$found" -eq 0 ]] && {
+                print_error "Reassignment target '${reassign_flag}' not found. Known: ${other_projects[*]}"
+                exit 1
+            }
             reassign_to="$reassign_flag"
         elif [[ -t 0 ]]; then
             reassign_to="$(printf '%s\n' "${other_projects[@]}" | gum choose --header "Reassign these apps to:")"
@@ -2140,11 +2468,29 @@ cmd_remove_app() {
     local name_flag="" yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name) name_flag="$2"; shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: infra-ctl.sh remove-app [name] [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh remove-app [name] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -2234,11 +2580,29 @@ cmd_remove_env() {
     local name_flag="" yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name) name_flag="$2"; shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: infra-ctl.sh remove-env [name] [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh remove-env [name] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -2450,10 +2814,22 @@ cmd_reset() {
     local yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: infra-ctl.sh reset [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) print_error "Unexpected: $1"; exit 1 ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh reset [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected: $1"
+                exit 1
+                ;;
         esac
     done
 

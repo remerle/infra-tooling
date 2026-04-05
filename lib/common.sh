@@ -1258,7 +1258,10 @@ validate_preset_set_keys() {
     for k in "$@"; do
         found=0
         for a in "${allowed_keys[@]}"; do
-            [[ "$k" == "$a" ]] && { found=1; break; }
+            [[ "$k" == "$a" ]] && {
+                found=1
+                break
+            }
         done
         [[ "$found" -eq 0 ]] && unknown+=("$k")
     done

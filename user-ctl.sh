@@ -20,14 +20,35 @@ cmd_add_role() {
     local ns_flags=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name) name_flag="$2"; shift 2 ;;
-            --preset) preset_flag="$2"; shift 2 ;;
-            --argocd-resources) argocd_resources_flag="$2"; shift 2 ;;
-            --actions) actions_flag="$2"; shift 2 ;;
-            --k8s-scope) k8s_scope_flag="$2"; shift 2 ;;
-            --k8s-verbs) k8s_verbs_flag="$2"; shift 2 ;;
-            --namespace) ns_flags+=("$2"); shift 2 ;;
-            -h|--help)
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --preset)
+                preset_flag="$2"
+                shift 2
+                ;;
+            --argocd-resources)
+                argocd_resources_flag="$2"
+                shift 2
+                ;;
+            --actions)
+                actions_flag="$2"
+                shift 2
+                ;;
+            --k8s-scope)
+                k8s_scope_flag="$2"
+                shift 2
+                ;;
+            --k8s-verbs)
+                k8s_verbs_flag="$2"
+                shift 2
+                ;;
+            --namespace)
+                ns_flags+=("$2")
+                shift 2
+                ;;
+            -h | --help)
                 cat <<EOF
 Usage: user-ctl.sh add-role <name> [flags]
 
@@ -40,9 +61,19 @@ Flags:
   --k8s-verbs <csv>               Comma-separated kubectl verbs (custom preset)
   --namespace <name>              Namespace (repeatable; developer/custom-namespaced)
 EOF
-                exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -63,8 +94,11 @@ EOF
     local preset
     if [[ -n "$preset_flag" ]]; then
         case "$preset_flag" in
-            admin-readonly-settings|developer|viewer|custom) preset="$preset_flag" ;;
-            *) print_error "--preset must be one of: admin-readonly-settings, developer, viewer, custom"; exit 1 ;;
+            admin-readonly-settings | developer | viewer | custom) preset="$preset_flag" ;;
+            *)
+                print_error "--preset must be one of: admin-readonly-settings, developer, viewer, custom"
+                exit 1
+                ;;
         esac
     else
         preset=$(prompt_choose_or_die "Permission preset" "--preset" \
@@ -179,7 +213,10 @@ EOF
                 case "$k8s_scope_flag" in
                     cluster-wide) k8s_scope="cluster-wide (ClusterRole)" ;;
                     namespace-scoped) k8s_scope="namespace-scoped (Role per namespace)" ;;
-                    *) print_error "--k8s-scope must be 'cluster-wide' or 'namespace-scoped'"; exit 1 ;;
+                    *)
+                        print_error "--k8s-scope must be 'cluster-wide' or 'namespace-scoped'"
+                        exit 1
+                        ;;
                 esac
             elif [[ -t 0 ]]; then
                 k8s_scope="$(gum choose --header "K8s access scope:" \
@@ -321,11 +358,29 @@ cmd_remove_role() {
     local name_flag="" yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name) name_flag="$2"; shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: user-ctl.sh remove-role [name] [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: user-ctl.sh remove-role [name] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -509,11 +564,29 @@ cmd_remove() {
     local name_flag="" yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name) name_flag="$2"; shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: user-ctl.sh remove [username] [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: user-ctl.sh remove [username] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
@@ -906,11 +979,29 @@ cmd_remove_sa() {
     local name_flag="" yes="false"
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --name) name_flag="$2"; shift 2 ;;
-            --yes|-y) yes="true"; shift ;;
-            -h|--help) echo "Usage: user-ctl.sh remove-sa [name] [--yes]"; exit 0 ;;
-            -*) print_error "Unknown flag: $1"; exit 1 ;;
-            *) if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+            --name)
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: user-ctl.sh remove-sa [name] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
         esac
     done
 
