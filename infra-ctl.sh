@@ -1587,11 +1587,11 @@ cmd_add_env() {
 cmd_add_project() {
     require_gum
 
-    local name_flag="" desc_flag="" repos_flag=""
+    local name_flag="" desc_flag=""
     local restrict_repos_flag=""    # "", "true", "false"
     local restrict_ns_flag=""       # "", "true", "false"
     local cluster_resources_flag="" # "", "true", "false"
-    local ns_flags=()
+    local ns_flags=() source_repo_flags=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
@@ -1612,15 +1612,14 @@ cmd_add_project() {
                 restrict_repos_flag="false"
                 shift
                 ;;
-            --source-repos)
-                require_flag_value "--source-repos" "${2:-}"
-                repos_flag="$2"
+            --source-repo)
+                require_flag_value "--source-repo" "${2:-}"
+                source_repo_flags+=("$2")
                 shift 2
                 ;;
-            --namespaces)
-                require_flag_value "--namespaces" "${2:-}"
-                IFS=',' read -ra _ns <<<"$2"
-                ns_flags+=("${_ns[@]}")
+            --namespace)
+                require_flag_value "--namespace" "${2:-}"
+                ns_flags+=("$2")
                 restrict_ns_flag="true"
                 shift 2
                 ;;
@@ -1637,7 +1636,7 @@ cmd_add_project() {
                 shift
                 ;;
             -h | --help)
-                echo "Usage: infra-ctl.sh add-project <name> [flags: --description, --restrict-repos, --source-repos, --namespaces, --cluster-resources]"
+                echo "Usage: infra-ctl.sh add-project <name> [flags: --description, --restrict-repos, --source-repo <url>..., --namespace <name>..., --cluster-resources]"
                 exit 0
                 ;;
             -*)
@@ -1687,27 +1686,29 @@ cmd_add_project() {
         restrict_repos="yes"
     elif [[ "$restrict_repos_flag" == "false" ]]; then
         restrict_repos="no"
-    elif [[ -n "$repos_flag" ]]; then
-        restrict_repos="yes" # providing --source-repos implies restriction
+    elif [[ ${#source_repo_flags[@]} -gt 0 ]]; then
+        restrict_repos="yes" # providing --source-repo implies restriction
     elif [[ -t 0 ]]; then
         gum confirm "Restrict source repositories?" && restrict_repos="yes"
     fi
 
     local source_repos_block
     if [[ "$restrict_repos" == "yes" ]]; then
-        local repos_input
-        if [[ -n "$repos_flag" ]]; then
-            repos_input="$repos_flag"
+        local repos=()
+        if [[ ${#source_repo_flags[@]} -gt 0 ]]; then
+            repos=("${source_repo_flags[@]}")
         elif [[ -t 0 ]]; then
+            local repos_input
             repos_input="$(gum input --value "${REPO_URL}" --prompt "Allowed repos (comma-separated): ")"
+            IFS=',' read -ra repos <<<"$repos_input"
         else
-            repos_input="${REPO_URL}"
+            repos=("${REPO_URL}")
         fi
         source_repos_block=""
-        IFS=',' read -ra repos <<<"$repos_input"
         local repo
         for repo in "${repos[@]}"; do
             repo="$(echo "$repo" | xargs)" # trim whitespace
+            [[ -z "$repo" ]] && continue
             validate_github_repo "$repo"
             source_repos_block+="    - ${repo}"$'\n'
         done
@@ -1745,7 +1746,7 @@ cmd_add_project() {
             ns_input="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
             IFS=',' read -ra selected_namespaces <<<"$ns_input"
         else
-            print_error "--namespaces is required when restricting namespaces non-interactively"
+            print_error "--namespace is required when restricting namespaces non-interactively"
             exit 1
         fi
 
@@ -1801,11 +1802,11 @@ cmd_add_project() {
 cmd_edit_project() {
     require_gum
 
-    local name_flag="" desc_flag="" repos_flag=""
+    local name_flag="" desc_flag=""
     local restrict_repos_flag=""
     local restrict_ns_flag=""
     local cluster_resources_flag=""
-    local ns_flags=()
+    local ns_flags=() source_repo_flags=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
@@ -1826,15 +1827,14 @@ cmd_edit_project() {
                 restrict_repos_flag="false"
                 shift
                 ;;
-            --source-repos)
-                require_flag_value "--source-repos" "${2:-}"
-                repos_flag="$2"
+            --source-repo)
+                require_flag_value "--source-repo" "${2:-}"
+                source_repo_flags+=("$2")
                 shift 2
                 ;;
-            --namespaces)
-                require_flag_value "--namespaces" "${2:-}"
-                IFS=',' read -ra _ns <<<"$2"
-                ns_flags+=("${_ns[@]}")
+            --namespace)
+                require_flag_value "--namespace" "${2:-}"
+                ns_flags+=("$2")
                 restrict_ns_flag="true"
                 shift 2
                 ;;
@@ -1921,7 +1921,7 @@ cmd_edit_project() {
         restrict_repos="yes"
     elif [[ "$restrict_repos_flag" == "false" ]]; then
         restrict_repos="no"
-    elif [[ -n "$repos_flag" ]]; then
+    elif [[ ${#source_repo_flags[@]} -gt 0 ]]; then
         restrict_repos="yes"
     elif [[ -t 0 ]]; then
         local confirm_msg="Restrict source repositories?"
@@ -1933,25 +1933,29 @@ cmd_edit_project() {
 
     local source_repos_block
     if [[ "$restrict_repos" == "yes" ]]; then
-        local current_repos=""
-        if [[ "$current_repos_restricted" == true ]]; then
-            current_repos="$(awk '/sourceRepos:/,/destinations:/{if(/- / && !/sourceRepos:/ && !/destinations:/) print}' "$project_file" | sed 's/.*- //' | tr '\n' ',' | sed 's/,$//')"
-        else
-            current_repos="${REPO_URL}"
-        fi
-        local repos_input
-        if [[ -n "$repos_flag" ]]; then
-            repos_input="$repos_flag"
+        local repos=()
+        if [[ ${#source_repo_flags[@]} -gt 0 ]]; then
+            repos=("${source_repo_flags[@]}")
         elif [[ -t 0 ]]; then
+            local current_repos=""
+            if [[ "$current_repos_restricted" == true ]]; then
+                current_repos="$(awk '/sourceRepos:/,/destinations:/{if(/- / && !/sourceRepos:/ && !/destinations:/) print}' "$project_file" | sed 's/.*- //' | tr '\n' ',' | sed 's/,$//')"
+            else
+                current_repos="${REPO_URL}"
+            fi
+            local repos_input
             repos_input="$(gum input --value "$current_repos" --prompt "Allowed repos (comma-separated): ")"
+            IFS=',' read -ra repos <<<"$repos_input"
+        elif [[ "$current_repos_restricted" == true ]]; then
+            mapfile -t repos < <(awk '/sourceRepos:/,/destinations:/{if(/- / && !/sourceRepos:/ && !/destinations:/) print}' "$project_file" | sed 's/.*- //')
         else
-            repos_input="$current_repos"
+            repos=("${REPO_URL}")
         fi
         source_repos_block=""
-        IFS=',' read -ra repos <<<"$repos_input"
         local repo
         for repo in "${repos[@]}"; do
             repo="$(echo "$repo" | xargs)"
+            [[ -z "$repo" ]] && continue
             validate_github_repo "$repo"
             source_repos_block+="    - ${repo}"$'\n'
         done
@@ -1993,7 +1997,7 @@ cmd_edit_project() {
             ns_input="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
             IFS=',' read -ra selected_namespaces <<<"$ns_input"
         else
-            print_error "--namespaces is required when restricting namespaces non-interactively"
+            print_error "--namespace is required when restricting namespaces non-interactively"
             exit 1
         fi
 

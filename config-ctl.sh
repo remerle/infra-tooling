@@ -266,7 +266,7 @@ cmd_remove() {
     require_yq
     load_conf
 
-    local app_flag="" env_flag=""
+    local app_flag="" env_flag="" yes="false"
     local key_flags=()
     local cli_positional=()
     while [[ $# -gt 0 ]]; do
@@ -286,8 +286,12 @@ cmd_remove() {
                 key_flags+=("$2")
                 shift 2
                 ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
             -h | --help)
-                echo "Usage: config-ctl.sh remove <app> <env|base> [--key <name>]..."
+                echo "Usage: config-ctl.sh remove <app> <env|base> [--key <name>]... [--yes]"
                 exit 0
                 ;;
             -*)
@@ -384,6 +388,11 @@ cmd_remove() {
         print_warning "No values selected. Aborted."
         exit 0
     fi
+
+    # Gate the destructive edit behind --yes (or interactive confirm)
+    local selected_preview
+    selected_preview="$(echo "$selected" | tr '\n' ' ')"
+    require_yes "$yes" "remove config entries from ${app_name}/${env_name}: ${selected_preview}"
 
     # Remove selected entries
     while IFS= read -r entry; do

@@ -15,8 +15,8 @@ cmd_add_role() {
     require_helm
 
     local name_flag="" preset_flag=""
-    local argocd_resources_flag="" actions_flag=""
-    local k8s_scope_flag="" k8s_verbs_flag=""
+    local argocd_resource_flags=() action_flags=()
+    local k8s_scope_flag="" k8s_verb_flags=()
     local ns_flags=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -30,14 +30,14 @@ cmd_add_role() {
                 preset_flag="$2"
                 shift 2
                 ;;
-            --argocd-resources)
-                require_flag_value "--argocd-resources" "${2:-}"
-                argocd_resources_flag="$2"
+            --argocd-resource)
+                require_flag_value "--argocd-resource" "${2:-}"
+                argocd_resource_flags+=("$2")
                 shift 2
                 ;;
-            --actions)
-                require_flag_value "--actions" "${2:-}"
-                actions_flag="$2"
+            --action)
+                require_flag_value "--action" "${2:-}"
+                action_flags+=("$2")
                 shift 2
                 ;;
             --k8s-scope)
@@ -45,9 +45,9 @@ cmd_add_role() {
                 k8s_scope_flag="$2"
                 shift 2
                 ;;
-            --k8s-verbs)
-                require_flag_value "--k8s-verbs" "${2:-}"
-                k8s_verbs_flag="$2"
+            --k8s-verb)
+                require_flag_value "--k8s-verb" "${2:-}"
+                k8s_verb_flags+=("$2")
                 shift 2
                 ;;
             --namespace)
@@ -62,10 +62,10 @@ Usage: user-ctl.sh add-role <name> [flags]
 Flags:
   --name <string>                 Role name (positional shorthand)
   --preset <preset>               admin-readonly-settings | developer | viewer | custom
-  --argocd-resources <csv>        Comma-separated resources (custom preset)
-  --actions <csv>                 Comma-separated actions (custom preset)
+  --argocd-resource <name>        ArgoCD resource (repeatable; custom preset)
+  --action <name>                 ArgoCD action (repeatable; custom preset)
   --k8s-scope <scope>             cluster-wide | namespace-scoped (custom preset)
-  --k8s-verbs <csv>               Comma-separated kubectl verbs (custom preset)
+  --k8s-verb <verb>               kubectl verb (repeatable; custom preset)
   --namespace <name>              Namespace (repeatable; developer/custom-namespaced)
 EOF
                 exit 0
@@ -122,14 +122,14 @@ EOF
             ;;
         custom)
             local resources actions
-            if [[ -n "$argocd_resources_flag" ]]; then
-                resources="$argocd_resources_flag"
+            if [[ ${#argocd_resource_flags[@]} -gt 0 ]]; then
+                resources="$(IFS=,; echo "${argocd_resource_flags[*]}")"
             elif [[ -t 0 ]]; then
                 resources="$(gum choose --no-limit --header "Select ArgoCD resources:" \
                     "applications" "projects" "repositories" "clusters" \
                     "certificates" "accounts" "logs" "exec" | paste -sd, -)"
             else
-                print_error "--argocd-resources is required when not running interactively"
+                print_error "--argocd-resource is required when not running interactively"
                 exit 1
             fi
 
@@ -138,13 +138,13 @@ EOF
                 exit 1
             fi
 
-            if [[ -n "$actions_flag" ]]; then
-                actions="$actions_flag"
+            if [[ ${#action_flags[@]} -gt 0 ]]; then
+                actions="$(IFS=,; echo "${action_flags[*]}")"
             elif [[ -t 0 ]]; then
                 actions="$(gum choose --no-limit --header "Select actions:" \
                     "get" "create" "update" "delete" "sync" "override" "action" "*" | paste -sd, -)"
             else
-                print_error "--actions is required when not running interactively"
+                print_error "--action is required when not running interactively"
                 exit 1
             fi
 
@@ -236,13 +236,13 @@ EOF
 
             if [[ "$k8s_scope" == "cluster-wide (ClusterRole)" ]]; then
                 local k8s_verbs
-                if [[ -n "$k8s_verbs_flag" ]]; then
-                    k8s_verbs="$k8s_verbs_flag"
+                if [[ ${#k8s_verb_flags[@]} -gt 0 ]]; then
+                    k8s_verbs="$(IFS=,; echo "${k8s_verb_flags[*]}")"
                 elif [[ -t 0 ]]; then
                     k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
                         "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
                 else
-                    print_error "--k8s-verbs is required when not running interactively"
+                    print_error "--k8s-verb is required when not running interactively"
                     exit 1
                 fi
 
@@ -271,13 +271,13 @@ EOF
                 fi
 
                 local k8s_verbs
-                if [[ -n "$k8s_verbs_flag" ]]; then
-                    k8s_verbs="$k8s_verbs_flag"
+                if [[ ${#k8s_verb_flags[@]} -gt 0 ]]; then
+                    k8s_verbs="$(IFS=,; echo "${k8s_verb_flags[*]}")"
                 elif [[ -t 0 ]]; then
                     k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
                         "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
                 else
-                    print_error "--k8s-verbs is required when not running interactively"
+                    print_error "--k8s-verb is required when not running interactively"
                     exit 1
                 fi
 
