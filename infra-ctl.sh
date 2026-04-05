@@ -183,12 +183,93 @@ cmd_add_app() {
     require_gum
     require_yq
 
-    if [[ $# -eq 0 ]]; then
-        print_error "Usage: infra-ctl.sh add-app <app-name>"
-        exit 1
-    fi
+    # --- Parse flags ---
+    local app_name_flag=""
+    local project_flag=""
+    local workload_type_flag=""
+    local preset_flag=""
+    declare -A set_values=()
+    local secret_keys_flag=()
+    local config_flag_entries=()
+    local kargo_flag=""       # "", "true", "false"
+    local image_repo_flag=""
+    local custom_flag=false
+    local image_flag=""
+    local port_flag=""
+    local secret_name_flag=""
+    local probe_path_flag=""
+    local yes="false"
 
-    local app_name="$1"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)         [[ -z "${2:-}" ]] && { print_error "--name requires a value"; exit 1; }
+                            app_name_flag="$2"; shift 2 ;;
+            --project)      [[ -z "${2:-}" ]] && { print_error "--project requires a value"; exit 1; }
+                            project_flag="$2"; shift 2 ;;
+            --workload-type)
+                            [[ -z "${2:-}" ]] && { print_error "--workload-type requires a value"; exit 1; }
+                            workload_type_flag="$(tr '[:upper:]' '[:lower:]' <<<"$2")"; shift 2 ;;
+            --preset)       [[ -z "${2:-}" ]] && { print_error "--preset requires a value"; exit 1; }
+                            preset_flag="$2"; shift 2 ;;
+            --set)          [[ -z "${2:-}" ]] && { print_error "--set requires KEY=VAL"; exit 1; }
+                            parse_set_kv "$2" set_values; shift 2 ;;
+            --secret-key)   [[ -z "${2:-}" ]] && { print_error "--secret-key requires a value"; exit 1; }
+                            secret_keys_flag+=("$2"); shift 2 ;;
+            --config)       [[ -z "${2:-}" ]] && { print_error "--config requires KEY=VAL"; exit 1; }
+                            config_flag_entries+=("$2"); shift 2 ;;
+            --kargo)        kargo_flag="true"; shift ;;
+            --no-kargo)     kargo_flag="false"; shift ;;
+            --image-repo)   [[ -z "${2:-}" ]] && { print_error "--image-repo requires a value"; exit 1; }
+                            image_repo_flag="$2"; shift 2 ;;
+            --custom)       custom_flag=true; shift ;;
+            --image)        [[ -z "${2:-}" ]] && { print_error "--image requires a value"; exit 1; }
+                            image_flag="$2"; shift 2 ;;
+            --port)         [[ -z "${2:-}" ]] && { print_error "--port requires a value"; exit 1; }
+                            port_flag="$2"; shift 2 ;;
+            --secret-name)  [[ -z "${2:-}" ]] && { print_error "--secret-name requires a value"; exit 1; }
+                            secret_name_flag="$2"; shift 2 ;;
+            --probe-path)   [[ -z "${2:-}" ]] && { print_error "--probe-path requires a value"; exit 1; }
+                            probe_path_flag="$2"; shift 2 ;;
+            --yes|-y)       yes="true"; shift ;;
+            -h|--help)
+                cat <<EOF
+Usage: infra-ctl.sh add-app <name> [flags]
+
+Flags:
+  --name <string>               Application name (positional shorthand allowed)
+  --project <name>              ArgoCD project (default: "default")
+  --workload-type <type>        deployment | statefulset (default: deployment)
+  --preset <name>               Preset from templates (default: first preset)
+  --set KEY=VAL                 Preset placeholder values (repeatable)
+  --secret-key NAME             Declare a secret key (repeatable, no value)
+  --config KEY=VAL              configMap entries (repeatable)
+  --kargo / --no-kargo          Enable/disable Kargo management
+  --image-repo <url>            Kargo image repo (no tag; required if --kargo)
+  --custom                      Use custom flow (Deployment only)
+  --image <ref>                 Container image (custom flow)
+  --port <n>                    Container port (custom flow; default: 8080)
+  --secret-name <name>          Secret name (custom flow)
+  --probe-path <path>           HTTP probe path (custom flow)
+  --yes, -y                     Skip confirmation prompt
+EOF
+                exit 0 ;;
+            -*)             print_error "Unknown flag: $1"; exit 1 ;;
+            *)              if [[ -z "$app_name_flag" ]]; then
+                                app_name_flag="$1"
+                            else
+                                print_error "Unexpected argument: $1"; exit 1
+                            fi
+                            shift ;;
+        esac
+    done
+
+    # --- Resolve app_name ---
+    local app_name
+    if [[ -n "$app_name_flag" ]]; then
+        app_name="$app_name_flag"
+    else
+        app_name=$(prompt_or_die "App name" "--name")
+    fi
     validate_k8s_name "$app_name" "App name"
     load_conf
 
@@ -210,16 +291,37 @@ cmd_add_app() {
         projects+=("$proj")
     done < <(detect_projects)
 
-    # Project selection
+    # Project selection: flag wins, else choose, else default
     local project="default"
-    if [[ ${#projects[@]} -gt 0 ]]; then
-        print_header "Select project for '${app_name}'"
-        project="$(printf "%s\n" "default" "${projects[@]}" | gum choose)"
+    if [[ -n "$project_flag" ]]; then
+        if [[ "$project_flag" != "default" ]]; then
+            local found=0 p
+            for p in "${projects[@]}"; do
+                [[ "$p" == "$project_flag" ]] && { found=1; break; }
+            done
+            if [[ "$found" -eq 0 ]]; then
+                print_error "Project '${project_flag}' does not exist. Known: default ${projects[*]}"
+                exit 1
+            fi
+        fi
+        project="$project_flag"
+    elif [[ ${#projects[@]} -gt 0 ]]; then
+        project=$(prompt_choose_or_die "Select project for '${app_name}'" "--project" "default" "${projects[@]}")
     fi
 
-    # Workload type selection (Deployment is default, listed first)
+    # Workload type: flag wins, else prompt, else default
     local workload_type
-    workload_type="$(printf "Deployment\nStatefulSet" | gum choose)"
+    if [[ -n "$workload_type_flag" ]]; then
+        case "$workload_type_flag" in
+            deployment)  workload_type="Deployment" ;;
+            statefulset) workload_type="StatefulSet" ;;
+            *) print_error "--workload-type must be 'deployment' or 'statefulset', got: ${workload_type_flag}"; exit 1 ;;
+        esac
+    elif [[ -t 0 ]]; then
+        workload_type=$(prompt_choose_or_die "Workload type" "--workload-type" "Deployment" "StatefulSet")
+    else
+        workload_type="Deployment"
+    fi
 
     # Discover presets for the selected workload type
     local workload_prefix
@@ -236,24 +338,45 @@ cmd_add_app() {
 
     local preset_choice="custom"
     if [[ ${#presets[@]} -gt 0 ]]; then
-        # Build chooser with descriptions
-        local preset_labels=()
-        local preset
-        for preset in "${presets[@]}"; do
-            local template_file="${TEMPLATE_DIR}/k8s/${workload_prefix}-${preset}.yaml"
-            local desc
-            desc="$(get_preset_field "$template_file" '.description')"
-            preset_labels+=("${preset} -- ${desc}")
-        done
-        # Only add custom option for Deployments (custom StatefulSet is not yet supported)
-        if [[ "$workload_prefix" == "deployment" ]]; then
-            preset_labels+=("custom -- Configure manually")
-        fi
+        # Resolve preset: --custom wins, --preset next, else prompt, else first preset
+        if [[ "$custom_flag" == "true" ]]; then
+            if [[ "$workload_prefix" == "statefulset" ]]; then
+                print_error "--custom is not supported for StatefulSet workloads"
+                exit 1
+            fi
+            preset_choice="custom"
+        elif [[ -n "$preset_flag" ]]; then
+            local found=0 p
+            for p in "${presets[@]}"; do
+                [[ "$p" == "$preset_flag" ]] && { found=1; break; }
+            done
+            if [[ "$found" -eq 0 ]]; then
+                print_error "Unknown preset: ${preset_flag}. Known: ${presets[*]}"
+                exit 1
+            fi
+            preset_choice="$preset_flag"
+        elif [[ -t 0 ]]; then
+            # Interactive chooser with descriptions
+            local preset_labels=()
+            local preset
+            for preset in "${presets[@]}"; do
+                local template_file="${TEMPLATE_DIR}/k8s/${workload_prefix}-${preset}.yaml"
+                local desc
+                desc="$(get_preset_field "$template_file" '.description')"
+                preset_labels+=("${preset} -- ${desc}")
+            done
+            if [[ "$workload_prefix" == "deployment" ]]; then
+                preset_labels+=("custom -- Configure manually")
+            fi
 
-        print_header "Select preset for '${app_name}'"
-        local chosen_label
-        chosen_label="$(printf "%s\n" "${preset_labels[@]}" | gum choose)"
-        preset_choice="${chosen_label%% -- *}"
+            print_header "Select preset for '${app_name}'"
+            local chosen_label
+            chosen_label="$(printf "%s\n" "${preset_labels[@]}" | gum choose)"
+            preset_choice="${chosen_label%% -- *}"
+        else
+            # Non-interactive fallback: use first preset
+            preset_choice="${presets[0]}"
+        fi
     elif [[ "$workload_prefix" == "statefulset" ]]; then
         print_error "No StatefulSet presets found in templates/k8s/. Add a statefulset-*.yaml template."
         exit 1
@@ -274,6 +397,11 @@ cmd_add_app() {
         # --- Preset flow ---
         preset_template="${TEMPLATE_DIR}/k8s/${workload_prefix}-${preset_choice}.yaml"
 
+        # Validate --set keys against this preset's schema
+        if [[ ${#set_values[@]} -gt 0 ]]; then
+            validate_preset_set_keys "$preset_template" "${!set_values[@]}"
+        fi
+
         # Collect defaults into array first (gum input inside a while-read loop
         # steals stdin from the process substitution)
         local defaults_lines=()
@@ -281,7 +409,7 @@ cmd_add_app() {
             [[ -n "$line" ]] && defaults_lines+=("$line")
         done < <(get_preset_defaults "$preset_template")
 
-        # Walk through each default with gum input
+        # Walk through each default: --set wins, else prompt if TTY, else die/default
         local key default_val
         for line in "${defaults_lines[@]}"; do
             key="${line%%=*}"
@@ -289,22 +417,31 @@ cmd_add_app() {
             # Resolve {{APP_NAME}} in defaults
             default_val="${default_val//\{\{APP_NAME\}\}/${app_name}}"
 
-            # Check if the key is optional
-            local optional_flag=""
-            if is_preset_optional "$preset_template" "$key"; then
-                optional_flag=" (optional, leave empty to skip)"
+            local prompted_val=""
+            if [[ -v "set_values[$key]" ]]; then
+                prompted_val="${set_values[$key]}"
+            elif [[ -t 0 ]]; then
+                # Interactive: prompt with hint and optional marker
+                local optional_flag=""
+                if is_preset_optional "$preset_template" "$key"; then
+                    optional_flag=" (optional, leave empty to skip)"
+                fi
+                local hint
+                hint="$(get_preset_hint "$preset_template" "$key")"
+                local header_arg=()
+                if [[ -n "$hint" ]]; then
+                    header_arg=(--header "$hint")
+                fi
+                prompted_val="$(gum input --value "$default_val" "${header_arg[@]}" --prompt "${key}${optional_flag}: ")"
+            else
+                # Non-interactive: use default for optional keys; die for required
+                if is_preset_optional "$preset_template" "$key"; then
+                    prompted_val="$default_val"
+                else
+                    print_error "--set ${key}=<value> is required when not running interactively"
+                    exit 1
+                fi
             fi
-
-            # Get hint text to show as header above the input
-            local hint
-            hint="$(get_preset_hint "$preset_template" "$key")"
-            local header_arg=()
-            if [[ -n "$hint" ]]; then
-                header_arg=(--header "$hint")
-            fi
-
-            local prompted_val
-            prompted_val="$(gum input --value "$default_val" "${header_arg[@]}" --prompt "${key}${optional_flag}: ")"
 
             # Store into the appropriate variable
             case "$key" in
@@ -334,17 +471,36 @@ cmd_add_app() {
             [[ -n "$line" ]] && config_lines+=("$line")
         done < <(get_preset_config "$preset_template")
 
+        # Build --config flag overrides by key
+        declare -A config_flag_map=()
+        local cfe
+        for cfe in "${config_flag_entries[@]}"; do
+            [[ "$cfe" != *"="* ]] && { print_error "--config expects KEY=VAL, got: ${cfe}"; exit 1; }
+            config_flag_map["${cfe%%=*}"]="${cfe#*=}"
+        done
+
         for line in "${config_lines[@]}"; do
             key="${line%%=*}"
             default_val="${line#*=}"
-            local cfg_val
-            cfg_val="$(gum input --value "$default_val" --prompt "Config ${key}: ")"
-            if [[ -n "$cfg_val" ]]; then
-                config_entries+=("${key}=${cfg_val}")
+            local cfg_val=""
+            if [[ -v "config_flag_map[$key]" ]]; then
+                cfg_val="${config_flag_map[$key]}"
+                unset config_flag_map["$key"]
+            elif [[ -t 0 ]]; then
+                cfg_val="$(gum input --value "$default_val" --prompt "Config ${key}: ")"
+            else
+                cfg_val="$default_val"
             fi
+            [[ -n "$cfg_val" ]] && config_entries+=("${key}=${cfg_val}")
         done
 
-        # Collect secret key names from preset frontmatter
+        # Any --config entries not in the preset are extra user additions
+        local extra_key
+        for extra_key in "${!config_flag_map[@]}"; do
+            config_entries+=("${extra_key}=${config_flag_map[$extra_key]}")
+        done
+
+        # Collect secret key names from preset frontmatter, --secret-key, or prompt
         if [[ -n "$secret_name" ]]; then
             local preset_secrets_lines=()
             while IFS= read -r line; do
@@ -353,7 +509,55 @@ cmd_add_app() {
 
             if [[ ${#preset_secrets_lines[@]} -gt 0 ]]; then
                 secret_keys=("${preset_secrets_lines[@]}")
-            else
+            elif [[ ${#secret_keys_flag[@]} -gt 0 ]]; then
+                secret_keys=("${secret_keys_flag[@]}")
+            elif [[ -t 0 ]]; then
+                print_info "Enter the names of secret keys for '${secret_name}' (values are added later via secret-ctl.sh)."
+                print_info "Leave empty to finish."
+                while true; do
+                    local key
+                    key="$(gum input --placeholder "DATABASE_URL" --prompt "Secret key name (empty to finish): ")"
+                    [[ -z "$key" ]] && break
+                    secret_keys+=("$key")
+                done
+            fi
+            # Non-interactive with no --secret-key is allowed (empty secret_keys)
+        fi
+    else
+        # --- Custom flow (deployment only) ---
+        if [[ -n "$image_flag" ]]; then
+            image="$image_flag"
+        else
+            image=$(prompt_or_die "Container image" "--image")
+        fi
+        if [[ -z "$image" ]]; then
+            print_error "Container image is required."
+            exit 1
+        fi
+
+        if [[ -n "$port_flag" ]]; then
+            port="$port_flag"
+        elif [[ -t 0 ]]; then
+            while true; do
+                port="$(gum input --value "8080" --prompt "Container port: ")"
+                validate_port "$port" && break
+            done
+        else
+            port="8080"
+        fi
+        validate_port "$port"
+
+        # Optional: secret name
+        if [[ -n "$secret_name_flag" ]]; then
+            secret_name="$secret_name_flag"
+        elif [[ -t 0 ]]; then
+            secret_name="$(gum input --placeholder "${app_name}-secrets" --prompt "Secret name (optional, empty to skip): ")"
+        fi
+
+        if [[ -n "$secret_name" ]]; then
+            if [[ ${#secret_keys_flag[@]} -gt 0 ]]; then
+                secret_keys=("${secret_keys_flag[@]}")
+            elif [[ -t 0 ]]; then
                 print_info "Enter the names of secret keys for '${secret_name}' (values are added later via secret-ctl.sh)."
                 print_info "Leave empty to finish."
                 while true; do
@@ -364,48 +568,39 @@ cmd_add_app() {
                 done
             fi
         fi
-    else
-        # --- Custom flow (deployment only) ---
-        image="$(gum input --placeholder "ghcr.io/owner/app:latest" --prompt "Container image: ")"
-        if [[ -z "$image" ]]; then
-            print_error "Container image is required."
-            exit 1
-        fi
-
-        while true; do
-            port="$(gum input --value "8080" --prompt "Container port: ")"
-            validate_port "$port" && break
-        done
-
-        # Optional: secret name
-        secret_name="$(gum input --placeholder "${app_name}-secrets" --prompt "Secret name (optional, empty to skip): ")"
-
-        if [[ -n "$secret_name" ]]; then
-            print_info "Enter the names of secret keys for '${secret_name}' (values are added later via secret-ctl.sh)."
-            print_info "Leave empty to finish."
-            while true; do
-                local key
-                key="$(gum input --placeholder "DATABASE_URL" --prompt "Secret key name (empty to finish): ")"
-                [[ -z "$key" ]] && break
-                secret_keys+=("$key")
-            done
-        fi
 
         # Optional: probe path
-        probe_path="$(gum input --placeholder "/api/health" --prompt "Probe path (optional, empty to skip): ")"
+        if [[ -n "$probe_path_flag" ]]; then
+            probe_path="$probe_path_flag"
+        elif [[ -t 0 ]]; then
+            probe_path="$(gum input --placeholder "/api/health" --prompt "Probe path (optional, empty to skip): ")"
+        fi
 
         # Use the web template as the base for custom deployments
         preset_template="${TEMPLATE_DIR}/k8s/deployment-web.yaml"
     fi
 
-    # Prompt for additional config values
-    print_info "Add config values for configMapGenerator (leave empty to finish)."
-    while true; do
-        local cfg_entry
-        cfg_entry="$(gum input --placeholder "KEY=value" --prompt "Config entry (empty to finish): ")"
-        [[ -z "$cfg_entry" ]] && break
-        config_entries+=("$cfg_entry")
-    done
+    # Add --config flag entries (applies to both preset and custom flows).
+    # In preset flow, entries matching preset config keys were already
+    # consumed above; only NEW entries remain here in the custom flow.
+    if [[ "$preset_choice" == "custom" ]]; then
+        local cfe
+        for cfe in "${config_flag_entries[@]}"; do
+            [[ "$cfe" != *"="* ]] && { print_error "--config expects KEY=VAL, got: ${cfe}"; exit 1; }
+            config_entries+=("$cfe")
+        done
+    fi
+
+    # Interactive-only: prompt for additional config values (legacy custom flow)
+    if [[ "$preset_choice" == "custom" ]] && [[ ${#config_flag_entries[@]} -eq 0 ]] && [[ -t 0 ]]; then
+        print_info "Add config values for configMapGenerator (leave empty to finish)."
+        while true; do
+            local cfg_entry
+            cfg_entry="$(gum input --placeholder "KEY=value" --prompt "Config entry (empty to finish): ")"
+            [[ -z "$cfg_entry" ]] && break
+            config_entries+=("$cfg_entry")
+        done
+    fi
 
     # Preview what will be created
     local workload_file
@@ -415,17 +610,26 @@ cmd_add_app() {
         workload_file="deployment.yaml"
     fi
 
-    # Ask about Kargo management before the preview
+    # Kargo management: flag wins, else prompt if TTY, else default by workload
     local kargo_managed=false
     if is_kargo_enabled; then
-        local kargo_default
-        if [[ "$workload_type" == "Deployment" ]]; then
-            kargo_default="--default=Yes"
-        else
-            kargo_default="--default=No"
-        fi
-        if gum confirm "Manage image promotion with Kargo?" $kargo_default; then
+        if [[ "$kargo_flag" == "true" ]]; then
             kargo_managed=true
+        elif [[ "$kargo_flag" == "false" ]]; then
+            kargo_managed=false
+        elif [[ -t 0 ]]; then
+            local kargo_default
+            if [[ "$workload_type" == "Deployment" ]]; then
+                kargo_default="--default=Yes"
+            else
+                kargo_default="--default=No"
+            fi
+            if gum confirm "Manage image promotion with Kargo?" $kargo_default; then
+                kargo_managed=true
+            fi
+        else
+            # Non-interactive default: yes for Deployment, no for StatefulSet
+            [[ "$workload_type" == "Deployment" ]] && kargo_managed=true
         fi
     fi
 
@@ -471,7 +675,9 @@ cmd_add_app() {
         fi
     fi
 
-    confirm_or_abort "Create these files?"
+    if [[ "$yes" != "true" ]] && [[ -t 0 ]]; then
+        confirm_or_abort "Create these files?"
+    fi
 
     local created_files=()
 
@@ -583,10 +789,17 @@ cmd_add_app() {
         # Derive default image repo from the entered image (strip tag)
         local default_image_repo="${image%%:*}"
         local image_repo
-        while true; do
-            image_repo="$(gum input --value "${default_image_repo}" --prompt "Image repo for Kargo (no tag): ")"
-            validate_image_repo "$image_repo" && break
-        done
+        if [[ -n "$image_repo_flag" ]]; then
+            image_repo="$image_repo_flag"
+        elif [[ -t 0 ]]; then
+            while true; do
+                image_repo="$(gum input --value "${default_image_repo}" --prompt "Image repo for Kargo (no tag): ")"
+                validate_image_repo "$image_repo" && break
+            done
+        else
+            image_repo="$default_image_repo"
+        fi
+        validate_image_repo "$image_repo"
 
         local kargo_app_dir="${TARGET_DIR}/kargo/${app_name}"
         mkdir -p "$kargo_app_dir"
