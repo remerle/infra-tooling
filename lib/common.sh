@@ -1117,3 +1117,154 @@ print_removed() {
     done
     echo ""
 }
+
+# --- Flag-first prompt helpers ---
+#
+# Contract: every command accepts user-provided values via long flags.
+# When a flag is not provided, these helpers prompt interactively if
+# stdin is a TTY, or die with a clear error otherwise. See AGENTS.md
+# "Flag-first command contract" for the mandatory rules.
+
+# Exits with a clear error if stdin is not a TTY. Call this before any
+# fallback prompt to guarantee scripted callers get an actionable
+# message naming the missing flag.
+# Usage: require_tty "--name"
+require_tty() {
+    local flag="$1"
+    if [[ ! -t 0 ]]; then
+        print_error "${flag} is required when not running interactively"
+        echo "  (stdin is not a TTY; pass ${flag} on the command line)" >&2
+        exit 1
+    fi
+}
+
+# Input prompt or die. Prints to stdout the value chosen by the user.
+# Usage: val=$(prompt_or_die "App name" "--name")
+#        val=$(prompt_or_die "Container port" "--port" "8080")
+prompt_or_die() {
+    local label="$1"
+    local flag="$2"
+    local default="${3:-}"
+    require_tty "$flag"
+    if [[ -n "$default" ]]; then
+        gum input --value "$default" --prompt "${label}: "
+    else
+        gum input --prompt "${label}: "
+    fi
+}
+
+# Password input prompt or die (hidden input).
+# Usage: pat=$(prompt_password_or_die "GitHub PAT" "--pat")
+prompt_password_or_die() {
+    local label="$1"
+    local flag="$2"
+    require_tty "$flag"
+    gum input --password --prompt "${label}: "
+}
+
+# Single-choice prompt or die. Options follow the flag as separate args.
+# Usage: val=$(prompt_choose_or_die "Workload type" "--workload-type" "Deployment" "StatefulSet")
+prompt_choose_or_die() {
+    local label="$1"
+    local flag="$2"
+    shift 2
+    require_tty "$flag"
+    print_header "$label"
+    printf "%s\n" "$@" | gum choose
+}
+
+# Multi-select prompt or die. Options after the flag. Prints selections
+# one per line. Caller should capture with mapfile or a read loop.
+# Usage: mapfile -t envs < <(prompt_multi_or_die "Envs" "--env" dev staging prod)
+prompt_multi_or_die() {
+    local label="$1"
+    local flag="$2"
+    shift 2
+    require_tty "$flag"
+    print_header "$label"
+    printf "%s\n" "$@" | gum choose --no-limit
+}
+
+# Confirm prompt or die. Prints "yes" or "no" to stdout.
+# Usage: answer=$(prompt_confirm_or_die "Enable HTTPS?" "--tls")
+prompt_confirm_or_die() {
+    local label="$1"
+    local flag="$2"
+    require_tty "$flag"
+    if gum confirm "$label"; then
+        echo "yes"
+    else
+        echo "no"
+    fi
+}
+
+# Destructive-action guard. Exits if --yes was not passed.
+# Pass the already-parsed yes_flag value ("true"/"false") as arg 1.
+# Usage: require_yes "$yes" "remove app 'backend'"
+require_yes() {
+    local yes="$1"
+    local action="$2"
+    if [[ "$yes" != "true" ]]; then
+        if [[ -t 0 ]]; then
+            if ! gum confirm "Confirm: ${action}?"; then
+                print_info "Aborted."
+                exit 0
+            fi
+        else
+            print_error "--yes is required to ${action} non-interactively"
+            exit 1
+        fi
+    fi
+}
+
+# Parses a KEY=VAL string into a caller-provided associative array.
+# Dies on malformed input.
+# Usage: declare -A values; parse_set_kv "IMAGE=nginx:latest" values
+parse_set_kv() {
+    local input="$1"
+    local -n _arr="$2"
+    if [[ "$input" != *"="* ]]; then
+        print_error "--set expects KEY=VAL, got: ${input}"
+        exit 1
+    fi
+    local key="${input%%=*}"
+    local val="${input#*=}"
+    if [[ -z "$key" ]]; then
+        print_error "--set expects KEY=VAL with a non-empty KEY, got: ${input}"
+        exit 1
+    fi
+    _arr["$key"]="$val"
+}
+
+# Validates a set of --set keys against the known keys of a preset.
+# Dies with the list of unknown keys if any are not in the allowed set.
+# Args: preset_template_path, then all keys in the caller's --set map.
+# Usage: validate_preset_set_keys "$template" "${!values[@]}"
+validate_preset_set_keys() {
+    local template="$1"
+    shift
+    local allowed_keys=()
+    local line
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && allowed_keys+=("${line%%=*}")
+    done < <(get_preset_defaults "$template")
+    # Secrets declared via the preset's `secrets:` frontmatter field are
+    # NOT valid --set keys (their values live in sealed secrets, not in
+    # template placeholders), but we do not reject them here because
+    # add-app's legacy custom flow sometimes reuses them as env var names.
+
+    local unknown=()
+    local k a found
+    for k in "$@"; do
+        found=0
+        for a in "${allowed_keys[@]}"; do
+            [[ "$k" == "$a" ]] && { found=1; break; }
+        done
+        [[ "$found" -eq 0 ]] && unknown+=("$k")
+    done
+    if [[ ${#unknown[@]} -gt 0 ]]; then
+        print_error "Unknown --set keys for this preset: ${unknown[*]}"
+        echo "  Allowed keys: ${allowed_keys[*]}" >&2
+        exit 1
+    fi
+}
