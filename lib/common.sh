@@ -419,17 +419,46 @@ validate_image_repo() {
     return 0
 }
 
-# Warns if a secret key name does not follow uppercase environment variable convention.
-# Always returns 0 (warning only, never blocks).
+# Validates a Kubernetes Secret key name at the boundary.
+# k8s Secret keys must match [-._a-zA-Z0-9]+ (see the data and stringData
+# schema in the Secret resource); keys outside that character set will be
+# rejected by the API server and would also corrupt our grep/yq lookups.
+# Also warns if the key does not follow the uppercase env-var convention.
+# Dies with a clear error on malformed keys; warns on case; returns 0 otherwise.
 # Usage: validate_secret_key <key>
 validate_secret_key() {
     local key="$1"
 
+    if [[ -z "$key" ]]; then
+        print_error "Secret key cannot be empty"
+        exit 1
+    fi
+    if ! [[ "$key" =~ ^[-._a-zA-Z0-9]+$ ]]; then
+        print_error "Secret key '${key}' is not a valid k8s Secret key (must match [-._a-zA-Z0-9]+)"
+        exit 1
+    fi
     if ! [[ "$key" =~ ^[A-Z][A-Z0-9_]*$ ]]; then
         print_warning "Secret key '${key}' is not uppercase. Convention is uppercase with underscores (e.g., DATABASE_URL)."
     fi
 
     return 0
+}
+
+# Validates that a key is a legal k8s configMap/env-var identifier.
+# configMap keys must match [-._a-zA-Z0-9]+ but to be mountable as env vars
+# they must also be valid C identifiers ([A-Za-z_][A-Za-z0-9_]*).
+# Dies with a clear error if the key is malformed.
+validate_configmap_key() {
+    local key="$1"
+    local label="${2:-configMap key}"
+    if [[ -z "$key" ]]; then
+        print_error "${label} cannot be empty"
+        exit 1
+    fi
+    if ! [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        print_error "${label} '${key}' is not a valid identifier (must match [A-Za-z_][A-Za-z0-9_]*)"
+        exit 1
+    fi
 }
 
 # --- Argument parsing ---
@@ -441,7 +470,7 @@ parse_global_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --target-dir)
-                if [[ -z "${2:-}" ]]; then
+                if [[ -z "${2:-}" ]]; then # lint-ok: pre-gum, require_flag_value needs print_error
                     # Use echo here because gum may not be installed yet
                     echo "ERROR: --target-dir requires a path argument" >&2
                     exit 1
@@ -748,15 +777,6 @@ detect_service_port() {
         return
     fi
     yq eval '.spec.ports[0].port' "$service_file"
-}
-
-# Returns one resource per line from a kustomization.yaml .resources list.
-# Empty output if .resources is missing or file doesn't exist.
-# Usage: kustomization_resources <kustomization.yaml>
-kustomization_resources() {
-    local file="$1"
-    [[ ! -f "$file" ]] && return 0
-    yq eval '.resources[]?' "$file" 2>/dev/null
 }
 
 # --- Detection ---
@@ -1125,4 +1145,212 @@ print_removed() {
         print_success "$f"
     done
     echo ""
+}
+
+# --- Flag-first prompt helpers ---
+#
+# Contract: every command accepts user-provided values via long flags.
+# When a flag is not provided, these helpers prompt interactively if
+# stdin is a TTY, or die with a clear error otherwise. See AGENTS.md
+# "Flag-first command contract" for the mandatory rules.
+
+# Exits with a clear error if a flag's value was omitted on the CLI.
+# Call this from flag-parsing case arms before assigning $2 so that scripted
+# callers see a named-flag error instead of the unhelpful "$2: unbound variable"
+# that `set -u` would otherwise produce.
+# Usage inside a case arm:
+#   --name) require_flag_value "--name" "${2:-}"; name_flag="$2"; shift 2 ;;
+require_flag_value() {
+    local flag="$1"
+    local value="${2-__UNSET__}"
+    if [[ "$value" == "__UNSET__" || -z "$value" ]]; then
+        print_error "${flag} requires a value"
+        exit 1
+    fi
+}
+
+# Exits with a clear error if stdin is not a TTY. Call this before any
+# fallback prompt to guarantee scripted callers get an actionable
+# message naming the missing flag.
+# Usage: require_tty "--name"
+require_tty() {
+    local flag="$1"
+    if [[ ! -t 0 ]]; then
+        print_error "${flag} is required when not running interactively"
+        echo "  (stdin is not a TTY; pass ${flag} on the command line)" >&2
+        exit 1
+    fi
+}
+
+# Input prompt or die. Prints to stdout the value chosen by the user.
+# Usage: val=$(prompt_or_die "App name" "--name")
+#        val=$(prompt_or_die "Container port" "--port" "8080")
+prompt_or_die() {
+    local label="$1"
+    local flag="$2"
+    local default="${3:-}"
+    require_tty "$flag"
+    if [[ -n "$default" ]]; then
+        gum input --value "$default" --prompt "${label}: "
+    else
+        gum input --prompt "${label}: "
+    fi
+}
+
+# Password input prompt or die (hidden input).
+# Usage: pat=$(prompt_password_or_die "GitHub PAT" "--pat")
+prompt_password_or_die() {
+    local label="$1"
+    local flag="$2"
+    require_tty "$flag"
+    gum input --password --prompt "${label}: "
+}
+
+# Single-choice prompt or die. Options follow the flag as separate args.
+# Usage: val=$(prompt_choose_or_die "Workload type" "--workload-type" "Deployment" "StatefulSet")
+prompt_choose_or_die() {
+    local label="$1"
+    local flag="$2"
+    shift 2
+    require_tty "$flag"
+    print_header "$label"
+    printf "%s\n" "$@" | gum choose
+}
+
+# Multi-select prompt or die. Options after the flag. Prints selections
+# one per line. Caller should capture with mapfile or a read loop.
+# Usage: mapfile -t envs < <(prompt_multi_or_die "Envs" "--env" dev staging prod)
+prompt_multi_or_die() {
+    local label="$1"
+    local flag="$2"
+    shift 2
+    require_tty "$flag"
+    print_header "$label"
+    printf "%s\n" "$@" | gum choose --no-limit
+}
+
+# Confirm prompt or die. Prints "yes" or "no" to stdout.
+# Usage: answer=$(prompt_confirm_or_die "Enable HTTPS?" "--tls")
+prompt_confirm_or_die() {
+    local label="$1"
+    local flag="$2"
+    require_tty "$flag"
+    if gum confirm "$label"; then
+        echo "yes"
+    else
+        echo "no"
+    fi
+}
+
+# Destructive-action guard.
+# - If --yes was passed ($1 == "true"), returns 0.
+# - Else if stdin is a TTY, runs `gum confirm` and exits 0 on abort.
+# - Else (no TTY, no --yes), prints an error and exits 1.
+# Pass the already-parsed yes_flag value ("true"/"false") as arg 1.
+# Usage: require_yes "$yes" "remove app 'backend'"
+require_yes() {
+    local yes="$1"
+    local action="$2"
+    if [[ "$yes" != "true" ]]; then
+        if [[ -t 0 ]]; then
+            if ! gum confirm "Confirm: ${action}?"; then
+                print_info "Aborted."
+                exit 0
+            fi
+        else
+            print_error "--yes is required to ${action} non-interactively"
+            exit 1
+        fi
+    fi
+}
+
+# Validates that a value is a member of a fixed allowlist, dying otherwise.
+# The allowlist is passed as trailing positional args after the flag name and value.
+# Usage: validate_in_set "--action" "$val" "get" "create" "update" "*"
+validate_in_set() {
+    local flag="$1"
+    local value="$2"
+    shift 2
+    local a
+    for a in "$@"; do
+        [[ "$value" == "$a" ]] && return 0
+    done
+    print_error "${flag}: '${value}' is not one of: $*"
+    exit 1
+}
+
+# Warns the user when a secret-bearing flag value was passed inline on argv.
+# Values starting with '@' (file indirection) or equal to '-' (stdin) are not
+# inline; anything else is treated as an argv leak and produces a warning.
+# No-op if the value is empty. Callers should invoke after flag parsing and
+# before they use the value.
+# Usage: warn_inline_secret_flag "--kargo-password" "$kargo_password_flag"
+warn_inline_secret_flag() {
+    local flag="$1"
+    local value="$2"
+    [[ -z "$value" ]] && return 0
+    case "$value" in
+        - | @*) return 0 ;;
+    esac
+    print_warning "${flag}: passing secrets inline exposes them via 'ps', shell history, and CI logs."
+    print_warning "  Prefer interactive entry, an environment variable, or a secret manager."
+}
+
+# Parses a KEY=VAL string into a caller-provided associative array.
+# Dies on malformed input.
+# Usage: declare -A values; parse_set_kv "IMAGE=nginx:latest" values
+parse_set_kv() {
+    local input="$1"
+    # Use an unlikely nameref target so callers cannot collide with a local
+    # variable named `_arr` (bash emits "circular name reference" when the
+    # nameref and target share a name).
+    local -n __parse_set_kv_out="$2"
+    if [[ "$input" != *"="* ]]; then
+        print_error "--set expects KEY=VAL, got: ${input}"
+        exit 1
+    fi
+    local key="${input%%=*}"
+    local val="${input#*=}"
+    if [[ -z "$key" ]]; then
+        print_error "--set expects KEY=VAL with a non-empty KEY, got: ${input}"
+        exit 1
+    fi
+    validate_configmap_key "$key" "--set key"
+    __parse_set_kv_out["$key"]="$val"
+}
+
+# Validates a set of --set keys against the known keys of a preset.
+# Dies with the list of unknown keys if any are not in the allowed set.
+# Args: preset_template_path, then all keys in the caller's --set map.
+# Usage: validate_preset_set_keys "$template" "${!values[@]}"
+validate_preset_set_keys() {
+    local template="$1"
+    shift
+    local allowed_keys=()
+    local line
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && allowed_keys+=("${line%%=*}")
+    done < <(get_preset_defaults "$template")
+    # Secrets declared via the preset's `secrets:` frontmatter field are
+    # NOT valid --set keys (their values live in sealed secrets, not in
+    # template placeholders), but we do not reject them here because
+    # add-app's legacy custom flow sometimes reuses them as env var names.
+
+    local unknown=()
+    local k a found
+    for k in "$@"; do
+        found=0
+        for a in "${allowed_keys[@]}"; do
+            [[ "$k" == "$a" ]] && {
+                found=1
+                break
+            }
+        done
+        [[ "$found" -eq 0 ]] && unknown+=("$k")
+    done
+    if [[ ${#unknown[@]} -gt 0 ]]; then
+        print_error "Unknown --set keys for this preset: ${unknown[*]}"
+        echo "  Allowed keys: ${allowed_keys[*]}" >&2
+        exit 1
+    fi
 }

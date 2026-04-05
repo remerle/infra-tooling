@@ -62,6 +62,92 @@ cmd_init_cluster() {
     require_cmd "docker" "https://docs.docker.com/get-docker/"
     require_helm
 
+    # --- Parse flags ---
+    local name_flag="" agents_flag=""
+    local expose_flag="" tls_flag="" argocd_flag="" kargo_flag=""
+    local kargo_password_flag=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --agents)
+                require_flag_value "--agents" "${2:-}"
+                agents_flag="$2"
+                shift 2
+                ;;
+            --expose-ports)
+                expose_flag="true"
+                shift
+                ;;
+            --no-expose-ports)
+                expose_flag="false"
+                shift
+                ;;
+            --tls)
+                tls_flag="true"
+                shift
+                ;;
+            --no-tls)
+                tls_flag="false"
+                shift
+                ;;
+            --argocd)
+                argocd_flag="true"
+                shift
+                ;;
+            --no-argocd)
+                argocd_flag="false"
+                shift
+                ;;
+            --kargo)
+                kargo_flag="true"
+                shift
+                ;;
+            --no-kargo)
+                kargo_flag="false"
+                shift
+                ;;
+            --kargo-password)
+                require_flag_value "--kargo-password" "${2:-}"
+                kargo_password_flag="$2"
+                shift 2
+                ;;
+            -h | --help)
+                cat <<EOF
+Usage: cluster-ctl.sh init-cluster [flags]
+
+Flags:
+  --name <string>        Cluster name (default: current dir basename)
+  --agents <n>           Agent node count (default: 3)
+  --expose-ports         Expose 80/443 on localhost (for ingress)
+  --no-expose-ports      Don't expose ports (default)
+  --tls                  Enable HTTPS via mkcert
+  --no-tls               Disable HTTPS (default)
+  --argocd               Install ArgoCD
+  --no-argocd            Skip ArgoCD (default)
+  --kargo                Install Kargo (requires --kargo-password non-interactively)
+  --no-kargo             Skip Kargo (default)
+  --kargo-password <pw>  Kargo admin password
+                         WARNING: passing secrets inline exposes them via
+                         'ps', shell history, and CI logs. Prefer interactive
+                         entry, an env var, or a secret manager.
+EOF
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
     # Verify Docker daemon is running (docker CLI exists but daemon may be stopped)
     if ! docker info &>/dev/null; then
         print_error "Docker daemon is not running."
@@ -71,11 +157,17 @@ cmd_init_cluster() {
 
     print_header "Initialize k3d Cluster"
 
-    # Prompt for cluster name
+    # Cluster name: flag wins, else prompt, else default
     local default_name
     default_name="$(basename "${TARGET_DIR}")"
     local cluster_name
-    cluster_name="$(gum input --value "$default_name" --prompt "Cluster name: ")"
+    if [[ -n "$name_flag" ]]; then
+        cluster_name="$name_flag"
+    elif [[ -t 0 ]]; then
+        cluster_name="$(gum input --value "$default_name" --prompt "Cluster name: ")"
+    else
+        cluster_name="$default_name"
+    fi
 
     if [[ -z "$cluster_name" ]]; then
         print_error "Cluster name is required."
@@ -91,16 +183,31 @@ cmd_init_cluster() {
         exit 1
     fi
 
-    # Prompt for agent nodes
+    # Agent nodes: flag wins, else prompt, else 3
     local agents
-    while true; do
-        agents="$(gum input --value "3" --prompt "Agent nodes: ")"
-        validate_positive_integer "$agents" "Agent nodes" && break
-    done
+    if [[ -n "$agents_flag" ]]; then
+        agents="$agents_flag"
+    elif [[ -t 0 ]]; then
+        while true; do
+            agents="$(gum input --value "3" --prompt "Agent nodes: ")"
+            validate_positive_integer "$agents" "Agent nodes" && break
+        done
+    else
+        agents="3"
+    fi
+    validate_positive_integer "$agents" "Agent nodes" || exit 1
 
-    # Prompt for port exposure
+    # Port exposure: flag wins, else prompt, else no
     local port_args=()
-    if gum confirm "Expose ports 80/443 on localhost? (for ingress)"; then
+    local expose="no"
+    if [[ "$expose_flag" == "true" ]]; then
+        expose="yes"
+    elif [[ "$expose_flag" == "false" ]]; then
+        expose="no"
+    elif [[ -t 0 ]]; then
+        gum confirm "Expose ports 80/443 on localhost? (for ingress)" && expose="yes"
+    fi
+    if [[ "$expose" == "yes" ]]; then
         port_args=(-p "80:80@loadbalancer" -p "443:443@loadbalancer")
     fi
 
@@ -133,17 +240,35 @@ cmd_init_cluster() {
     local kargo_installed=false
     local tls_enabled=false
 
-    # Prompt for local HTTPS
-    if command -v mkcert &>/dev/null; then
-        if gum confirm "Enable HTTPS with trusted local certs? (via mkcert)"; then
-            apply_local_tls
-            tls_enabled=true
-            print_success "HTTPS enabled with trusted local certs."
+    # Local HTTPS: flag wins, else prompt, else no
+    local enable_tls="no"
+    if [[ "$tls_flag" == "true" ]]; then
+        enable_tls="yes"
+    elif [[ "$tls_flag" == "false" ]]; then
+        enable_tls="no"
+    elif command -v mkcert &>/dev/null && [[ -t 0 ]]; then
+        gum confirm "Enable HTTPS with trusted local certs? (via mkcert)" && enable_tls="yes"
+    fi
+    if [[ "$enable_tls" == "yes" ]]; then
+        if ! command -v mkcert &>/dev/null; then
+            print_error "--tls requires mkcert to be installed"
+            exit 1
         fi
+        apply_local_tls
+        tls_enabled=true
+        print_success "HTTPS enabled with trusted local certs."
     fi
 
-    # Prompt for ArgoCD installation
-    if gum confirm "Install ArgoCD?"; then
+    # ArgoCD install: flag wins, else prompt, else no
+    local install_argocd="no"
+    if [[ "$argocd_flag" == "true" ]]; then
+        install_argocd="yes"
+    elif [[ "$argocd_flag" == "false" ]]; then
+        install_argocd="no"
+    elif [[ -t 0 ]]; then
+        gum confirm "Install ArgoCD?" && install_argocd="yes"
+    fi
+    if [[ "$install_argocd" == "yes" ]]; then
         local values_file="${SCRIPT_DIR}/helm/argocd-values.yaml"
         if [[ ! -f "$values_file" ]]; then
             print_error "Helm values file not found: ${values_file}"
@@ -185,8 +310,16 @@ cmd_init_cluster() {
         rm -f "$argocd_log"
     fi
 
-    # Prompt for Kargo installation
-    if gum confirm "Install Kargo?"; then
+    # Kargo install: flag wins, else prompt, else no
+    local install_kargo="no"
+    if [[ "$kargo_flag" == "true" ]]; then
+        install_kargo="yes"
+    elif [[ "$kargo_flag" == "false" ]]; then
+        install_kargo="no"
+    elif [[ -t 0 ]]; then
+        gum confirm "Install Kargo?" && install_kargo="yes"
+    fi
+    if [[ "$install_kargo" == "yes" ]]; then
         # Kargo requires cert-manager for webhook server TLS certificates
         # (Kubernetes API server requires TLS for admission webhooks, and
         # Kargo uses cert-manager to generate self-signed certs for them)
@@ -201,20 +334,33 @@ cmd_init_cluster() {
             print_success "cert-manager installed."
         fi
 
-        local kargo_password kargo_password_confirm
-        while true; do
-            kargo_password="$(gum input --password --prompt "Kargo admin password: ")"
+        local kargo_password
+        if [[ -n "$kargo_password_flag" ]]; then
+            warn_inline_secret_flag "--kargo-password" "$kargo_password_flag"
+            kargo_password="$kargo_password_flag"
             if [[ -z "$kargo_password" ]]; then
-                print_error "Password cannot be empty."
-                continue
+                print_error "--kargo-password cannot be empty"
+                exit 1
             fi
-            kargo_password_confirm="$(gum input --password --prompt "Confirm password: ")"
-            if [[ "$kargo_password" != "$kargo_password_confirm" ]]; then
-                print_error "Passwords do not match."
-                continue
-            fi
-            break
-        done
+        elif [[ -t 0 ]]; then
+            local kargo_password_confirm
+            while true; do
+                kargo_password="$(gum input --password --prompt "Kargo admin password: ")"
+                if [[ -z "$kargo_password" ]]; then
+                    print_error "Password cannot be empty."
+                    continue
+                fi
+                kargo_password_confirm="$(gum input --password --prompt "Confirm password: ")"
+                if [[ "$kargo_password" != "$kargo_password_confirm" ]]; then
+                    print_error "Passwords do not match."
+                    continue
+                fi
+                break
+            done
+        else
+            print_error "--kargo-password is required when installing Kargo non-interactively"
+            exit 1
+        fi
 
         local kargo_hash
         kargo_hash="$(htpasswd -bnBC 10 "" "$kargo_password" | tr -d ':\n')"
@@ -224,18 +370,18 @@ cmd_init_cluster() {
         # TLS termination happens at the Traefik level, not in Kargo;
         # api.tls.enabled=false disables TLS on the Kargo API server itself,
         # api.tls.terminatedUpstream=true signals that an upstream proxy already terminated TLS.
-        local kargo_log
-        kargo_log="$(mktemp)"
-        if run_cmd_sh "Installing Kargo via Helm (this may take a minute)..." \
+        # Use argv-form run_cmd so the bcrypt hash ($2y$10$...) and the random signing key
+        # are not re-expanded by bash -c (which would strip every $N as an empty positional param).
+        if run_cmd "Installing Kargo via Helm (this may take a minute)..." \
             --explain "Kargo is a progressive delivery tool that promotes container images through a pipeline of stages (e.g., dev -> staging -> prod). It tracks image versions in a Warehouse and applies promotions via Git commits. TLS is terminated at Traefik, so api.tls.enabled=false turns off TLS inside Kargo itself, and api.tls.terminatedUpstream=true tells Kargo an upstream proxy already handled TLS so it sets secure cookie flags correctly." \
-            "helm install kargo \
+            helm install kargo \
             oci://ghcr.io/akuity/kargo-charts/kargo \
             --namespace kargo --create-namespace \
-            --set \"api.adminAccount.passwordHash=${kargo_hash}\" \
-            --set \"api.adminAccount.tokenSigningKey=${kargo_signing_key}\" \
+            --set "api.adminAccount.passwordHash=${kargo_hash}" \
+            --set "api.adminAccount.tokenSigningKey=${kargo_signing_key}" \
             --set api.tls.enabled=false \
             --set api.tls.terminatedUpstream=true \
-            --wait --timeout 120s >\"$kargo_log\" 2>&1"; then
+            --wait --timeout 120s; then
             print_success "Kargo installed via Helm."
 
             # Create Ingress for Kargo dashboard
@@ -280,10 +426,8 @@ KARGOINGRESS"
 
             kargo_installed=true
         else
-            print_error "Kargo installation failed:"
-            cat "$kargo_log" >&2
+            print_error "Kargo installation failed."
         fi
-        rm -f "$kargo_log"
     fi
 
     # Summary
@@ -324,18 +468,52 @@ cmd_delete_cluster() {
     require_cmd "k3d" "brew install k3d"
     require_cmd "jq" "brew install jq"
 
-    local cluster_name="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: cluster-ctl.sh delete-cluster [name] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local cluster_name="$name_flag"
 
     if [[ -z "$cluster_name" ]]; then
-        print_header "Delete k3d Cluster"
-
-        cluster_name="$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name' \
-            | choose_from "Select cluster to delete:" "No k3d clusters found.")" || exit 0
+        if [[ -t 0 ]]; then
+            print_header "Delete k3d Cluster"
+            cluster_name="$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name' \
+                | choose_from "Select cluster to delete:" "No k3d clusters found.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     else
         print_header "Delete k3d Cluster: ${cluster_name}"
     fi
 
-    confirm_destructive_or_abort "Delete cluster '${cluster_name}'? This cannot be undone."
+    require_yes "$yes" "delete cluster '${cluster_name}' (cannot be undone)"
 
     run_cmd "Deleting cluster '${cluster_name}'..." \
         --explain "k3d cluster delete stops and removes all Docker containers that make up the cluster (server, agents, load balancer) and cleans up the kubeconfig entry. This is irreversible -- all workloads and persistent volumes in the cluster are destroyed." \
@@ -408,6 +586,39 @@ cmd_add_argo_creds() {
     require_cmd "kubectl" "brew install kubectl"
     load_conf
 
+    local pat_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --pat)
+                require_flag_value "--pat" "${2:-}"
+                pat_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                cat <<EOF
+Usage: cluster-ctl.sh add-argo-creds [--pat <token>] [--yes]
+
+WARNING: passing --pat inline exposes the token via 'ps', shell history, and
+CI logs. Prefer running this command interactively so it can prompt with
+hidden input.
+EOF
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected: $1"
+                exit 1
+                ;;
+        esac
+    done
+
     print_header "Configure ArgoCD Repository Credentials"
 
     # Verify ArgoCD is installed
@@ -424,41 +635,55 @@ cmd_add_argo_creds() {
     existing="$(kubectl get secret repo-creds -n argocd -o name 2>/dev/null)" || true
     if [[ -n "$existing" ]]; then
         print_warning "Repository credentials already exist."
-        confirm_or_abort "Overwrite existing credentials?"
+        require_yes "$yes" "overwrite existing ArgoCD repo credentials"
     fi
 
-    # Prompt for PAT
-    print_info "A classic GitHub PAT is required. Create one at:"
-    print_info "  https://github.com/settings/tokens/new"
-    print_info ""
-    print_info "Required scope: repo"
+    # PAT: flag wins, else prompt, else die
     local pat
-    while true; do
-        pat="$(gum input --password --prompt "GitHub PAT: ")"
-        if [[ -z "$pat" ]]; then
-            print_error "A GitHub PAT is required."
-            continue
+    if [[ -n "$pat_flag" ]]; then
+        warn_inline_secret_flag "--pat" "$pat_flag"
+        pat="$pat_flag"
+        if ! validate_github_pat "$pat" "repo"; then
+            print_error "--pat did not validate with required scope 'repo'"
+            exit 1
         fi
-        if validate_github_pat "$pat" "repo"; then
-            break
-        fi
-        print_info "Please enter a valid PAT with the required scopes."
-    done
+    elif [[ -t 0 ]]; then
+        print_info "A classic GitHub PAT is required. Create one at:"
+        print_info "  https://github.com/settings/tokens/new"
+        print_info ""
+        print_info "Required scope: repo"
+        while true; do
+            pat="$(gum input --password --prompt "GitHub PAT: ")"
+            if [[ -z "$pat" ]]; then
+                print_error "A GitHub PAT is required."
+                continue
+            fi
+            if validate_github_pat "$pat" "repo"; then
+                break
+            fi
+            print_info "Please enter a valid PAT with the required scopes."
+        done
+    else
+        print_error "--pat is required when not running interactively"
+        exit 1
+    fi
 
-    # Create or replace the secret
-    run_cmd_sh "Configuring ArgoCD repo credentials..." \
-        --explain "ArgoCD discovers repository credentials by watching for Secrets labeled with 'argocd.argoproj.io/secret-type=repository'. The label is the signal -- ArgoCD ignores unlabeled Secrets. Piping through 'kubectl label --local' adds the label before applying, avoiding a separate patch step." \
-        '
-        kubectl create secret generic repo-creds \
-            --namespace argocd \
-            --from-literal=type=git \
-            --from-literal=url="'"${REPO_URL}"'" \
-            --from-literal=username=git \
-            --from-literal=password="'"${pat}"'" \
-            --dry-run=client -o yaml \
-            | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml \
-            | kubectl apply -f -
-    '
+    # Create or replace the secret.
+    # Build YAML via kubectl subshells (no bash -c re-parse), then pipe to apply.
+    # This prevents $-containing values in REPO_URL or pat from being re-expanded.
+    print_info "Configuring ArgoCD repo credentials..."
+    if [[ "$EXPLAIN" == "1" ]]; then
+        gum style --faint --italic "    ArgoCD discovers repository credentials by watching for Secrets labeled with 'argocd.argoproj.io/secret-type=repository'. The label is the signal; piping through 'kubectl label --local' adds the label before applying."
+    fi
+    kubectl create secret generic repo-creds \
+        --namespace argocd \
+        --from-literal=type=git \
+        --from-literal=url="${REPO_URL}" \
+        --from-literal=username=git \
+        --from-literal=password="${pat}" \
+        --dry-run=client -o yaml \
+        | kubectl label --local -f - argocd.argoproj.io/secret-type=repository -o yaml \
+        | kubectl apply -f -
 
     print_success "ArgoCD repository credentials configured for ${REPO_URL}"
 }
@@ -468,50 +693,125 @@ cmd_add_registry_creds() {
     require_cmd "kubectl" "brew install kubectl"
     load_conf
 
+    local registry_flag="" username_flag="" token_flag="" yes="false"
+    local env_flags=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --registry)
+                require_flag_value "--registry" "${2:-}"
+                registry_flag="$2"
+                shift 2
+                ;;
+            --username)
+                require_flag_value "--username" "${2:-}"
+                username_flag="$2"
+                shift 2
+                ;;
+            --token)
+                require_flag_value "--token" "${2:-}"
+                token_flag="$2"
+                shift 2
+                ;;
+            --env)
+                require_flag_value "--env" "${2:-}"
+                env_flags+=("$2")
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                cat <<EOF
+Usage: cluster-ctl.sh add-registry-creds [--registry <host>] [--username <user>] [--token <pat>] [--env <ns>]... [--yes]
+
+WARNING: passing --token inline exposes the token via 'ps', shell history, and
+CI logs. Prefer running this command interactively so it can prompt with
+hidden input.
+EOF
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected: $1"
+                exit 1
+                ;;
+        esac
+    done
+
     print_header "Configure Container Registry Credentials"
 
-    # Prompt for registry server
+    # Registry: flag wins, else prompt, else ghcr.io
     local registry
-    registry="$(gum input --value "ghcr.io" --prompt "Registry server: ")"
+    if [[ -n "$registry_flag" ]]; then
+        registry="$registry_flag"
+    elif [[ -t 0 ]]; then
+        registry="$(gum input --value "ghcr.io" --prompt "Registry server: ")"
+    else
+        registry="ghcr.io"
+    fi
     if [[ -z "$registry" ]]; then
         print_error "Registry server is required."
         exit 1
     fi
 
-    # Prompt for username
+    # Username: flag wins, else prompt, else die
     local default_username="${REPO_OWNER:-}"
     local username
-    username="$(gum input --value "$default_username" --prompt "Registry username: ")"
+    if [[ -n "$username_flag" ]]; then
+        username="$username_flag"
+    elif [[ -t 0 ]]; then
+        username="$(gum input --value "$default_username" --prompt "Registry username: ")"
+    elif [[ -n "$default_username" ]]; then
+        username="$default_username"
+    else
+        print_error "--username is required when not running interactively"
+        exit 1
+    fi
     if [[ -z "$username" ]]; then
         print_error "Username is required."
         exit 1
     fi
 
-    # Prompt for PAT
-    local pat_hint="A token with read access to the container registry."
-    if [[ "$registry" == "ghcr.io" ]]; then
-        pat_hint="A classic GitHub PAT is required."
-        print_info "Create one at: https://github.com/settings/tokens/new"
-        print_info "Required scope: read:packages"
-    fi
-    print_info "$pat_hint"
-
+    # Token: flag wins, else prompt, else die
     local pat
-    while true; do
-        pat="$(gum input --password --prompt "Registry token: ")"
-        if [[ -z "$pat" ]]; then
-            print_error "A token is required."
-            continue
+    if [[ -n "$token_flag" ]]; then
+        warn_inline_secret_flag "--token" "$token_flag"
+        pat="$token_flag"
+        if [[ "$registry" == "ghcr.io" ]] && ! validate_github_pat "$pat" "read:packages"; then
+            print_error "--token did not validate with required scope 'read:packages'"
+            exit 1
         fi
+    elif [[ -t 0 ]]; then
+        local pat_hint="A token with read access to the container registry."
         if [[ "$registry" == "ghcr.io" ]]; then
-            if validate_github_pat "$pat" "read:packages"; then
+            pat_hint="A classic GitHub PAT is required."
+            print_info "Create one at: https://github.com/settings/tokens/new"
+            print_info "Required scope: read:packages"
+        fi
+        print_info "$pat_hint"
+        while true; do
+            pat="$(gum input --password --prompt "Registry token: ")"
+            if [[ -z "$pat" ]]; then
+                print_error "A token is required."
+                continue
+            fi
+            if [[ "$registry" == "ghcr.io" ]]; then
+                if validate_github_pat "$pat" "read:packages"; then
+                    break
+                fi
+                print_info "Please enter a valid PAT with the read:packages scope."
+            else
                 break
             fi
-            print_info "Please enter a valid PAT with the read:packages scope."
-        else
-            break
-        fi
-    done
+        done
+    else
+        print_error "--token is required when not running interactively"
+        exit 1
+    fi
 
     # Detect environments from GitOps repo
     local envs=()
@@ -523,15 +823,33 @@ cmd_add_registry_creds() {
         exit 1
     fi
 
-    # Multi-select namespaces (all selected by default)
+    # Multi-select namespaces: flags win, else prompt, else all
     local selected=()
-    if [[ ${#envs[@]} -eq 1 ]]; then
+    if [[ ${#env_flags[@]} -gt 0 ]]; then
+        local ef e found
+        for ef in "${env_flags[@]}"; do
+            found=0
+            for e in "${envs[@]}"; do
+                [[ "$ef" == "$e" ]] && {
+                    found=1
+                    break
+                }
+            done
+            [[ "$found" -eq 0 ]] && {
+                print_error "Env '${ef}' not found in k8s/namespaces/"
+                exit 1
+            }
+        done
+        selected=("${env_flags[@]}")
+    elif [[ ${#envs[@]} -eq 1 ]]; then
         selected=("${envs[0]}")
         print_info "Namespace: ${selected[0]}"
-    else
+    elif [[ -t 0 ]]; then
         readarray -t selected < <(printf '%s\n' "${envs[@]}" \
             | gum choose --no-limit --selected="$(printf '%s,' "${envs[@]}" | sed 's/,$//')" \
                 --header "Select namespaces:")
+    else
+        selected=("${envs[@]}")
     fi
 
     if [[ ${#selected[@]} -eq 0 ]]; then
@@ -543,28 +861,47 @@ cmd_add_registry_creds() {
     print_info "Username:   ${username}"
     print_info "Namespaces: ${selected[*]}"
 
+    # Warn if registry-creds already exists in any selected namespace, and
+    # require --yes to overwrite.
+    local existing_ns=()
     local ns
     for ns in "${selected[@]}"; do
+        if kubectl get secret registry-creds -n "$ns" &>/dev/null; then
+            existing_ns+=("$ns")
+        fi
+    done
+    if [[ ${#existing_ns[@]} -gt 0 ]]; then
+        print_warning "registry-creds already exists in: ${existing_ns[*]}"
+        require_yes "$yes" "overwrite existing registry credentials in ${#existing_ns[@]} namespace(s)"
+    fi
+
+    # All kubectl calls below use argv form + stdin piping so flag-sourced values
+    # ($registry, $username, $pat) cannot be re-parsed as shell.
+    for ns in "${selected[@]}"; do
         # Create namespace if it doesn't exist
-        run_cmd_sh "Ensuring namespace '${ns}' exists..." \
-            --explain "Namespaces must exist before Secrets can be created in them. ArgoCD normally creates namespaces via CreateNamespace=true during sync, but registry credentials must be in place before the first sync so kubelet can pull images. Creating the namespace ahead of time is harmless -- ArgoCD's CreateNamespace is a no-op if the namespace already exists." \
-            "kubectl create namespace \"$ns\" --dry-run=client -o yaml | kubectl apply -f -"
+        print_info "Ensuring namespace '${ns}' exists..."
+        if [[ "$EXPLAIN" == "1" ]]; then
+            gum style --faint --italic "    Namespaces must exist before Secrets can be created in them. Creating ahead of time is harmless; ArgoCD's CreateNamespace is a no-op if the namespace already exists."
+        fi
+        kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
 
-        # Create docker-registry secret
-        run_cmd_sh "Creating registry credentials in '${ns}'..." \
-            --explain "Kubelet (the node agent that pulls container images) needs its own credentials for private registries. ArgoCD's Git credentials only give ArgoCD access to read Git repos -- they do not help kubelet pull container images. A kubernetes.io/dockerconfigjson Secret stores registry auth in the format kubelet expects." \
-            "kubectl create secret docker-registry registry-creds \
-                --namespace \"$ns\" \
-                --docker-server=\"$registry\" \
-                --docker-username=\"$username\" \
-                --docker-password=\"$pat\" \
-                --dry-run=client -o yaml | kubectl apply -f -"
+        # Create docker-registry secret (argv form - no shell re-parse)
+        print_info "Creating registry credentials in '${ns}'..."
+        if [[ "$EXPLAIN" == "1" ]]; then
+            gum style --faint --italic "    Kubelet needs its own credentials for private registries; a kubernetes.io/dockerconfigjson Secret stores registry auth in the format kubelet expects."
+        fi
+        kubectl create secret docker-registry registry-creds \
+            --namespace "$ns" \
+            --docker-server="$registry" \
+            --docker-username="$username" \
+            --docker-password="$pat" \
+            --dry-run=client -o yaml | kubectl apply -f -
 
-        # Patch default ServiceAccount to use the secret
-        run_cmd_sh "Patching default ServiceAccount in '${ns}'..." \
-            --explain "Every pod that does not specify a serviceAccountName runs as the 'default' ServiceAccount. By adding imagePullSecrets to this ServiceAccount, all pods in the namespace automatically inherit the registry credentials without any changes to individual workload manifests." \
-            "kubectl patch serviceaccount default -n \"$ns\" \
-                -p '{\"imagePullSecrets\": [{\"name\": \"registry-creds\"}]}'"
+        # Patch default ServiceAccount to use the secret (argv form)
+        run_cmd "Patching default ServiceAccount in '${ns}'..." \
+            --explain "Every pod that does not specify a serviceAccountName runs as the 'default' ServiceAccount. By adding imagePullSecrets to this ServiceAccount, all pods in the namespace automatically inherit the registry credentials." \
+            kubectl patch serviceaccount default -n "$ns" \
+            -p '{"imagePullSecrets": [{"name": "registry-creds"}]}'
     done
 
     print_success "Registry credentials configured for: ${selected[*]}"
@@ -576,11 +913,58 @@ cmd_add_kargo_creds() {
     require_cmd "kubectl" "brew install kubectl"
     load_conf
 
-    local app_name=""
+    local app_flag="" pat_flag="" private_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --app)
+                require_flag_value "--app" "${2:-}"
+                app_flag="$2"
+                shift 2
+                ;;
+            --pat)
+                require_flag_value "--pat" "${2:-}"
+                pat_flag="$2"
+                shift 2
+                ;;
+            --private-registry)
+                private_flag="true"
+                shift
+                ;;
+            --no-private-registry)
+                private_flag="false"
+                shift
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                cat <<EOF
+Usage: cluster-ctl.sh add-kargo-creds [app] [--pat <token>] [--private-registry] [--yes]
 
-    if [[ $# -gt 0 ]]; then
-        app_name="$1"
-    else
+WARNING: passing --pat inline exposes the token via 'ps', shell history, and
+CI logs. Prefer running this command interactively so it can prompt with
+hidden input.
+EOF
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$app_flag" ]]; then app_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local app_name="$app_flag"
+
+    if [[ -z "$app_name" ]]; then
         # Detect apps with Kargo resources and let user pick
         local kargo_apps=()
         local dir
@@ -597,8 +981,11 @@ cmd_add_kargo_creds() {
 
         if [[ ${#kargo_apps[@]} -eq 1 ]]; then
             app_name="${kargo_apps[0]}"
-        else
+        elif [[ -t 0 ]]; then
             app_name="$(printf '%s\n' "${kargo_apps[@]}" | gum choose --header "Select app:")"
+        else
+            print_error "--app is required when not running interactively"
+            exit 1
         fi
     fi
 
@@ -636,57 +1023,90 @@ cmd_add_kargo_creds() {
         exit 1
     fi
 
-    # Prompt for PAT
-    print_info "A classic GitHub PAT is required. Kargo needs write access to"
-    print_info "commit image tag updates during promotions. Create one at:"
-    print_info "  https://github.com/settings/tokens/new"
-    print_info ""
-    print_info "Required scopes: repo, read:packages (if the container registry is private)"
+    # PAT: flag wins, else prompt, else die
     local pat
-    while true; do
-        pat="$(gum input --password --prompt "GitHub PAT: ")"
-        if [[ -z "$pat" ]]; then
-            print_error "A GitHub PAT is required."
-            continue
+    if [[ -n "$pat_flag" ]]; then
+        warn_inline_secret_flag "--pat" "$pat_flag"
+        pat="$pat_flag"
+        if ! validate_github_pat "$pat" "repo" "read:packages"; then
+            print_error "--pat did not validate with required scopes 'repo' and 'read:packages'"
+            exit 1
         fi
-        if validate_github_pat "$pat" "repo" "read:packages"; then
-            break
-        fi
-        print_info "Please enter a valid PAT with the required scopes."
-    done
+    elif [[ -t 0 ]]; then
+        print_info "A classic GitHub PAT is required. Kargo needs write access to"
+        print_info "commit image tag updates during promotions. Create one at:"
+        print_info "  https://github.com/settings/tokens/new"
+        print_info ""
+        print_info "Required scopes: repo, read:packages (if the container registry is private)"
+        while true; do
+            pat="$(gum input --password --prompt "GitHub PAT: ")"
+            if [[ -z "$pat" ]]; then
+                print_error "A GitHub PAT is required."
+                continue
+            fi
+            if validate_github_pat "$pat" "repo" "read:packages"; then
+                break
+            fi
+            print_info "Please enter a valid PAT with the required scopes."
+        done
+    else
+        print_error "--pat is required when not running interactively"
+        exit 1
+    fi
 
-    # Create Git credential
-    run_cmd_sh "Configuring Kargo Git credentials..." \
-        --explain "Kargo discovers Git credentials by watching for Secrets labeled 'kargo.akuity.io/cred-type=git' inside the app's namespace (its Kargo Project namespace). Kargo needs write access to the GitOps repo so it can commit image tag updates when promoting a new image version through stages." \
-        '
-        kubectl create secret generic gitops-repo-creds \
-            --namespace "'"$app_name"'" \
-            --from-literal=type=git \
-            --from-literal=url="'"${REPO_URL}"'" \
-            --from-literal=username=git \
-            --from-literal=password="'"${pat}"'" \
-            --dry-run=client -o yaml \
-            | kubectl label --local -f - kargo.akuity.io/cred-type=git -o yaml \
-            | kubectl apply -f -
-    '
+    # Warn if gitops-repo-creds or registry-creds already exists, require --yes to overwrite.
+    local existing_kargo=()
+    if kubectl get secret gitops-repo-creds -n "$app_name" &>/dev/null; then
+        existing_kargo+=("gitops-repo-creds")
+    fi
+    if kubectl get secret registry-creds -n "$app_name" &>/dev/null; then
+        existing_kargo+=("registry-creds")
+    fi
+    if [[ ${#existing_kargo[@]} -gt 0 ]]; then
+        print_warning "Secret(s) already exist in namespace '${app_name}': ${existing_kargo[*]}"
+        require_yes "$yes" "overwrite existing Kargo credentials in namespace '${app_name}'"
+    fi
+
+    # Create Git credential (argv form + stdin pipes; no bash -c re-parse)
+    print_info "Configuring Kargo Git credentials..."
+    if [[ "$EXPLAIN" == "1" ]]; then
+        gum style --faint --italic "    Kargo discovers Git credentials by watching for Secrets labeled 'kargo.akuity.io/cred-type=git' inside the app's namespace. Kargo needs write access to commit image-tag promotions."
+    fi
+    kubectl create secret generic gitops-repo-creds \
+        --namespace "$app_name" \
+        --from-literal=type=git \
+        --from-literal=url="${REPO_URL}" \
+        --from-literal=username=git \
+        --from-literal=password="${pat}" \
+        --dry-run=client -o yaml \
+        | kubectl label --local -f - kargo.akuity.io/cred-type=git -o yaml \
+        | kubectl apply -f -
 
     print_success "Git credentials configured for ${REPO_URL}"
 
     # Optionally create registry credential
-    if gum confirm "Is the container registry private?"; then
-        run_cmd_sh "Configuring registry credentials..." \
-            --explain "Kargo's Warehouse polls the container registry to detect new image tags. For private registries it needs pull credentials, stored as a Secret labeled 'kargo.akuity.io/cred-type=image' in the app namespace. The repoURL field scopes the credential to a specific registry/repository prefix." \
-            '
-            kubectl create secret generic registry-creds \
-                --namespace "'"$app_name"'" \
-                --from-literal=type=image \
-                --from-literal=repoURL="'"${image_repo}"'" \
-                --from-literal=username=git \
-                --from-literal=password="'"${pat}"'" \
-                --dry-run=client -o yaml \
-                | kubectl label --local -f - kargo.akuity.io/cred-type=image -o yaml \
-                | kubectl apply -f -
-        '
+    local is_private="no"
+    if [[ "$private_flag" == "true" ]]; then
+        is_private="yes"
+    elif [[ "$private_flag" == "false" ]]; then
+        is_private="no"
+    elif [[ -t 0 ]]; then
+        gum confirm "Is the container registry private?" && is_private="yes"
+    fi
+    if [[ "$is_private" == "yes" ]]; then
+        print_info "Configuring registry credentials..."
+        if [[ "$EXPLAIN" == "1" ]]; then
+            gum style --faint --italic "    Kargo's Warehouse polls the registry to detect new tags; private registries need a Secret labeled 'kargo.akuity.io/cred-type=image'. repoURL scopes the credential to a specific registry/repository prefix."
+        fi
+        kubectl create secret generic registry-creds \
+            --namespace "$app_name" \
+            --from-literal=type=image \
+            --from-literal=repoURL="${image_repo}" \
+            --from-literal=username=git \
+            --from-literal=password="${pat}" \
+            --dry-run=client -o yaml \
+            | kubectl label --local -f - kargo.akuity.io/cred-type=image -o yaml \
+            | kubectl apply -f -
 
         print_success "Registry credentials configured for ${image_repo}"
     fi
@@ -1005,1412 +1425,6 @@ cmd_argo_status() {
     done
 }
 
-doctor_usage() {
-    cat <<EOF
-Usage: cluster-ctl.sh doctor [options]
-
-Run cross-layer diagnostic checks against the repo and cluster.
-
-Options:
-  --scope <val>       Limit checks to: repo | cluster | all (default: all)
-  --app <name>        Limit checks to a single application
-  --env <name>        Limit checks to a single environment
-  --verbose           Show additional diagnostic detail
-  -h, --help          Show this help message
-EOF
-}
-
-# --- Doctor finding emitters ---
-#
-# Each doctor_layer_* function resets the three DOCTOR_CURRENT_LAYER_* arrays
-# at entry, calls doctor_error/doctor_warn/doctor_info to append findings,
-# then calls render_doctor_layer at exit. Findings are stored as
-# unit-separator (\x1f) delimited strings to keep each finding as a single
-# array element while allowing multi-field payloads.
-#
-# Field layout:
-#   errors/warnings:  subject\x1fmessage\x1fwhy\x1ffix\x1fevidence
-#   infos:            subject\x1fmessage
-DOCTOR_CURRENT_LAYER_ERRORS=()
-DOCTOR_CURRENT_LAYER_WARNINGS=()
-DOCTOR_CURRENT_LAYER_INFOS=()
-
-# Reset the per-layer finding buffers. Must be called at the top of every
-# doctor_layer_* function. Forgetting this call would leak the previous
-# layer's findings into the next one's box.
-doctor_begin_layer() {
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
-}
-
-# Strip the unit-separator (\x1f) delimiter from a string so that finding
-# fields (which embed kubectl/controller output) cannot corrupt the pack
-# boundary. kubectl/jq output should never contain \x1f, but sanitizing at
-# the pack site makes the invariant load-bearing rather than aspirational.
-_doctor_sanitize() { printf '%s' "${1//$'\x1f'/}"; }
-
-doctor_error() {
-    local subject msg why fix
-    subject="$(_doctor_sanitize "$1")"
-    msg="$(_doctor_sanitize "$2")"
-    why="$(_doctor_sanitize "$3")"
-    fix="$(_doctor_sanitize "$4")"
-    shift 4
-    local evidence=""
-    if [[ $# -gt 0 ]]; then
-        evidence="$(_doctor_sanitize "$(printf '%s\n' "$@")")"
-    fi
-    DOCTOR_CURRENT_LAYER_ERRORS+=("${subject}"$'\x1f'"${msg}"$'\x1f'"${why}"$'\x1f'"${fix}"$'\x1f'"${evidence}")
-    DOCTOR_ERRORS=$((DOCTOR_ERRORS + 1))
-}
-
-doctor_warn() {
-    local subject msg why fix
-    subject="$(_doctor_sanitize "$1")"
-    msg="$(_doctor_sanitize "$2")"
-    why="$(_doctor_sanitize "$3")"
-    fix="$(_doctor_sanitize "$4")"
-    shift 4
-    local evidence=""
-    if [[ $# -gt 0 ]]; then
-        evidence="$(_doctor_sanitize "$(printf '%s\n' "$@")")"
-    fi
-    DOCTOR_CURRENT_LAYER_WARNINGS+=("${subject}"$'\x1f'"${msg}"$'\x1f'"${why}"$'\x1f'"${fix}"$'\x1f'"${evidence}")
-    DOCTOR_WARNINGS=$((DOCTOR_WARNINGS + 1))
-}
-
-doctor_info() {
-    local subject msg
-    subject="$(_doctor_sanitize "$1")"
-    msg="$(_doctor_sanitize "$2")"
-    DOCTOR_CURRENT_LAYER_INFOS+=("${subject}"$'\x1f'"${msg}")
-    DOCTOR_INFOS=$((DOCTOR_INFOS + 1))
-}
-
-# Unpacks a \x1f-delimited finding entry into the caller-supplied array name.
-# Usage: doctor_unpack_fields <entry> <dest-array-name>
-doctor_unpack_fields() {
-    local entry="$1"
-    local -n _dest="$2"
-    IFS=$'\x1f' read -r -d '' -a _dest < <(printf '%s\x1f\x00' "$entry")
-}
-
-# Marker for layers with no findings. No-op; render_doctor_layer handles the
-# empty case directly.
-doctor_clean() {
-    :
-}
-
-# Records a layer skip and prints the one-liner. Single source of truth for
-# skip rendering across scope/tool/cluster-unreachable skips.
-doctor_skip_layer() {
-    local layer_name="$1" reason="$2"
-    DOCTOR_SKIPPED_LAYERS+=("${layer_name} (${reason})")
-    local marker header reason_styled
-    marker="$(gum style --faint "○")"
-    header="$(gum style --bold "${layer_name}")"
-    reason_styled="$(gum style --faint "skipped (${reason})")"
-    printf "▸ %s %s %s\n" "$header" "$marker" "$reason_styled"
-}
-
-# Gate used by layers that require a live cluster. Appends to
-# DOCTOR_SKIPPED_LAYERS and prints a one-liner when the layer can't run.
-# Returns 0 when the layer can proceed, 1 when the caller should return early.
-needs_cluster_or_skip() {
-    local layer_name="$1"
-    local reason=""
-    if [[ "$DOCTOR_SCOPE" == "repo" ]]; then
-        reason="scope=repo"
-    elif [[ "$DOCTOR_CLUSTER_REACHABLE" -eq 0 ]]; then
-        reason="cluster unreachable"
-    else
-        return 0
-    fi
-    doctor_skip_layer "$layer_name" "$reason"
-    return 1
-}
-
-# Returns 0 if the given app/env pass the --app / --env filters, 1 otherwise.
-# An empty app or env argument means "this dimension is not applicable to the
-# finding" and will not be checked against the corresponding filter.
-doctor_matches_filter() {
-    local app="$1" env="$2"
-    [[ -n "$DOCTOR_APP" && -n "$app" && "$app" != "$DOCTOR_APP" ]] && return 1
-    [[ -n "$DOCTOR_ENV" && -n "$env" && "$env" != "$DOCTOR_ENV" ]] && return 1
-    return 0
-}
-
-# Renders an error- or warning-shaped finding block into $content.
-# Appends to caller's $content and mutates $first. Called by render_doctor_layer.
-# Usage: _render_doctor_findings <array-name> <icon>
-_render_doctor_findings() {
-    local -n _entries="$1"
-    local icon="$2"
-    local entry subject msg why fix evidence
-    local -a fields
-    for entry in "${_entries[@]}"; do
-        doctor_unpack_fields "$entry" fields
-        subject="${fields[0]}"; msg="${fields[1]}"; why="${fields[2]}"; fix="${fields[3]}"; evidence="${fields[4]}"
-        if [[ $first -eq 0 ]]; then content+=$'\n'; fi
-        first=0
-        content+="${icon} $(gum style --bold "${subject}")"$'\n'
-        content+="    ${msg}"$'\n'
-        content+="    $(gum style --faint "why:") ${why}"$'\n'
-        content+="    $(gum style --faint "fix:") ${fix}"
-        if [[ "$DOCTOR_VERBOSE" -eq 1 && -n "$evidence" ]]; then
-            content+=$'\n'"    $(gum style --faint "evidence:")"
-            while IFS= read -r line; do
-                content+=$'\n'"      ${line}"
-            done <<<"$evidence"
-        fi
-    done
-}
-
-# Reads DOCTOR_CURRENT_LAYER_* arrays and prints either a clean one-liner
-# or a gum-bordered box of findings.
-render_doctor_layer() {
-    local layer_name="$1"
-
-    if [[ ${#DOCTOR_CURRENT_LAYER_ERRORS[@]} -eq 0 \
-          && ${#DOCTOR_CURRENT_LAYER_WARNINGS[@]} -eq 0 \
-          && ${#DOCTOR_CURRENT_LAYER_INFOS[@]} -eq 0 ]]; then
-        local check
-        check="$(gum style --foreground 2 "✓")"
-        local header
-        header="$(gum style --bold "${layer_name}")"
-        printf "▸ %s %s\n" "$header" "$check"
-        return 0
-    fi
-
-    local content=""
-    content+="$(gum style --bold "${layer_name}")"$'\n'
-
-    local entry subject msg why fix evidence
-    local icon_err icon_warn icon_info
-    icon_err="$(gum style --foreground 1 --bold "✗")"
-    icon_warn="$(gum style --foreground 3 --bold "⚠")"
-    icon_info="$(gum style --faint "ℹ")"
-
-    local first=1
-    local -a fields
-    _render_doctor_findings DOCTOR_CURRENT_LAYER_ERRORS "$icon_err"
-    _render_doctor_findings DOCTOR_CURRENT_LAYER_WARNINGS "$icon_warn"
-
-    for entry in "${DOCTOR_CURRENT_LAYER_INFOS[@]}"; do
-        doctor_unpack_fields "$entry" fields
-        subject="${fields[0]}"; msg="${fields[1]}"
-        if [[ $first -eq 0 ]]; then content+=$'\n'; fi
-        first=0
-        content+="${icon_info} $(gum style --faint "${subject}"): ${msg}"
-    done
-
-    gum style --border rounded --padding "0 1" "$content"
-}
-
-# Returns the doctor exit code based on accumulated counters:
-#   0 = clean (nothing emitted)
-#   1 = warnings and/or infos only
-#   2 = any errors
-doctor_exit_code() {
-    if [[ "$DOCTOR_ERRORS" -gt 0 ]]; then
-        echo 2
-    elif [[ "$DOCTOR_WARNINGS" -gt 0 || "$DOCTOR_INFOS" -gt 0 ]]; then
-        echo 1
-    else
-        echo 0
-    fi
-}
-
-render_doctor_summary() {
-    local scheduled=${DOCTOR_LAYERS_INVOKED:-0}
-    local skipped=${#DOCTOR_SKIPPED_LAYERS[@]}
-    local layers_checked=$((scheduled - skipped))
-    local code
-    code="$(doctor_exit_code)"
-
-    local icon_err icon_warn icon_info
-    icon_err="$(gum style --foreground 1 --bold "✗")"
-    icon_warn="$(gum style --foreground 3 --bold "⚠")"
-    icon_info="$(gum style --faint "ℹ")"
-
-    local content=""
-    content+="$(gum style --bold "Summary")"$'\n'
-    content+="${layers_checked} layers checked, ${skipped} skipped"$'\n'
-    content+="${icon_err} ${DOCTOR_ERRORS} errors  ${icon_warn} ${DOCTOR_WARNINGS} warnings  ${icon_info} ${DOCTOR_INFOS} infos"$'\n'
-    content+="Exit: ${code}"
-
-    gum style --border rounded --padding "0 1" "$content"
-}
-
-doctor_layer_1_prereqs() {
-    doctor_begin_layer
-
-    local tool
-    for tool in kubectl jq helm k3d docker curl; do
-        if ! command -v "$tool" &>/dev/null; then
-            doctor_error "$tool" \
-                "Required CLI not found on PATH" \
-                "cluster-ctl.sh doctor depends on \`${tool}\` for cluster inspection" \
-                "brew install ${tool}"
-        fi
-    done
-
-    if ! docker info &>/dev/null; then
-        doctor_error "docker" \
-            "Docker daemon not running" \
-            "kubectl and k3d both need Docker to reach the cluster" \
-            "Start Docker Desktop or OrbStack"
-    fi
-
-    if [[ "$DOCTOR_SCOPE" != "repo" ]]; then
-        if kubectl cluster-info &>/dev/null; then
-            DOCTOR_CLUSTER_REACHABLE=1
-        else
-            doctor_warn "cluster" \
-                "Kubernetes cluster not reachable via current kubeconfig context" \
-                "layers 2/5/6/7/8/9 need a live cluster" \
-                "Run 'cluster-ctl.sh init-cluster' or check your kubeconfig context with 'kubectl config current-context'"
-        fi
-    fi
-
-    render_doctor_layer "Layer 1: Prerequisites"
-}
-
-doctor_layer_2_controllers() {
-    doctor_begin_layer
-    needs_cluster_or_skip "Layer 2: Controllers" || return 0
-
-    if ! kubectl get ns argocd &>/dev/null; then
-        doctor_error "argocd" \
-            "argocd namespace does not exist" \
-            "ArgoCD is not installed in this cluster" \
-            "Run 'cluster-ctl.sh init-cluster' to install ArgoCD"
-        render_doctor_layer "Layer 2: Controllers"
-        return 0
-    fi
-
-    local deploy avail
-    for deploy in argocd-server argocd-repo-server argocd-applicationset-controller; do
-        if ! kubectl -n argocd get deploy "$deploy" &>/dev/null; then
-            doctor_error "$deploy" \
-                "ArgoCD deployment missing" \
-                "${deploy} does not exist in the argocd namespace" \
-                "Run 'cluster-ctl.sh init-cluster' or 'cluster-ctl.sh upgrade-argocd' to reinstall"
-            continue
-        fi
-        avail="$(kubectl -n argocd get deploy "$deploy" -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
-        if [[ -z "$avail" || "$avail" -eq 0 ]]; then
-            doctor_error "$deploy" \
-                "ArgoCD deployment not Ready" \
-                "${deploy} has 0 available replicas" \
-                "Check pod logs: 'kubectl -n argocd describe deploy ${deploy}'"
-        fi
-    done
-
-    if find "${TARGET_DIR}/k8s/apps" -type f -name 'sealed-secret.yaml' -path '*/overlays/*' 2>/dev/null | grep -q .; then
-        if ! kubectl -n kube-system get deploy sealed-secrets-controller &>/dev/null; then
-            doctor_error "sealed-secrets-controller" \
-                "sealed-secrets controller missing" \
-                "repo contains sealed-secret.yaml overlays but the controller is not installed" \
-                "Run 'secret-ctl.sh init' to install the sealed-secrets controller"
-        else
-            avail="$(kubectl -n kube-system get deploy sealed-secrets-controller -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
-            if [[ -z "$avail" || "$avail" -eq 0 ]]; then
-                doctor_error "sealed-secrets-controller" \
-                    "sealed-secrets controller not Ready" \
-                    "repo contains sealed-secret.yaml overlays but the controller has 0 available replicas" \
-                    "Check pod logs: 'kubectl -n kube-system describe deploy sealed-secrets-controller'"
-            fi
-        fi
-    fi
-
-    if is_kargo_enabled; then
-        if ! kubectl -n cert-manager get deploy cert-manager-webhook &>/dev/null; then
-            doctor_error "cert-manager-webhook" \
-                "cert-manager webhook missing" \
-                "cert-manager is not installed; Kargo depends on cert-manager" \
-                "Run 'cluster-ctl.sh upgrade-kargo' or install cert-manager"
-        else
-            avail="$(kubectl -n cert-manager get deploy cert-manager-webhook -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
-            if [[ -z "$avail" || "$avail" -eq 0 ]]; then
-                doctor_error "cert-manager-webhook" \
-                    "cert-manager webhook not Ready" \
-                    "cert-manager-webhook has 0 available replicas; Kargo depends on cert-manager" \
-                    "Check pod logs: 'kubectl -n cert-manager describe deploy cert-manager-webhook'"
-            fi
-        fi
-
-        local kargo_deploy
-        for kargo_deploy in kargo-api kargo-controller; do
-            if ! kubectl -n kargo get deploy "$kargo_deploy" &>/dev/null; then
-                doctor_error "$kargo_deploy" \
-                    "Kargo deployment missing" \
-                    "${kargo_deploy} does not exist in the kargo namespace" \
-                    "Run 'cluster-ctl.sh upgrade-kargo' to reinstall"
-                continue
-            fi
-            avail="$(kubectl -n kargo get deploy "$kargo_deploy" -o jsonpath='{.status.availableReplicas}' 2>/dev/null)"
-            if [[ -z "$avail" || "$avail" -eq 0 ]]; then
-                doctor_error "$kargo_deploy" \
-                    "Kargo deployment not Ready" \
-                    "${kargo_deploy} has 0 available replicas" \
-                    "Check pod logs: 'kubectl -n kargo describe deploy ${kargo_deploy}'"
-            fi
-        done
-    fi
-
-    render_doctor_layer "Layer 2: Controllers"
-}
-
-doctor_layer_3_repo_structure() {
-    doctor_begin_layer
-
-    if [[ "$DOCTOR_SCOPE" == "cluster" ]]; then
-        doctor_skip_layer "Layer 3: Repo structure" "scope=cluster"
-        return 0
-    fi
-
-    local apps_dir="${TARGET_DIR}/argocd/apps"
-    local first_manifest_url=""
-    local app_file basename_file meta_name app env app_path app_repo app_project
-
-    if [[ -d "$apps_dir" ]]; then
-        for app_file in "$apps_dir"/*.yaml; do
-            [[ -f "$app_file" ]] || continue
-            basename_file="$(basename "$app_file")"
-            # Skip umbrella apps
-            [[ "$basename_file" == "projects.yaml" || "$basename_file" == "kargo.yaml" ]] && continue
-
-            meta_name="$(yq eval '.metadata.name // ""' "$app_file" 2>/dev/null)"
-            app_path="$(yq eval '.spec.source.path // ""' "$app_file" 2>/dev/null)"
-            app_repo="$(yq eval '.spec.source.repoURL // ""' "$app_file" 2>/dev/null)"
-            app_project="$(yq eval '.spec.project // ""' "$app_file" 2>/dev/null)"
-
-            # Parse app/env from metadata name: split on last hyphen
-            if [[ "$meta_name" == *-* ]]; then
-                app="${meta_name%-*}"
-                env="${meta_name##*-}"
-            else
-                app="$meta_name"
-                env=""
-            fi
-
-            doctor_matches_filter "$app" "$env" || continue
-
-            # Remember first manifest's repoURL for drift check
-            if [[ -z "$first_manifest_url" && -n "$app_repo" ]]; then
-                first_manifest_url="$app_repo"
-            fi
-
-            # Step 2: overlay path existence
-            if [[ -n "$app_path" && ! -d "${TARGET_DIR}/${app_path}" ]]; then
-                doctor_error "${meta_name}" \
-                    "Application references missing overlay path" \
-                    "'${app_path}' does not exist under ${TARGET_DIR}" \
-                    "Create the overlay directory or fix 'spec.source.path' in argocd/apps/${basename_file}"
-            fi
-
-            # Step 3: AppProject existence
-            if [[ -n "$app_project" && "$app_project" != "default" ]]; then
-                if [[ ! -f "${TARGET_DIR}/argocd/projects/${app_project}.yaml" ]]; then
-                    doctor_error "${meta_name}" \
-                        "Application references missing AppProject" \
-                        "project '${app_project}' has no manifest in argocd/projects/" \
-                        "Run 'infra-ctl.sh add-project <name>' or change to 'default' project"
-                fi
-            fi
-        done
-    fi
-
-    # Step 4: Kargo promotion-order envs
-    if is_kargo_enabled; then
-        local promo_file="${TARGET_DIR}/kargo/promotion-order.txt"
-        if [[ ! -f "$promo_file" ]]; then
-            doctor_warn "promotion-order" \
-                "KARGO_ENABLED=true but kargo/promotion-order.txt is missing" \
-                ".infra-ctl.conf enables Kargo but no promotion order file exists" \
-                "Run 'infra-ctl.sh init' to regenerate or create kargo/promotion-order.txt manually"
-        else
-            read_promotion_order
-            local promo_env
-            for promo_env in "${PROMOTION_ORDER[@]}"; do
-                if [[ ! -f "${TARGET_DIR}/k8s/namespaces/${promo_env}.yaml" ]]; then
-                    doctor_warn "promotion-order" \
-                        "Promotion order references env without namespace" \
-                        "env '${promo_env}' in kargo/promotion-order.txt has no k8s/namespaces/${promo_env}.yaml" \
-                        "Run 'infra-ctl.sh add-env ${promo_env}' or remove from kargo/promotion-order.txt"
-                fi
-            done
-        fi
-    fi
-
-    # Step 5: Repo URL drift
-    if [[ -f "${TARGET_DIR}/.infra-ctl.conf" && -n "$first_manifest_url" ]]; then
-        load_conf
-        if [[ -n "$REPO_URL" && "$REPO_URL" != "$first_manifest_url" ]]; then
-            doctor_warn ".infra-ctl.conf" \
-                "REPO_URL differs from Application manifests" \
-                "conf says '${REPO_URL}', first Application manifest says '${first_manifest_url}'" \
-                "Update .infra-ctl.conf REPO_URL or fix Application manifests"
-        fi
-    fi
-
-    render_doctor_layer "Layer 3: Repo structure"
-}
-
-# Returns distinct Secret names referenced by a workload's base manifests.
-# Scans for secretKeyRef.name and envFrom[].secretRef.name in Deployment and
-# StatefulSet manifests under k8s/apps/<app>/base/.
-# Usage: scan_workload_secret_refs <app>
-scan_workload_secret_refs() {
-    local app="$1"
-    local base_dir="${TARGET_DIR}/k8s/apps/${app}/base"
-    [[ ! -d "$base_dir" ]] && return 0
-
-    local file
-    {
-        for file in "$base_dir"/*.yaml; do
-            [[ ! -f "$file" ]] && continue
-            yq eval '.. | select(has("secretKeyRef")).secretKeyRef.name' "$file" 2>/dev/null
-            yq eval '.. | select(has("secretRef")).secretRef.name' "$file" 2>/dev/null
-        done
-    } | awk 'NF && $0 != "null"' | sort -u
-}
-
-# Returns distinct ConfigMap names referenced by a workload's base manifests.
-# Usage: scan_workload_configmap_refs <app>
-scan_workload_configmap_refs() {
-    local app="$1"
-    local base_dir="${TARGET_DIR}/k8s/apps/${app}/base"
-    [[ ! -d "$base_dir" ]] && return 0
-
-    local file
-    {
-        for file in "$base_dir"/*.yaml; do
-            [[ ! -f "$file" ]] && continue
-            yq eval '.. | select(has("configMapKeyRef")).configMapKeyRef.name' "$file" 2>/dev/null
-            yq eval '.. | select(has("configMapRef")).configMapRef.name' "$file" 2>/dev/null
-        done
-    } | awk 'NF && $0 != "null"' | sort -u
-}
-
-# Returns 0 if the overlay supplies a Secret/SealedSecret with the given name,
-# 1 otherwise. Checks:
-#   (a) any file in the overlay's kustomization resources list defines a
-#       Secret or SealedSecret with metadata.name == <secret_name>
-#   (b) the overlay's kustomization has a secretGenerator with that name
-# Checks the base kustomization's secretGenerator as fallback.
-# Usage: overlay_has_secret_manifest <app> <env> <secret_name>
-overlay_has_secret_manifest() {
-    local app="$1" env="$2" secret_name="$3"
-    local overlay_kust="${TARGET_DIR}/k8s/apps/${app}/overlays/${env}/kustomization.yaml"
-    local overlay_dir="${TARGET_DIR}/k8s/apps/${app}/overlays/${env}"
-    local base_kust="${TARGET_DIR}/k8s/apps/${app}/base/kustomization.yaml"
-
-    # Check (b) overlay secretGenerator
-    if [[ -f "$overlay_kust" ]]; then
-        local gen_names
-        gen_names="$(yq eval '.secretGenerator[]?.name' "$overlay_kust" 2>/dev/null)"
-        if grep -Fqx -- "$secret_name" <<<"$gen_names"; then
-            return 0
-        fi
-    fi
-
-    # Check (a) resources listed in overlay kustomization that define the Secret
-    local resource resource_path
-    while IFS= read -r resource; do
-        [[ -z "$resource" ]] && continue
-        # Skip directory references and non-local refs
-        [[ "$resource" == *..* || "$resource" == /* || "$resource" == http* ]] && continue
-        resource_path="${overlay_dir}/${resource}"
-        [[ ! -f "$resource_path" ]] && continue
-        # Check if this file defines a Secret or SealedSecret with the right name.
-        # yq eval returns one line per doc in a multi-doc file; grep for exact match.
-        if yq eval 'select(.kind == "Secret" or .kind == "SealedSecret") | .metadata.name' "$resource_path" 2>/dev/null \
-                | grep -Fqx -- "$secret_name"; then
-            return 0
-        fi
-    done < <(kustomization_resources "$overlay_kust")
-
-    # Check base kustomization's secretGenerator (rarely used but valid)
-    if [[ -f "$base_kust" ]]; then
-        local base_gen_names
-        base_gen_names="$(yq eval '.secretGenerator[]?.name' "$base_kust" 2>/dev/null)"
-        if grep -Fqx -- "$secret_name" <<<"$base_gen_names"; then
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
-# Returns 0 if the overlay supplies a ConfigMap with the given name, 1 otherwise.
-# Mirrors overlay_has_secret_manifest but checks configMapGenerator and
-# kind: ConfigMap. Also checks the base kustomization's configMapGenerator.
-# Usage: overlay_has_configmap_manifest <app> <env> <cm_name>
-overlay_has_configmap_manifest() {
-    local app="$1" env="$2" cm_name="$3"
-    local overlay_kust="${TARGET_DIR}/k8s/apps/${app}/overlays/${env}/kustomization.yaml"
-    local overlay_dir="${TARGET_DIR}/k8s/apps/${app}/overlays/${env}"
-    local base_kust="${TARGET_DIR}/k8s/apps/${app}/base/kustomization.yaml"
-
-    # Check overlay configMapGenerator
-    if [[ -f "$overlay_kust" ]]; then
-        local gen_names
-        gen_names="$(yq eval '.configMapGenerator[]?.name' "$overlay_kust" 2>/dev/null)"
-        if grep -Fqx -- "$cm_name" <<<"$gen_names"; then
-            return 0
-        fi
-    fi
-
-    # Check resources listed in overlay kustomization that define the ConfigMap
-    local resource resource_path
-    while IFS= read -r resource; do
-        [[ -z "$resource" ]] && continue
-        [[ "$resource" == *..* || "$resource" == /* || "$resource" == http* ]] && continue
-        resource_path="${overlay_dir}/${resource}"
-        [[ ! -f "$resource_path" ]] && continue
-        if yq eval 'select(.kind == "ConfigMap") | .metadata.name' "$resource_path" 2>/dev/null \
-                | grep -Fqx -- "$cm_name"; then
-            return 0
-        fi
-    done < <(kustomization_resources "$overlay_kust")
-
-    # Check base kustomization's configMapGenerator (typical case)
-    if [[ -f "$base_kust" ]]; then
-        local base_gen_names
-        base_gen_names="$(yq eval '.configMapGenerator[]?.name' "$base_kust" 2>/dev/null)"
-        if grep -Fqx -- "$cm_name" <<<"$base_gen_names"; then
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
-doctor_layer_4_alignment() {
-    doctor_begin_layer
-
-    if [[ "$DOCTOR_SCOPE" == "cluster" ]]; then
-        doctor_skip_layer "Layer 4: Alignment" "scope=cluster"
-        return 0
-    fi
-
-    local apps_dir="${TARGET_DIR}/argocd/apps"
-    local app_file basename_file meta_name app env
-
-    if [[ -d "$apps_dir" ]]; then
-        for app_file in "$apps_dir"/*.yaml; do
-            [[ -f "$app_file" ]] || continue
-            basename_file="$(basename "$app_file")"
-            [[ "$basename_file" == "projects.yaml" || "$basename_file" == "kargo.yaml" ]] && continue
-
-            meta_name="$(yq eval '.metadata.name // ""' "$app_file" 2>/dev/null)"
-            [[ -z "$meta_name" ]] && continue
-
-            if [[ "$meta_name" == *-* ]]; then
-                app="${meta_name%-*}"
-                env="${meta_name##*-}"
-            else
-                app="$meta_name"
-                env=""
-            fi
-
-            doctor_matches_filter "$app" "$env" || continue
-
-            # Secret refs
-            local secrets secret
-            secrets="$(scan_workload_secret_refs "$app")"
-            while IFS= read -r secret; do
-                [[ -z "$secret" ]] && continue
-                if ! overlay_has_secret_manifest "$app" "$env" "$secret"; then
-                    doctor_error "${app}-${env}" \
-                        "Secret '${secret}' referenced but not in overlay" \
-                        "base manifest uses secretKeyRef/envFrom for '${secret}', but overlays/${env}/kustomization.yaml does not include a sealed-secret or secretGenerator for it" \
-                        "secret-ctl.sh add ${app} ${env}" \
-                        "k8s/apps/${app}/base/ references secretKeyRef.name: ${secret}" \
-                        "k8s/apps/${app}/overlays/${env}/kustomization.yaml does not provide the secret"
-                fi
-            done <<<"$secrets"
-
-            # ConfigMap refs (warnings)
-            local configmaps cm
-            configmaps="$(scan_workload_configmap_refs "$app")"
-            while IFS= read -r cm; do
-                [[ -z "$cm" ]] && continue
-                if ! overlay_has_configmap_manifest "$app" "$env" "$cm"; then
-                    doctor_warn "${app}-${env}" \
-                        "ConfigMap '${cm}' referenced but not in overlay" \
-                        "base manifest uses configMapKeyRef/envFrom for '${cm}', but neither base nor overlays/${env}/kustomization.yaml provides a configMapGenerator or ConfigMap manifest for it" \
-                        "Add configMapGenerator to k8s/apps/${app}/base/kustomization.yaml or overlays/${env}/kustomization.yaml" \
-                        "k8s/apps/${app}/base/ references configMapRef/configMapKeyRef name: ${cm}" \
-                        "neither base nor overlays/${env} supplies a ConfigMap named '${cm}'"
-                fi
-            done <<<"$configmaps"
-        done
-    fi
-
-    # Orphaned sealed-secret check
-    local ss_file rel path_in_repo orphan_app orphan_env overlay_kust resources_list
-    for ss_file in "${TARGET_DIR}"/k8s/apps/*/overlays/*/sealed-secret.yaml; do
-        [[ -f "$ss_file" ]] || continue
-        # Extract app and env from path: .../k8s/apps/<app>/overlays/<env>/sealed-secret.yaml
-        rel="${ss_file#${TARGET_DIR}/k8s/apps/}"
-        orphan_app="${rel%%/*}"
-        rel="${rel#*/overlays/}"
-        orphan_env="${rel%%/*}"
-
-        doctor_matches_filter "$orphan_app" "$orphan_env" || continue
-
-        overlay_kust="${TARGET_DIR}/k8s/apps/${orphan_app}/overlays/${orphan_env}/kustomization.yaml"
-        [[ -f "$overlay_kust" ]] || continue
-        resources_list="$(kustomization_resources "$overlay_kust")"
-        if ! grep -Fqx -- "sealed-secret.yaml" <<<"$resources_list"; then
-            doctor_error "${orphan_app}-${orphan_env}" \
-                "sealed-secret.yaml exists but not wired into kustomization" \
-                "k8s/apps/${orphan_app}/overlays/${orphan_env}/sealed-secret.yaml is on disk but not listed in the kustomization's resources" \
-                "Add '- sealed-secret.yaml' to the resources list in k8s/apps/${orphan_app}/overlays/${orphan_env}/kustomization.yaml" \
-                "file exists: k8s/apps/${orphan_app}/overlays/${orphan_env}/sealed-secret.yaml" \
-                "overlay kustomization.yaml resources list does not reference it"
-        fi
-    done
-
-    render_doctor_layer "Layer 4: Alignment"
-}
-
-doctor_layer_5_credentials() {
-    doctor_begin_layer
-
-    needs_cluster_or_skip "Layer 5: Credentials" || return 0
-
-    # --- Private repo check: ArgoCD repo credentials ---
-    local is_private="" repo_full_name=""
-    if [[ -f "${TARGET_DIR}/.infra-ctl.conf" ]]; then
-        load_conf
-        if [[ -n "${REPO_URL:-}" ]]; then
-            repo_full_name="$(echo "$REPO_URL" | sed -E 's|^https?://github\.com/||; s|\.git$||')"
-            if command -v gh >/dev/null 2>&1; then
-                is_private="$(gh repo view "$repo_full_name" --json isPrivate -q .isPrivate 2>/dev/null)" || is_private=""
-            fi
-        fi
-    else
-        doctor_info ".infra-ctl.conf" "missing; skipping private-repo credential checks"
-    fi
-
-    if [[ "$is_private" == "true" ]]; then
-        local repo_secrets_count
-        repo_secrets_count="$(kubectl -n argocd get secrets -l argocd.argoproj.io/secret-type=repository -o name 2>/dev/null | wc -l | tr -d ' ')"
-        if [[ "$repo_secrets_count" == "0" ]]; then
-            doctor_error "argocd-repo-creds" \
-                "Private repo without ArgoCD repo credentials" \
-                "ArgoCD cannot sync from a private repository without authentication; repo ${repo_full_name} is private" \
-                "Run 'cluster-ctl.sh add-argo-creds'"
-        fi
-    elif [[ -z "$is_private" && -n "$repo_full_name" ]]; then
-        doctor_info "gh" "could not determine privacy of ${repo_full_name}; skipping ArgoCD repo-cred check"
-    fi
-
-    # --- Registry credentials check per environment ---
-    declare -A seen=()
-    local env
-    while IFS= read -r env; do
-        [[ -z "$env" ]] && continue
-        doctor_matches_filter "" "$env" || continue
-        # Namespace may not exist yet
-        kubectl get ns "$env" >/dev/null 2>&1 || continue
-        local images
-        images="$(kubectl -n "$env" get pods -o jsonpath='{.items[*].spec.containers[*].image}' 2>/dev/null | tr ' ' '\n' | sort -u)"
-        [[ -z "$images" ]] && continue
-        local has_pull_secrets
-        has_pull_secrets="$(kubectl -n "$env" get sa default -o jsonpath='{.imagePullSecrets}' 2>/dev/null)"
-        local image first_segment registry key
-        while IFS= read -r image; do
-            [[ -z "$image" ]] && continue
-            first_segment="${image%%/*}"
-            if [[ "$image" == *"/"* && ( "$first_segment" == *.* || "$first_segment" == *:* || "$first_segment" == "localhost" ) ]]; then
-                registry="$first_segment"
-            else
-                registry="docker.io"
-            fi
-            [[ "$registry" == "docker.io" ]] && continue
-            [[ -n "$has_pull_secrets" ]] && continue
-            key="${env}:${registry}"
-            if [[ -z "${seen[$key]:-}" ]]; then
-                seen[$key]=1
-                doctor_warn "${env}/${registry}" \
-                    "Non-docker.io image without imagePullSecret" \
-                    "pods in namespace '${env}' use images from '${registry}', but the namespace's default ServiceAccount has no imagePullSecrets configured" \
-                    "Run 'cluster-ctl.sh add-registry-creds'"
-            fi
-        done <<<"$images"
-    done < <(detect_envs)
-
-    # --- Kargo git credentials check (private repo + Kargo enabled) ---
-    if is_kargo_enabled && [[ "$is_private" == "true" ]]; then
-        local kargo_app_dir kargo_ns kargo_git_secrets
-        if [[ -d "${TARGET_DIR}/kargo" ]]; then
-            for kargo_app_dir in "${TARGET_DIR}"/kargo/*/; do
-                [[ -d "$kargo_app_dir" ]] || continue
-                kargo_ns="$(basename "$kargo_app_dir")"
-                # Namespace may not exist yet; skip silently
-                kubectl get ns "$kargo_ns" >/dev/null 2>&1 || continue
-                kargo_git_secrets="$(kubectl -n "$kargo_ns" get secrets -l kargo.akuity.io/cred-type=git -o name 2>/dev/null | wc -l | tr -d ' ')"
-                if [[ "$kargo_git_secrets" == "0" ]]; then
-                    doctor_warn "${kargo_ns}" \
-                        "Kargo missing git credentials for private repo" \
-                        "Kargo cannot discover freight from a private git repo without credentials" \
-                        "Run 'cluster-ctl.sh add-kargo-creds'"
-                fi
-            done
-        fi
-    fi
-
-    render_doctor_layer "Layer 5: Credentials"
-}
-
-doctor_layer_6_runtime() {
-    doctor_begin_layer
-
-    needs_cluster_or_skip "Layer 6: Runtime" || return 0
-
-    local apps_json
-    apps_json="$(kubectl get applications -n argocd -o json 2>/dev/null)" || apps_json=""
-    if [[ -z "$apps_json" ]]; then
-        render_doctor_layer "Layer 6: Runtime"
-        return 0
-    fi
-
-    # --- ArgoCD Application health summary ---
-    # Emit rows: name<TAB>sync<TAB>health<TAB>destNs<TAB>condMsg
-    # Skip umbrella apps (projects, kargo, or destination ns == argocd).
-    local app_rows
-    app_rows="$(jq -r '
-        .items[]
-        | select(.metadata.name != "projects" and .metadata.name != "kargo")
-        | select((.spec.destination.namespace // "") != "argocd")
-        | [
-            .metadata.name,
-            (.status.sync.status // "Unknown"),
-            (.status.health.status // "Unknown"),
-            (.spec.destination.namespace // ""),
-            (.status.conditions[0].message // "")
-          ] | @tsv
-    ' <<<"$apps_json")"
-
-    # Collect the set of target namespaces from the filtered apps.
-    declare -A target_namespaces=()
-
-    local line name sync health dest_ns cond_msg app env why
-    while IFS=$'\t' read -r name sync health dest_ns cond_msg; do
-        [[ -z "$name" ]] && continue
-        # Parse app / env via last-hyphen split.
-        app="${name%-*}"
-        env="${name##*-}"
-        doctor_matches_filter "$app" "$env" || continue
-
-        # Record destination namespace for the pod/pvc/svc scans below.
-        [[ -n "$dest_ns" ]] && target_namespaces["$dest_ns"]=1
-
-        # Healthy + Synced: nothing to report.
-        if [[ "$health" == "Healthy" && "$sync" == "Synced" ]]; then
-            continue
-        fi
-
-        why="$cond_msg"
-        [[ -z "$why" ]] && why="sync=${sync} health=${health}"
-        if [[ ${#why} -gt 120 ]]; then
-            why="${why:0:117}..."
-        fi
-
-        if [[ "$health" == "Degraded" || "$health" == "Missing" ]]; then
-            doctor_error "$name" \
-                "ArgoCD Application is ${health}" \
-                "$why" \
-                "Check 'kubectl -n argocd describe app ${name}'"
-        elif [[ "$health" == "Progressing" ]]; then
-            doctor_warn "$name" \
-                "ArgoCD Application has not converged (Progressing)" \
-                "$why" \
-                "Check pod events: 'kubectl -n ${dest_ns} get events --sort-by=.lastTimestamp'"
-        elif [[ "$health" == "Unknown" || "$sync" == "Unknown" ]]; then
-            doctor_warn "$name" \
-                "ArgoCD Application status is Unknown" \
-                "$why" \
-                "Check 'kubectl -n argocd describe app ${name}'"
-        fi
-    done <<<"$app_rows"
-
-    # --- Pod failure scan across target namespaces ---
-    local ns pod_rows pod_name reason wait_msg
-    for ns in "${!target_namespaces[@]}"; do
-        doctor_matches_filter "" "$ns" || continue
-        kubectl get ns "$ns" >/dev/null 2>&1 || continue
-        pod_rows="$(kubectl get pods -n "$ns" -o json 2>/dev/null | jq -r '
-            .items[]
-            | select(
-                (.status.containerStatuses // []) | any(
-                    (.state.waiting.reason // "") as $r
-                    | $r == "CreateContainerConfigError"
-                      or $r == "ImagePullBackOff"
-                      or $r == "ErrImagePull"
-                      or $r == "CrashLoopBackOff"
-                )
-              )
-            | [
-                .metadata.name,
-                ((.status.containerStatuses // [])
-                    | map(select((.state.waiting.reason // "") != "")) | .[0].state.waiting.reason // ""),
-                ((.status.containerStatuses // [])
-                    | map(select((.state.waiting.reason // "") != "")) | .[0].state.waiting.message // "")
-              ] | @tsv
-        ')" || pod_rows=""
-        [[ -z "$pod_rows" ]] && continue
-        while IFS=$'\t' read -r pod_name reason wait_msg; do
-            [[ -z "$pod_name" ]] && continue
-            [[ -z "$wait_msg" ]] && wait_msg="check pod events"
-            if [[ ${#wait_msg} -gt 120 ]]; then
-                wait_msg="${wait_msg:0:117}..."
-            fi
-            doctor_error "${ns}/${pod_name}" \
-                "Pod in \`${reason}\` state" \
-                "$wait_msg" \
-                "Check 'kubectl -n ${ns} describe pod ${pod_name}'"
-        done <<<"$pod_rows"
-    done
-
-    # --- PVC scan: stuck Pending ---
-    local pvc_name pvc_rows
-    for ns in "${!target_namespaces[@]}"; do
-        doctor_matches_filter "" "$ns" || continue
-        kubectl get ns "$ns" >/dev/null 2>&1 || continue
-        pvc_rows="$(kubectl -n "$ns" get pvc -o json 2>/dev/null | jq -r '
-            .items[] | select(.status.phase == "Pending") | .metadata.name
-        ')" || pvc_rows=""
-        [[ -z "$pvc_rows" ]] && continue
-        while IFS= read -r pvc_name; do
-            [[ -z "$pvc_name" ]] && continue
-            doctor_error "${ns}/${pvc_name}" \
-                "PVC stuck in Pending" \
-                "no storage class or provisioner available" \
-                "Check 'kubectl get storageclass' and 'kubectl -n ${ns} describe pvc ${pvc_name}'"
-        done <<<"$pvc_rows"
-    done
-
-    # --- Service endpoints scan: services with no ready backends ---
-    # We check for services whose Endpoints object has no ready addresses across
-    # all subsets. notReadyAddresses are excluded (e.g., pods stuck init/CCE).
-    # Batches endpoints per namespace (one kubectl get endpoints per ns, not per svc).
-    local svc_name empty_svc_list
-    for ns in "${!target_namespaces[@]}"; do
-        doctor_matches_filter "" "$ns" || continue
-        kubectl get ns "$ns" >/dev/null 2>&1 || continue
-        # Emit names of services that have a selector but zero ready endpoint addresses.
-        empty_svc_list="$(kubectl -n "$ns" get endpoints -o json 2>/dev/null | jq -r '
-            .items[]
-            | select(([(.subsets // [])[] | (.addresses // [])[]] | length) == 0)
-            | .metadata.name
-        ' 2>/dev/null)" || empty_svc_list=""
-        [[ -z "$empty_svc_list" ]] && continue
-        # Filter to only services that declare a selector (skip headless/ExternalName).
-        local selector_svcs
-        selector_svcs="$(kubectl -n "$ns" get svc -o json 2>/dev/null | jq -r '
-            .items[]
-            | select((.spec.selector // {}) | length > 0)
-            | .metadata.name
-        ')" || selector_svcs=""
-        while IFS= read -r svc_name; do
-            [[ -z "$svc_name" ]] && continue
-            grep -Fqx "$svc_name" <<<"$selector_svcs" || continue
-            doctor_warn "${ns}/${svc_name}" \
-                "Service has no endpoints" \
-                "selector may not match any ready pods" \
-                "Verify pod labels match service selector; check 'kubectl -n ${ns} get endpoints ${svc_name}'"
-        done <<<"$empty_svc_list"
-    done
-
-    render_doctor_layer "Layer 6: Runtime"
-}
-
-doctor_layer_7_images() {
-    doctor_begin_layer
-
-    needs_cluster_or_skip "Layer 7: Image reachability" || return 0
-
-    if ! command -v crane &>/dev/null; then
-        doctor_skip_layer "Layer 7: Image reachability" \
-            "crane not installed; run 'brew install crane' to enable"
-        return 0
-    fi
-
-    # Collect target namespaces from ArgoCD Applications (same pattern as Layer 6).
-    local apps_json
-    apps_json="$(kubectl get applications -n argocd -o json 2>/dev/null)" || apps_json=""
-    if [[ -z "$apps_json" ]]; then
-        render_doctor_layer "Layer 7: Image reachability"
-        return 0
-    fi
-
-    local app_rows
-    app_rows="$(jq -r '
-        .items[]
-        | select(.metadata.name != "projects" and .metadata.name != "kargo")
-        | select((.spec.destination.namespace // "") != "argocd")
-        | [
-            .metadata.name,
-            (.spec.destination.namespace // "")
-          ] | @tsv
-    ' <<<"$apps_json")"
-
-    declare -A target_namespaces=()
-    local line name dest_ns app env
-    while IFS=$'\t' read -r name dest_ns; do
-        [[ -z "$name" ]] && continue
-        app="${name%-*}"
-        env="${name##*-}"
-        doctor_matches_filter "$app" "$env" || continue
-        [[ -n "$dest_ns" ]] && target_namespaces["$dest_ns"]=1
-    done <<<"$app_rows"
-
-    # Collect distinct image refs from pods in target namespaces.
-    local -A seen_images=()
-    local ns image
-    for ns in "${!target_namespaces[@]}"; do
-        doctor_matches_filter "" "$ns" || continue
-        kubectl get ns "$ns" >/dev/null 2>&1 || continue
-        while IFS= read -r image; do
-            [[ -z "$image" ]] && continue
-            seen_images["$image"]=1
-        done < <(kubectl -n "$ns" get pods -o jsonpath='{.items[*].spec.containers[*].image}' 2>/dev/null | tr ' ' '\n' | sort -u)
-    done
-
-    # Check each distinct image via 'crane digest'. Capture stderr so we can
-    # distinguish auth-required errors (private registry, no local creds) from
-    # real failures (typo, deleted tag, network).
-    local crane_err registry fix_msg
-    for image in "${!seen_images[@]}"; do
-        crane_err="$(crane digest "$image" 2>&1 >/dev/null)" && continue
-
-        # Extract the registry host from the image ref. The first '/'-separated
-        # segment is the registry if it contains '.' or ':', otherwise the ref
-        # is an implicit docker.io image (e.g. 'nginx:latest').
-        registry="${image%%/*}"
-        if [[ "$registry" != *.* && "$registry" != *:* ]]; then
-            registry="docker.io"
-        fi
-
-        if [[ "$crane_err" == *UNAUTHORIZED* || "$crane_err" == *DENIED* \
-              || "$crane_err" == *"401 Unauthorized"* || "$crane_err" == *"403 Forbidden"* ]]; then
-            if [[ "$registry" == "ghcr.io" ]]; then
-                fix_msg="Authenticate crane to ghcr.io: 'gh auth refresh -s read:packages' then 'gh auth token | docker login ghcr.io -u \$(gh api user -q .login) --password-stdin', then re-run doctor"
-            else
-                fix_msg="Authenticate crane to this registry: 'docker login ${registry}', then re-run doctor"
-            fi
-            doctor_info "$image" "Skipped: registry ${registry} requires authentication. ${fix_msg}"
-            continue
-        fi
-
-        doctor_warn "$image" \
-            "Image tag not resolvable via registry" \
-            "'crane digest' could not fetch the manifest for this image; tag may be wrong, the image may not exist, or the registry may be unreachable" \
-            "Check for typos in the image ref; if the image is private, authenticate first (e.g. 'docker login ${registry}') and re-run doctor" \
-            "crane digest ${image} → ${crane_err}"
-    done
-
-    render_doctor_layer "Layer 7: Image reachability"
-}
-
-doctor_layer_8_ingress() {
-    doctor_begin_layer
-
-    needs_cluster_or_skip "Layer 8: Ingress reachability" || return 0
-
-    # Skip cleanly if the repo has no ingress manifests at all.
-    local has_ingress_manifests=0
-    if find "${TARGET_DIR}/k8s/apps" -type f -name 'ingress.yaml' 2>/dev/null | grep -q .; then
-        has_ingress_manifests=1
-    fi
-    if [[ $has_ingress_manifests -eq 0 ]]; then
-        render_doctor_layer "Layer 8: Ingress reachability"
-        return 0
-    fi
-
-    local ingresses_json
-    ingresses_json="$(kubectl get ingress -A -o json 2>/dev/null)" || ingresses_json=""
-    if [[ -z "$ingresses_json" ]]; then
-        render_doctor_layer "Layer 8: Ingress reachability"
-        return 0
-    fi
-
-    # Flatten each (host, serviceName, portNumber, portName) rule into a tsv row.
-    # Columns: namespace \t ingressName \t host \t serviceName \t portNumber \t portName
-    local rule_rows
-    rule_rows="$(jq -r '
-        .items[]
-        | . as $ing
-        | (.spec.rules // [])[]
-        | . as $rule
-        | ($rule.http.paths // [])[]
-        | [
-            ($ing.metadata.namespace // ""),
-            ($ing.metadata.name // ""),
-            ($rule.host // ""),
-            (.backend.service.name // ""),
-            ((.backend.service.port.number // "") | tostring),
-            (.backend.service.port.name // "")
-          ] | @tsv
-    ' <<<"$ingresses_json")"
-
-    # Track distinct hosts (for HTTP probe + TLS SAN) and distinct
-    # (ns,svc) pairs we've already checked structurally.
-    local -A seen_hosts=()
-    local -A seen_struct=()
-
-    local ns ing_name host svc port_num port_name
-    while IFS=$'\t' read -r ns ing_name host svc port_num port_name; do
-        [[ -z "$ns" || -z "$ing_name" ]] && continue
-        doctor_matches_filter "" "$ns" || continue
-
-        # --- Structural: service + port + endpoints ---
-        local struct_key="${ns}/${svc}/${port_num}/${port_name}"
-        if [[ -z "${seen_struct[$struct_key]:-}" ]]; then
-            seen_struct["$struct_key"]=1
-
-            local svc_json
-            svc_json="$(kubectl -n "$ns" get svc "$svc" -o json 2>/dev/null)" || svc_json=""
-            if [[ -z "$svc_json" ]]; then
-                doctor_error "${ns}/${ing_name}" \
-                    "Ingress backend Service does not exist" \
-                    "rule references service '${svc}' in namespace '${ns}' which is not present" \
-                    "Create the Service or fix the Ingress backend reference"
-            else
-                # Port check: match either number or name depending on which is set.
-                local port_ok=0
-                if [[ -n "$port_num" ]]; then
-                    if jq -e --argjson p "$port_num" '.spec.ports[] | select(.port == $p)' <<<"$svc_json" &>/dev/null; then
-                        port_ok=1
-                    fi
-                fi
-                if [[ $port_ok -eq 0 && -n "$port_name" ]]; then
-                    if jq -e --arg n "$port_name" '.spec.ports[] | select(.name == $n)' <<<"$svc_json" &>/dev/null; then
-                        port_ok=1
-                    fi
-                fi
-                if [[ $port_ok -eq 0 ]]; then
-                    local port_ref="${port_num:-$port_name}"
-                    doctor_error "${ns}/${ing_name}/${host}" \
-                        "Ingress backend port does not exist on Service" \
-                        "Service '${svc}' in '${ns}' does not expose port '${port_ref}' referenced by the Ingress" \
-                        "Align the Ingress backend.service.port with a port declared on Service '${svc}'"
-                else
-                    # Endpoints check
-                    local addrs
-                    addrs="$(kubectl -n "$ns" get endpoints "$svc" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)"
-                    if [[ -z "$addrs" ]]; then
-                        doctor_error "${ns}/${ing_name}/${host}" \
-                            "Ingress backend Service has no ready endpoints" \
-                            "Service '${svc}' in '${ns}' has 0 endpoints; its selector probably matches no ready pods" \
-                            "Check 'kubectl -n ${ns} get endpoints ${svc}' and verify pod labels"
-                    fi
-                fi
-            fi
-        fi
-
-        # Track host for HTTP/TLS checks (dedup globally across all ingresses).
-        [[ -n "$host" ]] && seen_hosts["$host"]=1
-    done <<<"$rule_rows"
-
-    # --- HTTP probe + TLS SAN for each distinct host ---
-    local has_openssl=1
-    if ! command -v openssl &>/dev/null; then
-        has_openssl=0
-        doctor_info "openssl" "openssl not available; skipping TLS SAN coverage checks"
-    fi
-
-    for host in "${!seen_hosts[@]}"; do
-        local code
-        code="$(curl -skI -o /dev/null -w '%{http_code}' --max-time 5 "https://${host}/" 2>/dev/null)" || code="000"
-        case "$code" in
-            2*|3*|401|403|404|405)
-                # Reachable. 405 = method not allowed (HEAD rejected, e.g. Kargo API)
-                # — the server is still responding, so the ingress is wired correctly.
-                ;;
-            000)
-                doctor_error "$host" \
-                    "Ingress host unreachable (connection failed)" \
-                    "curl could not connect to https://${host}/ within 5s" \
-                    "Check traefik is running; verify DNS resolves the host; check firewall"
-                continue
-                ;;
-            5*)
-                doctor_error "$host" \
-                    "Ingress host returned ${code}" \
-                    "curl got HTTP ${code} from https://${host}/" \
-                    "Check backend pod logs for the service behind this ingress"
-                ;;
-            *)
-                doctor_warn "$host" \
-                    "Unexpected HTTP response code: ${code}" \
-                    "curl got HTTP ${code} from https://${host}/; expected 2xx/3xx/401/403/404/405" \
-                    "Inspect the ingress routing rules and backend service behavior"
-                ;;
-        esac
-
-        # TLS SAN check (only if openssl present and we could connect)
-        if [[ $has_openssl -eq 1 ]]; then
-            local cert_sans
-            cert_sans="$(timeout 5 openssl s_client -servername "$host" -connect "${host}:443" -showcerts </dev/null 2>/dev/null \
-                | openssl x509 -noout -ext subjectAltName 2>/dev/null \
-                | tr ',' '\n' \
-                | sed -n 's/.*DNS://p' \
-                | tr -d ' ')"
-            if [[ -n "$cert_sans" ]]; then
-                if ! grep -Fxq "$host" <<<"$cert_sans"; then
-                    doctor_warn "$host" \
-                        "TLS cert SANs do not cover hostname" \
-                        "presented cert's subjectAltName does not include '${host}'; connection works because of -k flag" \
-                        "Run 'cluster-ctl.sh renew-tls' to regenerate the mkcert cert with updated SANs"
-                fi
-            fi
-        fi
-    done
-
-    render_doctor_layer "Layer 8: Ingress reachability"
-}
-
-doctor_layer_9_hygiene() {
-    doctor_begin_layer
-
-    needs_cluster_or_skip "Layer 9: Hygiene" || return 0
-
-    # Fetch Applications JSON once and reuse for both the orphan-app scan and
-    # the orphan-namespace scan below.
-    local apps_json
-    apps_json="$(kubectl get applications -n argocd -o json 2>/dev/null)" || apps_json=""
-
-    # --- Orphan Applications: in cluster but not in repo ----------------
-    local cluster_apps
-    cluster_apps="$(jq -r '.items[]?.metadata.name' <<<"${apps_json:-{\}}" 2>/dev/null | sort -u)"
-
-    # Build the expected set from argocd/apps/*.yaml basenames, plus the
-    # well-known umbrella/parent app names.
-    local expected_apps=$'parent-app\nprojects\nkargo\n'
-    local f base
-    for f in "${TARGET_DIR}"/argocd/apps/*.yaml; do
-        [[ -f "$f" ]] || continue
-        base="$(basename "$f" .yaml)"
-        expected_apps+="${base}"$'\n'
-    done
-    expected_apps="$(printf '%s' "$expected_apps" | sort -u)"
-
-    local app_name
-    while IFS= read -r app_name; do
-        [[ -z "$app_name" ]] && continue
-        if ! grep -Fxq "$app_name" <<<"$expected_apps"; then
-            # Try to parse app-env from name for filter purposes (last
-            # hyphen split). If it doesn't contain a hyphen, skip filter.
-            local parsed_app="" parsed_env=""
-            if [[ "$app_name" == *-* ]]; then
-                parsed_env="${app_name##*-}"
-                parsed_app="${app_name%-*}"
-            fi
-            doctor_matches_filter "$parsed_app" "$parsed_env" || continue
-            doctor_warn "$app_name" \
-                "Orphan ArgoCD Application in cluster" \
-                "no matching file at argocd/apps/${app_name}.yaml and not a known umbrella app" \
-                "Remove with 'kubectl -n argocd delete app ${app_name}' or restore argocd/apps/${app_name}.yaml"
-        fi
-    done <<<"$cluster_apps"
-
-    # --- Orphan namespaces: env ns with no Application targeting it ----
-    local env targeting_apps
-    while IFS= read -r env; do
-        [[ -z "$env" ]] && continue
-        doctor_matches_filter "" "$env" || continue
-        kubectl get ns "$env" &>/dev/null || continue
-        targeting_apps="$(jq -r --arg env "$env" '
-            .items[]? | select(.spec.destination.namespace == $env) | .metadata.name
-        ' <<<"${apps_json:-{\}}" 2>/dev/null)"
-        if [[ -z "$targeting_apps" ]]; then
-            doctor_info "${env}" "Namespace exists but no Application targets it"
-        fi
-    done < <(detect_envs)
-
-    # --- Sealed-secrets cert drift -------------------------------------
-    local repo_cert="${TARGET_DIR}/.sealed-secrets-cert.pem"
-    if [[ -f "$repo_cert" ]]; then
-        if kubectl -n kube-system get deploy sealed-secrets-controller &>/dev/null; then
-            if ! command -v kubeseal &>/dev/null; then
-                doctor_info "kubeseal" "kubeseal not installed; skipping sealed-secrets cert drift check"
-            else
-                local live_cert_hash repo_cert_hash
-                live_cert_hash="$(kubeseal --fetch-cert 2>/dev/null | shasum -a 256 | awk '{print $1}')"
-                repo_cert_hash="$(shasum -a 256 < "$repo_cert" | awk '{print $1}')"
-                if [[ -n "$live_cert_hash" && "$live_cert_hash" != "$repo_cert_hash" ]]; then
-                    doctor_warn ".sealed-secrets-cert.pem" \
-                        "Sealed-secrets cert in repo differs from controller's active cert" \
-                        "the committed cert no longer matches the controller's public key; new sealed secrets encrypted against the old cert will fail to decrypt" \
-                        "Run 'kubeseal --fetch-cert > .sealed-secrets-cert.pem' in the repo root and commit the updated cert" \
-                        "repo cert sha256: ${repo_cert_hash}" \
-                        "live cert sha256: ${live_cert_hash}"
-                fi
-            fi
-        fi
-    fi
-
-    render_doctor_layer "Layer 9: Hygiene"
-}
-
-cmd_doctor() {
-    # --- Doctor state (shared across layer_* functions) ---
-    # Doctor state is global (not local) so doctor_layer_* functions can
-    # read/mutate it. `local -g` keeps the variables global while documenting
-    # that cmd_doctor owns their lifecycle; this matters when cluster-ctl.sh
-    # is sourced rather than exec'd.
-    local -g DOCTOR_ERRORS=0
-    local -g DOCTOR_WARNINGS=0
-    local -g DOCTOR_INFOS=0
-    local -g DOCTOR_VERBOSE=0
-    local -g DOCTOR_SCOPE="all"
-    local -g DOCTOR_APP=""
-    local -g DOCTOR_ENV=""
-    local -g DOCTOR_CLUSTER_REACHABLE=0
-    local -g DOCTOR_LAYERS_INVOKED=0
-    DOCTOR_SKIPPED_LAYERS=()
-    DOCTOR_CURRENT_LAYER_ERRORS=()
-    DOCTOR_CURRENT_LAYER_WARNINGS=()
-    DOCTOR_CURRENT_LAYER_INFOS=()
-
-    # Parse flags
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --scope=*)
-                DOCTOR_SCOPE="${1#*=}"
-                shift
-                ;;
-            --scope)
-                if [[ $# -lt 2 ]]; then
-                    print_error "--scope requires a value (repo|cluster|all)"
-                    exit 1
-                fi
-                DOCTOR_SCOPE="$2"
-                shift 2
-                ;;
-            --app=*)
-                DOCTOR_APP="${1#*=}"
-                if [[ -z "$DOCTOR_APP" ]]; then
-                    print_error "--app requires a non-empty value"
-                    exit 1
-                fi
-                shift
-                ;;
-            --app)
-                if [[ $# -lt 2 || -z "$2" ]]; then
-                    print_error "--app requires a non-empty value"
-                    exit 1
-                fi
-                DOCTOR_APP="$2"
-                shift 2
-                ;;
-            --env=*)
-                DOCTOR_ENV="${1#*=}"
-                if [[ -z "$DOCTOR_ENV" ]]; then
-                    print_error "--env requires a non-empty value"
-                    exit 1
-                fi
-                shift
-                ;;
-            --env)
-                if [[ $# -lt 2 || -z "$2" ]]; then
-                    print_error "--env requires a non-empty value"
-                    exit 1
-                fi
-                DOCTOR_ENV="$2"
-                shift 2
-                ;;
-            --verbose)
-                DOCTOR_VERBOSE=1
-                shift
-                ;;
-            -h | --help)
-                doctor_usage
-                exit 0
-                ;;
-            *)
-                print_error "Unknown flag: $1"
-                doctor_usage
-                exit 1
-                ;;
-        esac
-    done
-
-    # Validate scope
-    case "$DOCTOR_SCOPE" in
-        repo | cluster | all) ;;
-        *)
-            print_error "Invalid --scope value: '$DOCTOR_SCOPE' (must be repo|cluster|all)"
-            exit 1
-            ;;
-    esac
-
-    # Validate --app against detect_apps
-    if [[ -n "$DOCTOR_APP" ]]; then
-        local valid_apps
-        valid_apps="$(detect_apps)"
-        if ! grep -Fqx -- "$DOCTOR_APP" <<<"$valid_apps"; then
-            print_error "Unknown app: '$DOCTOR_APP'"
-            if [[ -n "$valid_apps" ]]; then
-                print_info "Available apps:"
-                while IFS= read -r a; do
-                    [[ -z "$a" ]] && continue
-                    print_info "  - $a"
-                done <<<"$valid_apps"
-            fi
-            exit 1
-        fi
-    fi
-
-    # Validate --env against detect_envs
-    if [[ -n "$DOCTOR_ENV" ]]; then
-        local valid_envs
-        valid_envs="$(detect_envs)"
-        if ! grep -Fqx -- "$DOCTOR_ENV" <<<"$valid_envs"; then
-            print_error "Unknown env: '$DOCTOR_ENV'"
-            if [[ -n "$valid_envs" ]]; then
-                print_info "Available envs:"
-                while IFS= read -r e; do
-                    [[ -z "$e" ]] && continue
-                    print_info "  - $e"
-                done <<<"$valid_envs"
-            fi
-            exit 1
-        fi
-    fi
-
-    print_header "Cluster Doctor"
-
-    local -a doctor_layers=(
-        doctor_layer_1_prereqs
-        doctor_layer_2_controllers
-        doctor_layer_3_repo_structure
-        doctor_layer_4_alignment
-        doctor_layer_5_credentials
-        doctor_layer_6_runtime
-        doctor_layer_7_images
-        doctor_layer_8_ingress
-        doctor_layer_9_hygiene
-    )
-    local layer_fn
-    for layer_fn in "${doctor_layers[@]}"; do
-        "$layer_fn"
-    done
-    DOCTOR_LAYERS_INVOKED=${#doctor_layers[@]}
-
-    echo ""
-    render_doctor_summary
-    return "$(doctor_exit_code)"
-}
-
 # --- Usage ---
 
 cmd_preflight_check() {
@@ -2448,7 +1462,6 @@ Commands:
   argo-init           Bootstrap ArgoCD by applying the parent-app to the cluster
   argo-sync           Force ArgoCD to sync all applications immediately
   argo-status         Show sync status, health, and errors for all ArgoCD applications
-  doctor              Run cross-layer diagnostic checks against repo and cluster
   renew-tls           Regenerate mkcert certificates and update the cluster
   status              Show cluster and ArgoCD health
   preflight-check     Verify all required tools are installed
@@ -2481,7 +1494,6 @@ main() {
         argo-init) cmd_argo_init "$@" ;;
         argo-sync) cmd_argo_sync "$@" ;;
         argo-status) cmd_argo_status "$@" ;;
-        doctor) cmd_doctor "$@" ;;
         renew-tls) cmd_renew_tls "$@" ;;
         status) cmd_status "$@" ;;
         preflight-check) cmd_preflight_check "$@" ;;

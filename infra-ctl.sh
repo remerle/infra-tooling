@@ -9,6 +9,37 @@ cmd_init() {
     require_gum
     require_gh
 
+    # --- Parse flags ---
+    local repo_url_flag=""
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --repo-url)
+                require_flag_value "--repo-url" "${2:-}"
+                repo_url_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh init [--repo-url <url>] [--yes]"
+                echo "  --repo-url <url>  GitHub repository URL (default: detected from git remote)"
+                echo "  --yes, -y         Skip confirmation prompt"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected positional argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
     # Idempotency guard
     if [[ -d "${TARGET_DIR}/argocd" || -d "${TARGET_DIR}/k8s" ]]; then
         print_error "Repository already initialized (argocd/ or k8s/ exists in ${TARGET_DIR})."
@@ -28,8 +59,13 @@ cmd_init() {
         fi
     fi
 
+    # --- Resolve repo_url: flag wins, else prompt, else die ---
     local repo_url
-    repo_url="$(gum input --value "$default_url" --placeholder "https://github.com/owner/repo" --prompt "Repository URL: ")"
+    if [[ -n "$repo_url_flag" ]]; then
+        repo_url="$repo_url_flag"
+    else
+        repo_url=$(prompt_or_die "Repository URL" "--repo-url" "$default_url")
+    fi
 
     if [[ -z "$repo_url" ]]; then
         print_error "Repository URL is required."
@@ -43,7 +79,12 @@ cmd_init() {
     repo_owner="$(extract_repo_owner "$repo_url")"
     print_info "Detected repo owner: ${repo_owner}"
 
-    confirm_or_abort "Proceed with repo URL '${repo_url}' and owner '${repo_owner}'?"
+    if [[ "$yes" != "true" ]]; then
+        if [[ -t 0 ]]; then
+            confirm_or_abort "Proceed with repo URL '${repo_url}' and owner '${repo_owner}'?"
+        fi
+        # Non-interactive without --yes: proceed (init is non-destructive)
+    fi
 
     local created_files=()
 
@@ -151,12 +192,152 @@ cmd_add_app() {
     require_gum
     require_yq
 
-    if [[ $# -eq 0 ]]; then
-        print_error "Usage: infra-ctl.sh add-app <app-name>"
-        exit 1
-    fi
+    # --- Parse flags ---
+    local app_name_flag=""
+    local project_flag=""
+    local workload_type_flag=""
+    local preset_flag=""
+    declare -A set_values=()
+    local secret_keys_flag=()
+    local config_flag_entries=()
+    local kargo_flag="" # "", "true", "false"
+    local image_repo_flag=""
+    local custom_flag=false
+    local image_flag=""
+    local port_flag=""
+    local secret_name_flag=""
+    local probe_path_flag=""
+    local yes="false"
 
-    local app_name="$1"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                app_name_flag="$2"
+                shift 2
+                ;;
+            --project)
+                require_flag_value "--project" "${2:-}"
+                project_flag="$2"
+                shift 2
+                ;;
+            --workload-type)
+                require_flag_value "--workload-type" "${2:-}"
+                workload_type_flag="$(tr '[:upper:]' '[:lower:]' <<<"$2")"
+                shift 2
+                ;;
+            --preset)
+                require_flag_value "--preset" "${2:-}"
+                preset_flag="$2"
+                shift 2
+                ;;
+            --set)
+                require_flag_value "--set" "${2:-}"
+                parse_set_kv "$2" set_values
+                shift 2
+                ;;
+            --secret-key)
+                require_flag_value "--secret-key" "${2:-}"
+                secret_keys_flag+=("$2")
+                shift 2
+                ;;
+            --config)
+                require_flag_value "--config" "${2:-}"
+                if [[ "$2" != *"="* ]]; then
+                    print_error "--config expects KEY=VAL, got: $2"
+                    exit 1
+                fi
+                validate_configmap_key "${2%%=*}" "--config key"
+                config_flag_entries+=("$2")
+                shift 2
+                ;;
+            --kargo)
+                kargo_flag="true"
+                shift
+                ;;
+            --no-kargo)
+                kargo_flag="false"
+                shift
+                ;;
+            --image-repo)
+                require_flag_value "--image-repo" "${2:-}"
+                image_repo_flag="$2"
+                shift 2
+                ;;
+            --custom)
+                custom_flag=true
+                shift
+                ;;
+            --image)
+                require_flag_value "--image" "${2:-}"
+                image_flag="$2"
+                shift 2
+                ;;
+            --port)
+                require_flag_value "--port" "${2:-}"
+                port_flag="$2"
+                shift 2
+                ;;
+            --secret-name)
+                require_flag_value "--secret-name" "${2:-}"
+                secret_name_flag="$2"
+                shift 2
+                ;;
+            --probe-path)
+                require_flag_value "--probe-path" "${2:-}"
+                probe_path_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                cat <<EOF
+Usage: infra-ctl.sh add-app <name> [flags]
+
+Flags:
+  --name <string>               Application name (positional shorthand allowed)
+  --project <name>              ArgoCD project (default: "default")
+  --workload-type <type>        deployment | statefulset (default: deployment)
+  --preset <name>               Preset from templates (default: first preset)
+  --set KEY=VAL                 Preset placeholder values (repeatable)
+  --secret-key NAME             Declare a secret key (repeatable, no value)
+  --config KEY=VAL              configMap entries (repeatable)
+  --kargo / --no-kargo          Enable/disable Kargo management
+  --image-repo <url>            Kargo image repo (no tag; required if --kargo)
+  --custom                      Use custom flow (Deployment only)
+  --image <ref>                 Container image (custom flow)
+  --port <n>                    Container port (custom flow; default: 8080)
+  --secret-name <name>          Secret name (custom flow)
+  --probe-path <path>           HTTP probe path (custom flow)
+  --yes, -y                     Skip confirmation prompt
+EOF
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$app_name_flag" ]]; then
+                    app_name_flag="$1"
+                else
+                    print_error "Unexpected argument: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    # --- Resolve app_name ---
+    local app_name
+    if [[ -n "$app_name_flag" ]]; then
+        app_name="$app_name_flag"
+    else
+        app_name=$(prompt_or_die "App name" "--name")
+    fi
     validate_k8s_name "$app_name" "App name"
     load_conf
 
@@ -178,16 +359,43 @@ cmd_add_app() {
         projects+=("$proj")
     done < <(detect_projects)
 
-    # Project selection
+    # Project selection: flag wins, else choose, else default
     local project="default"
-    if [[ ${#projects[@]} -gt 0 ]]; then
-        print_header "Select project for '${app_name}'"
-        project="$(printf "%s\n" "default" "${projects[@]}" | gum choose)"
+    if [[ -n "$project_flag" ]]; then
+        if [[ "$project_flag" != "default" ]]; then
+            local found=0 p
+            for p in "${projects[@]}"; do
+                [[ "$p" == "$project_flag" ]] && {
+                    found=1
+                    break
+                }
+            done
+            if [[ "$found" -eq 0 ]]; then
+                print_error "Project '${project_flag}' does not exist. Known: default ${projects[*]}"
+                exit 1
+            fi
+        fi
+        project="$project_flag"
+    elif [[ ${#projects[@]} -gt 0 ]]; then
+        project=$(prompt_choose_or_die "Select project for '${app_name}'" "--project" "default" "${projects[@]}")
     fi
 
-    # Workload type selection (Deployment is default, listed first)
+    # Workload type: flag wins, else prompt, else default
     local workload_type
-    workload_type="$(printf "Deployment\nStatefulSet" | gum choose)"
+    if [[ -n "$workload_type_flag" ]]; then
+        case "$workload_type_flag" in
+            deployment) workload_type="Deployment" ;;
+            statefulset) workload_type="StatefulSet" ;;
+            *)
+                print_error "--workload-type must be 'deployment' or 'statefulset', got: ${workload_type_flag}"
+                exit 1
+                ;;
+        esac
+    elif [[ -t 0 ]]; then
+        workload_type=$(prompt_choose_or_die "Workload type" "--workload-type" "Deployment" "StatefulSet")
+    else
+        workload_type="Deployment"
+    fi
 
     # Discover presets for the selected workload type
     local workload_prefix
@@ -204,24 +412,48 @@ cmd_add_app() {
 
     local preset_choice="custom"
     if [[ ${#presets[@]} -gt 0 ]]; then
-        # Build chooser with descriptions
-        local preset_labels=()
-        local preset
-        for preset in "${presets[@]}"; do
-            local template_file="${TEMPLATE_DIR}/k8s/${workload_prefix}-${preset}.yaml"
-            local desc
-            desc="$(get_preset_field "$template_file" '.description')"
-            preset_labels+=("${preset} -- ${desc}")
-        done
-        # Only add custom option for Deployments (custom StatefulSet is not yet supported)
-        if [[ "$workload_prefix" == "deployment" ]]; then
-            preset_labels+=("custom -- Configure manually")
-        fi
+        # Resolve preset: --custom wins, --preset next, else prompt, else first preset
+        if [[ "$custom_flag" == "true" ]]; then
+            if [[ "$workload_prefix" == "statefulset" ]]; then
+                print_error "--custom is not supported for StatefulSet workloads"
+                exit 1
+            fi
+            preset_choice="custom"
+        elif [[ -n "$preset_flag" ]]; then
+            local found=0 p
+            for p in "${presets[@]}"; do
+                [[ "$p" == "$preset_flag" ]] && {
+                    found=1
+                    break
+                }
+            done
+            if [[ "$found" -eq 0 ]]; then
+                print_error "Unknown preset: ${preset_flag}. Known: ${presets[*]}"
+                exit 1
+            fi
+            preset_choice="$preset_flag"
+        elif [[ -t 0 ]]; then
+            # Interactive chooser with descriptions
+            local preset_labels=()
+            local preset
+            for preset in "${presets[@]}"; do
+                local template_file="${TEMPLATE_DIR}/k8s/${workload_prefix}-${preset}.yaml"
+                local desc
+                desc="$(get_preset_field "$template_file" '.description')"
+                preset_labels+=("${preset} -- ${desc}")
+            done
+            if [[ "$workload_prefix" == "deployment" ]]; then
+                preset_labels+=("custom -- Configure manually")
+            fi
 
-        print_header "Select preset for '${app_name}'"
-        local chosen_label
-        chosen_label="$(printf "%s\n" "${preset_labels[@]}" | gum choose)"
-        preset_choice="${chosen_label%% -- *}"
+            print_header "Select preset for '${app_name}'"
+            local chosen_label
+            chosen_label="$(printf "%s\n" "${preset_labels[@]}" | gum choose)"
+            preset_choice="${chosen_label%% -- *}"
+        else
+            # Non-interactive fallback: use first preset
+            preset_choice="${presets[0]}"
+        fi
     elif [[ "$workload_prefix" == "statefulset" ]]; then
         print_error "No StatefulSet presets found in templates/k8s/. Add a statefulset-*.yaml template."
         exit 1
@@ -242,6 +474,11 @@ cmd_add_app() {
         # --- Preset flow ---
         preset_template="${TEMPLATE_DIR}/k8s/${workload_prefix}-${preset_choice}.yaml"
 
+        # Validate --set keys against this preset's schema
+        if [[ ${#set_values[@]} -gt 0 ]]; then
+            validate_preset_set_keys "$preset_template" "${!set_values[@]}"
+        fi
+
         # Collect defaults into array first (gum input inside a while-read loop
         # steals stdin from the process substitution)
         local defaults_lines=()
@@ -249,7 +486,7 @@ cmd_add_app() {
             [[ -n "$line" ]] && defaults_lines+=("$line")
         done < <(get_preset_defaults "$preset_template")
 
-        # Walk through each default with gum input
+        # Walk through each default: --set wins, else prompt if TTY, else die/default
         local key default_val
         for line in "${defaults_lines[@]}"; do
             key="${line%%=*}"
@@ -257,22 +494,31 @@ cmd_add_app() {
             # Resolve {{APP_NAME}} in defaults
             default_val="${default_val//\{\{APP_NAME\}\}/${app_name}}"
 
-            # Check if the key is optional
-            local optional_flag=""
-            if is_preset_optional "$preset_template" "$key"; then
-                optional_flag=" (optional, leave empty to skip)"
+            local prompted_val=""
+            if [[ -v "set_values[$key]" ]]; then
+                prompted_val="${set_values[$key]}"
+            elif [[ -t 0 ]]; then
+                # Interactive: prompt with hint and optional marker
+                local optional_flag=""
+                if is_preset_optional "$preset_template" "$key"; then
+                    optional_flag=" (optional, leave empty to skip)"
+                fi
+                local hint
+                hint="$(get_preset_hint "$preset_template" "$key")"
+                local header_arg=()
+                if [[ -n "$hint" ]]; then
+                    header_arg=(--header "$hint")
+                fi
+                prompted_val="$(gum input --value "$default_val" "${header_arg[@]}" --prompt "${key}${optional_flag}: ")"
+            else
+                # Non-interactive: use default for optional keys; die for required
+                if is_preset_optional "$preset_template" "$key"; then
+                    prompted_val="$default_val"
+                else
+                    print_error "--set ${key}=<value> is required when not running interactively"
+                    exit 1
+                fi
             fi
-
-            # Get hint text to show as header above the input
-            local hint
-            hint="$(get_preset_hint "$preset_template" "$key")"
-            local header_arg=()
-            if [[ -n "$hint" ]]; then
-                header_arg=(--header "$hint")
-            fi
-
-            local prompted_val
-            prompted_val="$(gum input --value "$default_val" "${header_arg[@]}" --prompt "${key}${optional_flag}: ")"
 
             # Store into the appropriate variable
             case "$key" in
@@ -302,17 +548,39 @@ cmd_add_app() {
             [[ -n "$line" ]] && config_lines+=("$line")
         done < <(get_preset_config "$preset_template")
 
+        # Build --config flag overrides by key
+        declare -A config_flag_map=()
+        local cfe
+        for cfe in "${config_flag_entries[@]}"; do
+            [[ "$cfe" != *"="* ]] && {
+                print_error "--config expects KEY=VAL, got: ${cfe}"
+                exit 1
+            }
+            config_flag_map["${cfe%%=*}"]="${cfe#*=}"
+        done
+
         for line in "${config_lines[@]}"; do
             key="${line%%=*}"
             default_val="${line#*=}"
-            local cfg_val
-            cfg_val="$(gum input --value "$default_val" --prompt "Config ${key}: ")"
-            if [[ -n "$cfg_val" ]]; then
-                config_entries+=("${key}=${cfg_val}")
+            local cfg_val=""
+            if [[ -v "config_flag_map[$key]" ]]; then
+                cfg_val="${config_flag_map[$key]}"
+                unset 'config_flag_map[$key]'
+            elif [[ -t 0 ]]; then
+                cfg_val="$(gum input --value "$default_val" --prompt "Config ${key}: ")"
+            else
+                cfg_val="$default_val"
             fi
+            [[ -n "$cfg_val" ]] && config_entries+=("${key}=${cfg_val}")
         done
 
-        # Collect secret key names from preset frontmatter
+        # Any --config entries not in the preset are extra user additions
+        local extra_key
+        for extra_key in "${!config_flag_map[@]}"; do
+            config_entries+=("${extra_key}=${config_flag_map[$extra_key]}")
+        done
+
+        # Collect secret key names from preset frontmatter, --secret-key, or prompt
         if [[ -n "$secret_name" ]]; then
             local preset_secrets_lines=()
             while IFS= read -r line; do
@@ -321,7 +589,55 @@ cmd_add_app() {
 
             if [[ ${#preset_secrets_lines[@]} -gt 0 ]]; then
                 secret_keys=("${preset_secrets_lines[@]}")
-            else
+            elif [[ ${#secret_keys_flag[@]} -gt 0 ]]; then
+                secret_keys=("${secret_keys_flag[@]}")
+            elif [[ -t 0 ]]; then
+                print_info "Enter the names of secret keys for '${secret_name}' (values are added later via secret-ctl.sh)."
+                print_info "Leave empty to finish."
+                while true; do
+                    local key
+                    key="$(gum input --placeholder "DATABASE_URL" --prompt "Secret key name (empty to finish): ")"
+                    [[ -z "$key" ]] && break
+                    secret_keys+=("$key")
+                done
+            fi
+            # Non-interactive with no --secret-key is allowed (empty secret_keys)
+        fi
+    else
+        # --- Custom flow (deployment only) ---
+        if [[ -n "$image_flag" ]]; then
+            image="$image_flag"
+        else
+            image=$(prompt_or_die "Container image" "--image")
+        fi
+        if [[ -z "$image" ]]; then
+            print_error "Container image is required."
+            exit 1
+        fi
+
+        if [[ -n "$port_flag" ]]; then
+            port="$port_flag"
+        elif [[ -t 0 ]]; then
+            while true; do
+                port="$(gum input --value "8080" --prompt "Container port: ")"
+                validate_port "$port" && break
+            done
+        else
+            port="8080"
+        fi
+        validate_port "$port"
+
+        # Optional: secret name
+        if [[ -n "$secret_name_flag" ]]; then
+            secret_name="$secret_name_flag"
+        elif [[ -t 0 ]]; then
+            secret_name="$(gum input --placeholder "${app_name}-secrets" --prompt "Secret name (optional, empty to skip): ")"
+        fi
+
+        if [[ -n "$secret_name" ]]; then
+            if [[ ${#secret_keys_flag[@]} -gt 0 ]]; then
+                secret_keys=("${secret_keys_flag[@]}")
+            elif [[ -t 0 ]]; then
                 print_info "Enter the names of secret keys for '${secret_name}' (values are added later via secret-ctl.sh)."
                 print_info "Leave empty to finish."
                 while true; do
@@ -332,48 +648,48 @@ cmd_add_app() {
                 done
             fi
         fi
-    else
-        # --- Custom flow (deployment only) ---
-        image="$(gum input --placeholder "ghcr.io/owner/app:latest" --prompt "Container image: ")"
-        if [[ -z "$image" ]]; then
-            print_error "Container image is required."
-            exit 1
-        fi
-
-        while true; do
-            port="$(gum input --value "8080" --prompt "Container port: ")"
-            validate_port "$port" && break
-        done
-
-        # Optional: secret name
-        secret_name="$(gum input --placeholder "${app_name}-secrets" --prompt "Secret name (optional, empty to skip): ")"
-
-        if [[ -n "$secret_name" ]]; then
-            print_info "Enter the names of secret keys for '${secret_name}' (values are added later via secret-ctl.sh)."
-            print_info "Leave empty to finish."
-            while true; do
-                local key
-                key="$(gum input --placeholder "DATABASE_URL" --prompt "Secret key name (empty to finish): ")"
-                [[ -z "$key" ]] && break
-                secret_keys+=("$key")
-            done
-        fi
 
         # Optional: probe path
-        probe_path="$(gum input --placeholder "/api/health" --prompt "Probe path (optional, empty to skip): ")"
+        if [[ -n "$probe_path_flag" ]]; then
+            probe_path="$probe_path_flag"
+        elif [[ -t 0 ]]; then
+            probe_path="$(gum input --placeholder "/api/health" --prompt "Probe path (optional, empty to skip): ")"
+        fi
 
         # Use the web template as the base for custom deployments
         preset_template="${TEMPLATE_DIR}/k8s/deployment-web.yaml"
     fi
 
-    # Prompt for additional config values
-    print_info "Add config values for configMapGenerator (leave empty to finish)."
-    while true; do
-        local cfg_entry
-        cfg_entry="$(gum input --placeholder "KEY=value" --prompt "Config entry (empty to finish): ")"
-        [[ -z "$cfg_entry" ]] && break
-        config_entries+=("$cfg_entry")
-    done
+    # Add --config flag entries (applies to both preset and custom flows).
+    # In preset flow, entries matching preset config keys were already
+    # consumed above; only NEW entries remain here in the custom flow.
+    if [[ "$preset_choice" == "custom" ]]; then
+        local cfe
+        for cfe in "${config_flag_entries[@]}"; do
+            [[ "$cfe" != *"="* ]] && {
+                print_error "--config expects KEY=VAL, got: ${cfe}"
+                exit 1
+            }
+            config_entries+=("$cfe")
+        done
+    fi
+
+    # Interactive-only: prompt for additional config values (legacy custom flow)
+    if [[ "$preset_choice" == "custom" ]] && [[ ${#config_flag_entries[@]} -eq 0 ]] && [[ -t 0 ]]; then
+        print_info "Add config values for configMapGenerator (leave empty to finish)."
+        while true; do
+            local cfg_entry
+            cfg_entry="$(gum input --placeholder "KEY=value" --prompt "Config entry (empty to finish): ")"
+            [[ -z "$cfg_entry" ]] && break
+            if [[ "$cfg_entry" != *"="* ]]; then
+                print_warning "Invalid format. Use KEY=VALUE."
+                continue
+            fi
+            # Mirror the --config flag path validator (AGENTS.md validation-parity rule).
+            validate_configmap_key "${cfg_entry%%=*}" "config key"
+            config_entries+=("$cfg_entry")
+        done
+    fi
 
     # Preview what will be created
     local workload_file
@@ -383,17 +699,26 @@ cmd_add_app() {
         workload_file="deployment.yaml"
     fi
 
-    # Ask about Kargo management before the preview
+    # Kargo management: flag wins, else prompt if TTY, else default by workload
     local kargo_managed=false
     if is_kargo_enabled; then
-        local kargo_default
-        if [[ "$workload_type" == "Deployment" ]]; then
-            kargo_default="--default=Yes"
-        else
-            kargo_default="--default=No"
-        fi
-        if gum confirm "Manage image promotion with Kargo?" $kargo_default; then
+        if [[ "$kargo_flag" == "true" ]]; then
             kargo_managed=true
+        elif [[ "$kargo_flag" == "false" ]]; then
+            kargo_managed=false
+        elif [[ -t 0 ]]; then
+            local kargo_default
+            if [[ "$workload_type" == "Deployment" ]]; then
+                kargo_default="--default=Yes"
+            else
+                kargo_default="--default=No"
+            fi
+            if gum confirm "Manage image promotion with Kargo?" $kargo_default; then
+                kargo_managed=true
+            fi
+        else
+            # Non-interactive default: yes for Deployment, no for StatefulSet
+            [[ "$workload_type" == "Deployment" ]] && kargo_managed=true
         fi
     fi
 
@@ -439,7 +764,7 @@ cmd_add_app() {
         fi
     fi
 
-    confirm_or_abort "Create these files?"
+    require_yes "$yes" "create these files"
 
     local created_files=()
 
@@ -506,12 +831,20 @@ cmd_add_app() {
         created_files+=("$workload_output")
     fi
 
-    # Append config entries to base configMapGenerator via yq
+    # Upsert config entries into base configMapGenerator via yq.
+    # For each entry, first strip any existing literal with the same key,
+    # then append the new one. This prevents duplicate-key failures from
+    # kustomize build when the user passes --config KEY=val more than once
+    # or reuses a key already present in the template.
     if [[ ${#config_entries[@]} -gt 0 ]]; then
-        local entry
+        local entry key
         for entry in "${config_entries[@]}"; do
-            yq eval -i \
-                ".configMapGenerator[0].literals += [\"${entry}\"]" \
+            key="${entry%%=*}"
+            YQ_KEY="$key" yq eval -i \
+                '.configMapGenerator[0].literals |= map(select((split("=")[0]) != env(YQ_KEY)))' \
+                "$base_kustomization"
+            YQ_ENTRY="$entry" yq eval -i \
+                '.configMapGenerator[0].literals += [env(YQ_ENTRY)]' \
                 "$base_kustomization"
         done
     fi
@@ -551,10 +884,18 @@ cmd_add_app() {
         # Derive default image repo from the entered image (strip tag)
         local default_image_repo="${image%%:*}"
         local image_repo
-        while true; do
-            image_repo="$(gum input --value "${default_image_repo}" --prompt "Image repo for Kargo (no tag): ")"
-            validate_image_repo "$image_repo" && break
-        done
+        if [[ -n "$image_repo_flag" ]]; then
+            image_repo="$image_repo_flag"
+        elif [[ -t 0 ]]; then
+            while true; do
+                image_repo="$(gum input --value "${default_image_repo}" --prompt "Image repo for Kargo (no tag): ")"
+                validate_image_repo "$image_repo" && break
+            done
+        else
+            print_error "--image-repo is required when --kargo is set and not running interactively"
+            exit 1
+        fi
+        validate_image_repo "$image_repo"
 
         local kargo_app_dir="${TARGET_DIR}/kargo/${app_name}"
         mkdir -p "$kargo_app_dir"
@@ -617,9 +958,53 @@ cmd_add_ingress() {
     require_yq
     load_conf
 
-    local app_name="${1:-}"
+    local app_name_flag=""
+    local env_flags=()
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --app)
+                require_flag_value "--app" "${2:-}"
+                app_name_flag="$2"
+                shift 2
+                ;;
+            --env)
+                require_flag_value "--env" "${2:-}"
+                env_flags+=("$2")
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh add-ingress <app> [--env <name>]... [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$app_name_flag" ]]; then
+                    app_name_flag="$1"
+                else
+                    print_error "Unexpected argument: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local app_name="$app_name_flag"
     if [[ -z "$app_name" ]]; then
-        app_name="$(detect_apps | choose_from "Select application:" "No applications found. Run 'add-app' first.")" || exit 0
+        if [[ -t 0 ]]; then
+            app_name="$(detect_apps | choose_from "Select application:" "No applications found. Run 'add-app' first.")" || exit 0
+        else
+            print_error "--app is required when not running interactively"
+            exit 1
+        fi
     fi
     validate_k8s_name "$app_name" "App name"
 
@@ -663,16 +1048,36 @@ cmd_add_ingress() {
         return
     fi
 
-    # Multi-select envs (all pre-selected)
+    # Multi-select envs: flags win, else prompt if TTY, else default to all
     local selected=()
-    if [[ ${#available_envs[@]} -eq 1 ]]; then
+    if [[ ${#env_flags[@]} -gt 0 ]]; then
+        # Validate each --env against available
+        local ef e found
+        for ef in "${env_flags[@]}"; do
+            found=0
+            for e in "${available_envs[@]}"; do
+                [[ "$ef" == "$e" ]] && {
+                    found=1
+                    break
+                }
+            done
+            [[ "$found" -eq 0 ]] && {
+                print_error "Env '${ef}' has no overlay for '${app_name}' without an existing ingress"
+                exit 1
+            }
+        done
+        selected=("${env_flags[@]}")
+    elif [[ ${#available_envs[@]} -eq 1 ]]; then
         selected=("${available_envs[0]}")
-    else
+    elif [[ -t 0 ]]; then
         local selected_csv
         selected_csv="$(printf '%s,' "${available_envs[@]}" | sed 's/,$//')"
         readarray -t selected < <(printf '%s\n' "${available_envs[@]}" \
             | gum choose --no-limit --selected="$selected_csv" \
                 --header "Add ingress to which environments?")
+    else
+        # Non-interactive default: all available
+        selected=("${available_envs[@]}")
     fi
 
     if [[ ${#selected[@]} -eq 0 ]]; then
@@ -689,7 +1094,7 @@ cmd_add_ingress() {
         print_info "  ${env}.${app_name}.localhost -> overlays/${env}/ingress.yaml"
     done
 
-    confirm_or_abort "Create ingress?"
+    require_yes "$yes" "create ingress"
 
     local created_files=()
 
@@ -749,7 +1154,44 @@ cmd_remove_ingress() {
     require_yq
     load_conf
 
-    local app_name="${1:-}"
+    local app_name_flag=""
+    local env_flags=()
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --app)
+                require_flag_value "--app" "${2:-}"
+                app_name_flag="$2"
+                shift 2
+                ;;
+            --env)
+                require_flag_value "--env" "${2:-}"
+                env_flags+=("$2")
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh remove-ingress <app> [--env <name>]... [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$app_name_flag" ]]; then app_name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local app_name="$app_name_flag"
     if [[ -z "$app_name" ]]; then
         # Build list of apps that have at least one overlay ingress
         local apps_with_ingress=()
@@ -767,7 +1209,12 @@ cmd_remove_ingress() {
             print_warning "No ingress resources found."
             return
         fi
-        app_name="$(printf "%s\n" "${apps_with_ingress[@]}" | gum choose --header "Select application:")"
+        if [[ -t 0 ]]; then
+            app_name="$(printf "%s\n" "${apps_with_ingress[@]}" | gum choose --header "Select application:")"
+        else
+            print_error "--app is required when not running interactively"
+            exit 1
+        fi
     fi
     validate_k8s_name "$app_name" "App name"
 
@@ -791,16 +1238,34 @@ cmd_remove_ingress() {
         exit 1
     fi
 
-    # Multi-select envs to remove from (all pre-selected)
+    # Multi-select envs to remove from
     local selected=()
-    if [[ ${#envs_with_ingress[@]} -eq 1 ]]; then
+    if [[ ${#env_flags[@]} -gt 0 ]]; then
+        local ef e found
+        for ef in "${env_flags[@]}"; do
+            found=0
+            for e in "${envs_with_ingress[@]}"; do
+                [[ "$ef" == "$e" ]] && {
+                    found=1
+                    break
+                }
+            done
+            [[ "$found" -eq 0 ]] && {
+                print_error "Env '${ef}' has no ingress for '${app_name}'"
+                exit 1
+            }
+        done
+        selected=("${env_flags[@]}")
+    elif [[ ${#envs_with_ingress[@]} -eq 1 ]]; then
         selected=("${envs_with_ingress[0]}")
-    else
+    elif [[ -t 0 ]]; then
         local selected_csv
         selected_csv="$(printf '%s,' "${envs_with_ingress[@]}" | sed 's/,$//')"
         readarray -t selected < <(printf '%s\n' "${envs_with_ingress[@]}" \
             | gum choose --no-limit --selected="$selected_csv" \
                 --header "Remove ingress from which environments?")
+    else
+        selected=("${envs_with_ingress[@]}")
     fi
 
     if [[ ${#selected[@]} -eq 0 ]]; then
@@ -815,7 +1280,7 @@ cmd_remove_ingress() {
         print_info "  ${env}.${app_name}.localhost"
     done
 
-    confirm_destructive_or_abort "Remove ingress from these environments?"
+    require_yes "$yes" "remove ingress for '${app_name}' from ${selected[*]}"
 
     local removed=()
     for env in "${selected[@]}"; do
@@ -834,12 +1299,41 @@ cmd_remove_ingress() {
 cmd_add_env() {
     require_gum
 
-    if [[ $# -eq 0 ]]; then
-        print_error "Usage: infra-ctl.sh add-env <env-name>"
-        exit 1
-    fi
+    local env_name_flag=""
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                env_name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh add-env <name> [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$env_name_flag" ]]; then env_name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
 
-    local env_name="$1"
+    local env_name="$env_name_flag"
+    if [[ -z "$env_name" ]]; then
+        env_name=$(prompt_or_die "Environment name" "--name")
+    fi
     validate_k8s_name "$env_name" "Environment name"
     load_conf
 
@@ -889,7 +1383,7 @@ cmd_add_env() {
         fi
     fi
 
-    confirm_or_abort "Create these files?"
+    require_yes "$yes" "create these files"
 
     local created_files=()
 
@@ -1062,12 +1556,76 @@ cmd_add_env() {
 cmd_add_project() {
     require_gum
 
-    if [[ $# -eq 0 ]]; then
-        print_error "Usage: infra-ctl.sh add-project <project-name>"
-        exit 1
-    fi
+    local name_flag="" desc_flag=""
+    local restrict_repos_flag=""    # "", "true", "false"
+    local restrict_ns_flag=""       # "", "true", "false"
+    local cluster_resources_flag="" # "", "true", "false"
+    local ns_flags=() source_repo_flags=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --description)
+                require_flag_value "--description" "${2:-}"
+                desc_flag="$2"
+                shift 2
+                ;;
+            --restrict-repos)
+                restrict_repos_flag="true"
+                shift
+                ;;
+            --no-restrict-repos)
+                restrict_repos_flag="false"
+                shift
+                ;;
+            --source-repo)
+                require_flag_value "--source-repo" "${2:-}"
+                source_repo_flags+=("$2")
+                shift 2
+                ;;
+            --namespace)
+                require_flag_value "--namespace" "${2:-}"
+                ns_flags+=("$2")
+                restrict_ns_flag="true"
+                shift 2
+                ;;
+            --no-restrict-namespaces)
+                restrict_ns_flag="false"
+                shift
+                ;;
+            --cluster-resources)
+                cluster_resources_flag="true"
+                shift
+                ;;
+            --no-cluster-resources)
+                cluster_resources_flag="false"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh add-project <name> [flags: --description, --restrict-repos, --source-repo <url>..., --namespace <name>..., --cluster-resources]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
 
-    local project_name="$1"
+    local project_name="$name_flag"
+    if [[ -z "$project_name" ]]; then
+        project_name=$(prompt_or_die "Project name" "--name")
+    fi
     validate_k8s_name "$project_name" "Project name"
     load_conf
 
@@ -1081,62 +1639,112 @@ cmd_add_project() {
 
     print_header "Add Project: ${project_name}"
 
-    # Prompt for description
+    # Description
     local description
-    description="$(gum input --placeholder "What does this project scope?" --prompt "Description: ")"
+    if [[ -n "$desc_flag" ]]; then
+        description="$desc_flag"
+    elif [[ -t 0 ]]; then
+        description="$(gum input --placeholder "What does this project scope?" --prompt "Description: ")"
+    else
+        description=""
+    fi
 
-    # Prompt for source repo restrictions
+    # Source repo restrictions
+    local restrict_repos="no"
+    if [[ "$restrict_repos_flag" == "true" ]]; then
+        restrict_repos="yes"
+    elif [[ "$restrict_repos_flag" == "false" ]]; then
+        restrict_repos="no"
+    elif [[ ${#source_repo_flags[@]} -gt 0 ]]; then
+        restrict_repos="yes" # providing --source-repo implies restriction
+    elif [[ -t 0 ]]; then
+        gum confirm "Restrict source repositories?" && restrict_repos="yes"
+    fi
+
     local source_repos_block
-    if gum confirm "Restrict source repositories?"; then
-        local repos_input
-        repos_input="$(gum input --value "${REPO_URL}" --prompt "Allowed repos (comma-separated): ")"
+    if [[ "$restrict_repos" == "yes" ]]; then
+        local repos=()
+        if [[ ${#source_repo_flags[@]} -gt 0 ]]; then
+            repos=("${source_repo_flags[@]}")
+        elif [[ -t 0 ]]; then
+            local repos_input
+            repos_input="$(gum input --value "${REPO_URL}" --prompt "Allowed repos (comma-separated): ")"
+            IFS=',' read -ra repos <<<"$repos_input"
+        else
+            repos=("${REPO_URL}")
+        fi
         source_repos_block=""
-        IFS=',' read -ra repos <<<"$repos_input"
         local repo
         for repo in "${repos[@]}"; do
             repo="$(echo "$repo" | xargs)" # trim whitespace
+            [[ -z "$repo" ]] && continue
             validate_github_repo "$repo"
             source_repos_block+="    - ${repo}"$'\n'
         done
-        # Remove trailing newline
         source_repos_block="${source_repos_block%$'\n'}"
     else
         source_repos_block="    - '*'"
     fi
 
-    # Prompt for destination namespace restrictions
+    # Destination namespace restrictions
+    local restrict_ns="no"
+    if [[ "$restrict_ns_flag" == "true" ]]; then
+        restrict_ns="yes"
+    elif [[ "$restrict_ns_flag" == "false" ]]; then
+        restrict_ns="no"
+    elif [[ ${#ns_flags[@]} -gt 0 ]]; then
+        restrict_ns="yes"
+    elif [[ -t 0 ]]; then
+        gum confirm "Restrict destination namespaces?" && restrict_ns="yes"
+    fi
+
     local destinations_block
-    if gum confirm "Restrict destination namespaces?"; then
+    if [[ "$restrict_ns" == "yes" ]]; then
         local envs=()
         while IFS= read -r env; do
             envs+=("$env")
         done < <(detect_envs)
 
-        local selected_namespaces
-        if [[ ${#envs[@]} -gt 0 ]]; then
-            selected_namespaces="$(printf "%s\n" "${envs[@]}" | gum choose --no-limit)"
+        local selected_namespaces=()
+        if [[ ${#ns_flags[@]} -gt 0 ]]; then
+            selected_namespaces=("${ns_flags[@]}")
+        elif [[ -t 0 ]] && [[ ${#envs[@]} -gt 0 ]]; then
+            mapfile -t selected_namespaces < <(printf "%s\n" "${envs[@]}" | gum choose --no-limit)
+        elif [[ -t 0 ]]; then
+            local ns_input
+            ns_input="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
+            IFS=',' read -ra selected_namespaces <<<"$ns_input"
         else
-            selected_namespaces="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
-            # Convert comma-separated to newline-separated
-            selected_namespaces="$(echo "$selected_namespaces" | tr ',' '\n' | xargs -I{} echo {})"
+            print_error "--namespace is required when restricting namespaces non-interactively"
+            exit 1
         fi
 
         destinations_block=""
-        while IFS= read -r ns; do
+        local ns
+        for ns in "${selected_namespaces[@]}"; do
             ns="$(echo "$ns" | xargs)"
             [[ -z "$ns" ]] && continue
             destinations_block+="    - namespace: ${ns}"$'\n'
             destinations_block+="      server: https://kubernetes.default.svc"$'\n'
-        done <<<"$selected_namespaces"
+        done
         destinations_block="${destinations_block%$'\n'}"
     else
         destinations_block="    - namespace: '*'"$'\n'
         destinations_block+="      server: https://kubernetes.default.svc"
     fi
 
-    # Prompt for cluster-scoped resource access
+    # Cluster-scoped resource access
+    local allow_cluster="no"
+    if [[ "$cluster_resources_flag" == "true" ]]; then
+        allow_cluster="yes"
+    elif [[ "$cluster_resources_flag" == "false" ]]; then
+        allow_cluster="no"
+    elif [[ -t 0 ]]; then
+        gum confirm "Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)" && allow_cluster="yes"
+    fi
+
     local cluster_resources_block
-    if gum confirm "Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)"; then
+    if [[ "$allow_cluster" == "yes" ]]; then
         cluster_resources_block="    - group: '*'"$'\n'
         cluster_resources_block+="      kind: '*'"
     else
@@ -1163,11 +1771,82 @@ cmd_add_project() {
 cmd_edit_project() {
     require_gum
 
-    local project_name="${1:-}"
+    local name_flag="" desc_flag=""
+    local restrict_repos_flag=""
+    local restrict_ns_flag=""
+    local cluster_resources_flag=""
+    local ns_flags=() source_repo_flags=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --description)
+                require_flag_value "--description" "${2:-}"
+                desc_flag="$2"
+                shift 2
+                ;;
+            --restrict-repos)
+                restrict_repos_flag="true"
+                shift
+                ;;
+            --no-restrict-repos)
+                restrict_repos_flag="false"
+                shift
+                ;;
+            --source-repo)
+                require_flag_value "--source-repo" "${2:-}"
+                source_repo_flags+=("$2")
+                shift 2
+                ;;
+            --namespace)
+                require_flag_value "--namespace" "${2:-}"
+                ns_flags+=("$2")
+                restrict_ns_flag="true"
+                shift 2
+                ;;
+            --no-restrict-namespaces)
+                restrict_ns_flag="false"
+                shift
+                ;;
+            --cluster-resources)
+                cluster_resources_flag="true"
+                shift
+                ;;
+            --no-cluster-resources)
+                cluster_resources_flag="false"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh edit-project [name] [flags]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local project_name="$name_flag"
 
     if [[ -z "$project_name" ]]; then
         load_conf
-        project_name="$(detect_projects | choose_from "Select project to edit:" "No projects to edit.")" || exit 0
+        if [[ -t 0 ]]; then
+            project_name="$(detect_projects | choose_from "Select project to edit:" "No projects to edit.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
 
     load_conf
@@ -1195,30 +1874,57 @@ cmd_edit_project() {
         current_ns_restricted=true
     fi
 
-    # Prompt for description
+    # Description: flag wins, else prompt (pre-filled), else keep current
     local description
-    description="$(gum input --value "$current_description" --prompt "Description: ")"
-
-    # Prompt for source repo restrictions
-    local source_repos_block
-    local confirm_msg="Restrict source repositories?"
-    if [[ "$current_repos_restricted" == true ]]; then
-        confirm_msg="Restrict source repositories? (currently restricted)"
+    if [[ -n "$desc_flag" ]]; then
+        description="$desc_flag"
+    elif [[ -t 0 ]]; then
+        description="$(gum input --value "$current_description" --prompt "Description: ")"
+    else
+        description="$current_description"
     fi
-    if gum confirm "$confirm_msg"; then
-        local current_repos=""
-        if [[ "$current_repos_restricted" == true ]]; then
-            current_repos="$(awk '/sourceRepos:/,/destinations:/{if(/- / && !/sourceRepos:/ && !/destinations:/) print}' "$project_file" | sed 's/.*- //' | tr '\n' ',' | sed 's/,$//')"
+
+    # Source repo restrictions
+    local restrict_repos
+    if [[ "$restrict_repos_flag" == "true" ]]; then
+        restrict_repos="yes"
+    elif [[ "$restrict_repos_flag" == "false" ]]; then
+        restrict_repos="no"
+    elif [[ ${#source_repo_flags[@]} -gt 0 ]]; then
+        restrict_repos="yes"
+    elif [[ -t 0 ]]; then
+        local confirm_msg="Restrict source repositories?"
+        [[ "$current_repos_restricted" == true ]] && confirm_msg="Restrict source repositories? (currently restricted)"
+        if gum confirm "$confirm_msg"; then restrict_repos="yes"; else restrict_repos="no"; fi
+    else
+        restrict_repos=$([[ "$current_repos_restricted" == true ]] && echo "yes" || echo "no")
+    fi
+
+    local source_repos_block
+    if [[ "$restrict_repos" == "yes" ]]; then
+        local repos=()
+        if [[ ${#source_repo_flags[@]} -gt 0 ]]; then
+            repos=("${source_repo_flags[@]}")
+        elif [[ -t 0 ]]; then
+            local current_repos=""
+            if [[ "$current_repos_restricted" == true ]]; then
+                current_repos="$(awk '/sourceRepos:/,/destinations:/{if(/- / && !/sourceRepos:/ && !/destinations:/) print}' "$project_file" | sed 's/.*- //' | tr '\n' ',' | sed 's/,$//')"
+            else
+                current_repos="${REPO_URL}"
+            fi
+            local repos_input
+            repos_input="$(gum input --value "$current_repos" --prompt "Allowed repos (comma-separated): ")"
+            IFS=',' read -ra repos <<<"$repos_input"
+        elif [[ "$current_repos_restricted" == true ]]; then
+            mapfile -t repos < <(awk '/sourceRepos:/,/destinations:/{if(/- / && !/sourceRepos:/ && !/destinations:/) print}' "$project_file" | sed 's/.*- //')
         else
-            current_repos="${REPO_URL}"
+            repos=("${REPO_URL}")
         fi
-        local repos_input
-        repos_input="$(gum input --value "$current_repos" --prompt "Allowed repos (comma-separated): ")"
         source_repos_block=""
-        IFS=',' read -ra repos <<<"$repos_input"
         local repo
         for repo in "${repos[@]}"; do
             repo="$(echo "$repo" | xargs)"
+            [[ -z "$repo" ]] && continue
             validate_github_repo "$repo"
             source_repos_block+="    - ${repo}"$'\n'
         done
@@ -1227,51 +1933,78 @@ cmd_edit_project() {
         source_repos_block="    - '*'"
     fi
 
-    # Prompt for destination namespace restrictions
-    local destinations_block
-    confirm_msg="Restrict destination namespaces?"
-    if [[ "$current_ns_restricted" == true ]]; then
-        confirm_msg="Restrict destination namespaces? (currently restricted)"
+    # Destination namespace restrictions
+    local restrict_ns
+    if [[ "$restrict_ns_flag" == "true" ]]; then
+        restrict_ns="yes"
+    elif [[ "$restrict_ns_flag" == "false" ]]; then
+        restrict_ns="no"
+    elif [[ ${#ns_flags[@]} -gt 0 ]]; then
+        restrict_ns="yes"
+    elif [[ -t 0 ]]; then
+        local confirm_msg="Restrict destination namespaces?"
+        [[ "$current_ns_restricted" == true ]] && confirm_msg="Restrict destination namespaces? (currently restricted)"
+        if gum confirm "$confirm_msg"; then restrict_ns="yes"; else restrict_ns="no"; fi
+    else
+        restrict_ns=$([[ "$current_ns_restricted" == true ]] && echo "yes" || echo "no")
     fi
-    if gum confirm "$confirm_msg"; then
+
+    local destinations_block
+    if [[ "$restrict_ns" == "yes" ]]; then
         local envs=()
         while IFS= read -r env; do
             envs+=("$env")
         done < <(detect_envs)
 
-        local selected_namespaces
-        if [[ ${#envs[@]} -gt 0 ]]; then
-            selected_namespaces="$(printf "%s\n" "${envs[@]}" | gum choose --no-limit)"
+        local selected_namespaces=()
+        if [[ ${#ns_flags[@]} -gt 0 ]]; then
+            selected_namespaces=("${ns_flags[@]}")
+        elif [[ -t 0 ]] && [[ ${#envs[@]} -gt 0 ]]; then
+            mapfile -t selected_namespaces < <(printf "%s\n" "${envs[@]}" | gum choose --no-limit)
+        elif [[ -t 0 ]]; then
+            local ns_input
+            ns_input="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
+            IFS=',' read -ra selected_namespaces <<<"$ns_input"
         else
-            selected_namespaces="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
-            selected_namespaces="$(echo "$selected_namespaces" | tr ',' '\n' | xargs -I{} echo {})"
+            print_error "--namespace is required when restricting namespaces non-interactively"
+            exit 1
         fi
 
         destinations_block=""
-        while IFS= read -r ns; do
+        local ns
+        for ns in "${selected_namespaces[@]}"; do
             ns="$(echo "$ns" | xargs)"
             [[ -z "$ns" ]] && continue
             destinations_block+="    - namespace: ${ns}"$'\n'
             destinations_block+="      server: https://kubernetes.default.svc"$'\n'
-        done <<<"$selected_namespaces"
+        done
         destinations_block="${destinations_block%$'\n'}"
     else
         destinations_block="    - namespace: '*'"$'\n'
         destinations_block+="      server: https://kubernetes.default.svc"
     fi
 
-    # Prompt for cluster-scoped resource access
+    # Cluster-scoped resource access
     local current_cluster_restricted=false
     if ! grep -q "clusterResourceWhitelist:" "$project_file" || ! grep -A1 "clusterResourceWhitelist:" "$project_file" | grep -q "group: '\*'"; then
         current_cluster_restricted=true
     fi
 
-    local cluster_resources_block
-    confirm_msg="Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)"
-    if [[ "$current_cluster_restricted" == true ]]; then
-        confirm_msg="Allow full cluster-scoped resource access? (currently restricted)"
+    local allow_cluster
+    if [[ "$cluster_resources_flag" == "true" ]]; then
+        allow_cluster="yes"
+    elif [[ "$cluster_resources_flag" == "false" ]]; then
+        allow_cluster="no"
+    elif [[ -t 0 ]]; then
+        local confirm_msg="Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)"
+        [[ "$current_cluster_restricted" == true ]] && confirm_msg="Allow full cluster-scoped resource access? (currently restricted)"
+        if gum confirm "$confirm_msg"; then allow_cluster="yes"; else allow_cluster="no"; fi
+    else
+        allow_cluster=$([[ "$current_cluster_restricted" == true ]] && echo "no" || echo "yes")
     fi
-    if gum confirm "$confirm_msg"; then
+
+    local cluster_resources_block
+    if [[ "$allow_cluster" == "yes" ]]; then
         cluster_resources_block="    - group: '*'"$'\n'
         cluster_resources_block+="      kind: '*'"
     else
@@ -1297,6 +2030,39 @@ cmd_enable_kargo() {
     require_gh
     require_gh_scope "read:packages"
     load_conf
+
+    declare -A image_repo_map=()
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --image-repo)
+                require_flag_value "--image-repo" "${2:-}"
+                local _k="${2%%=*}" _v="${2#*=}"
+                [[ -z "$_k" || "$_k" == "$_v" ]] && {
+                    print_error "--image-repo expects <app>=<url>, got: $2"
+                    exit 1
+                }
+                image_repo_map["$_k"]="$_v"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh enable-kargo [--image-repo <app>=<url>]... [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
 
     if is_kargo_enabled; then
         print_warning "Kargo is already enabled in .infra-ctl.conf"
@@ -1331,7 +2097,7 @@ cmd_enable_kargo() {
             print_info "  $((i + 1)). ${PROMOTION_ORDER[$i]}"
         done
 
-        confirm_or_abort "Use this order? (Edit kargo/promotion-order.txt after to change)"
+        require_yes "$yes" "use this promotion order (edit kargo/promotion-order.txt after to change)"
     else
         mkdir -p "${TARGET_DIR}/kargo"
         touch "${TARGET_DIR}/kargo/promotion-order.txt"
@@ -1369,12 +2135,21 @@ cmd_enable_kargo() {
             local kargo_app_dir="${TARGET_DIR}/kargo/${app}"
             mkdir -p "$kargo_app_dir"
 
-            # Prompt for image repository per app (no tag -- Kargo discovers tags)
+            # Image repository per app (no tag -- Kargo discovers tags)
             local image_repo
-            while true; do
-                image_repo="$(gum input --value "ghcr.io/${REPO_OWNER}/${app}" --prompt "Image repo for ${app} (no tag): ")"
-                validate_image_repo "$image_repo" && break
-            done
+            local default_image_repo="ghcr.io/${REPO_OWNER}/${app}"
+            if [[ -v "image_repo_map[$app]" ]]; then
+                image_repo="${image_repo_map[$app]}"
+            elif [[ -t 0 ]]; then
+                while true; do
+                    image_repo="$(gum input --value "$default_image_repo" --prompt "Image repo for ${app} (no tag): ")"
+                    validate_image_repo "$image_repo" && break
+                done
+            else
+                print_error "--image-repo ${app}=<url> is required when not running interactively"
+                exit 1
+            fi
+            validate_image_repo "$image_repo"
 
             # Project
             if safe_render_template \
@@ -1513,11 +2288,51 @@ cmd_list_projects() {
 cmd_remove_project() {
     require_gum
 
-    local project_name="${1:-}"
+    local name_flag="" reassign_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --reassign-to)
+                require_flag_value "--reassign-to" "${2:-}"
+                reassign_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh remove-project [name] [--reassign-to <project>] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local project_name="$name_flag"
 
     if [[ -z "$project_name" ]]; then
         load_conf
-        project_name="$(detect_projects | choose_from "Select project to remove:" "No projects to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            project_name="$(detect_projects | choose_from "Select project to remove:" "No projects to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
 
     validate_k8s_name "$project_name" "Project name"
@@ -1564,12 +2379,31 @@ cmd_remove_project() {
         done < <(detect_projects)
 
         local reassign_to
-        reassign_to="$(printf '%s\n' "${other_projects[@]}" | gum choose --header "Reassign these apps to:")"
+        if [[ -n "$reassign_flag" ]]; then
+            # Validate target exists (or is "default")
+            local found=0 op
+            for op in "${other_projects[@]}"; do
+                [[ "$op" == "$reassign_flag" ]] && {
+                    found=1
+                    break
+                }
+            done
+            [[ "$found" -eq 0 ]] && {
+                print_error "Reassignment target '${reassign_flag}' not found. Known: ${other_projects[*]}"
+                exit 1
+            }
+            reassign_to="$reassign_flag"
+        elif [[ -t 0 ]]; then
+            reassign_to="$(printf '%s\n' "${other_projects[@]}" | gum choose --header "Reassign these apps to:")"
+        else
+            print_error "--reassign-to is required when not running interactively (apps currently assigned)"
+            exit 1
+        fi
 
         print_info "Apps will be reassigned to project '${reassign_to}'"
     fi
 
-    confirm_or_abort "Remove project '${project_name}'?"
+    require_yes "$yes" "remove project '${project_name}'"
 
     # Reassign apps if needed
     if [[ ${#assigned_apps[@]} -gt 0 ]]; then
@@ -1613,11 +2447,46 @@ cmd_remove_project() {
 cmd_remove_app() {
     require_gum
 
-    local app_name="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh remove-app [name] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local app_name="$name_flag"
 
     if [[ -z "$app_name" ]]; then
         load_conf
-        app_name="$(detect_apps | choose_from "Select application to remove:" "No applications to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            app_name="$(detect_apps | choose_from "Select application to remove:" "No applications to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
     validate_k8s_name "$app_name" "App name"
     load_conf
@@ -1665,7 +2534,7 @@ cmd_remove_app() {
         fi
     done
 
-    confirm_or_abort "Remove application '${app_name}' and all its resources?"
+    require_yes "$yes" "remove application '${app_name}' and all its resources"
 
     # Execute removal
     local removed_files=()
@@ -1691,11 +2560,46 @@ cmd_remove_app() {
 cmd_remove_env() {
     require_gum
 
-    local env_name="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh remove-env [name] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local env_name="$name_flag"
 
     if [[ -z "$env_name" ]]; then
         load_conf
-        env_name="$(detect_envs | choose_from "Select environment to remove:" "No environments to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            env_name="$(detect_envs | choose_from "Select environment to remove:" "No environments to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
     validate_k8s_name "$env_name" "Environment name"
     load_conf
@@ -1797,7 +2701,7 @@ cmd_remove_env() {
         print_info "Update: kargo/promotion-order.txt (remove '${env_name}')"
     fi
 
-    confirm_or_abort "Remove environment '${env_name}' and all its resources?"
+    require_yes "$yes" "remove environment '${env_name}' and all its resources"
 
     # Execute removal
     local removed_files=()
@@ -1891,6 +2795,28 @@ cmd_remove_env() {
 cmd_reset() {
     require_gum
 
+    local yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: infra-ctl.sh reset [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected: $1"
+                exit 1
+                ;;
+        esac
+    done
+
     print_header "Reset GitOps Repository"
 
     local targets=()
@@ -1919,7 +2845,7 @@ cmd_reset() {
         print_info "  ${t#"${TARGET_DIR}/"}"
     done
 
-    confirm_destructive_or_abort "Reset this GitOps repository? This cannot be undone."
+    require_yes "$yes" "reset this GitOps repository (cannot be undone)"
 
     for t in "${targets[@]}"; do
         rm -rf "$t"

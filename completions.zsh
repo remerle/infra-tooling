@@ -98,11 +98,100 @@ _infra_ctl() {
     case "$state" in
         args)
             case "${words[1]}" in
-                remove-app)       _infra_complete_apps ;;
-                remove-env)       _infra_complete_envs ;;
-                edit-project)     _infra_complete_projects ;;
-                remove-project)   _infra_complete_projects ;;
-                add-ingress|remove-ingress) _infra_complete_apps ;;
+                init)
+                    _arguments \
+                        '--repo-url[GitOps repo URL]:url:' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
+                add-app)
+                    _arguments \
+                        '--name[Application name]:name:' \
+                        '--project[Project to add the app to]:project:_infra_complete_projects' \
+                        '--workload-type[Workload type]:type:(deployment statefulset)' \
+                        '--preset[Preset to use]:preset:' \
+                        '*--set[KEY=VAL preset placeholder]:key=val:' \
+                        '*--secret-key[Secret key name]:key:' \
+                        '*--config[KEY=VAL configMap entry]:key=val:' \
+                        '--kargo[Generate Kargo resources]' \
+                        '--no-kargo[Skip Kargo resources]' \
+                        '--image-repo[OCI image repository (Kargo)]:url:' \
+                        '--custom[Provide custom image/port/probe values]' \
+                        '--image[Container image]:image:' \
+                        '--port[Service port]:port:' \
+                        '--secret-name[Secret name]:name:' \
+                        '--probe-path[HTTP probe path]:path:' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
+                add-env)
+                    _arguments \
+                        '--name[Environment name]:name:' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
+                add-project)
+                    _arguments \
+                        '--name[Project name]:name:' \
+                        '--description[Project description]:text:' \
+                        '--restrict-repos[Restrict source repos to the main repo]' \
+                        '--no-restrict-repos[Allow any source repo]' \
+                        '*--source-repo[Allowed source repo URL]:url:' \
+                        '*--namespace[Destination namespace]:namespace:_infra_complete_envs' \
+                        '--no-restrict-namespaces[Allow all destination namespaces]' \
+                        '--cluster-resources[Allow cluster-scoped resources]' \
+                        '--no-cluster-resources[Deny cluster-scoped resources]'
+                    ;;
+                edit-project)
+                    _arguments \
+                        '--name[Project name]:name:_infra_complete_projects' \
+                        '--description[Project description]:text:' \
+                        '--restrict-repos[Restrict source repos]' \
+                        '--no-restrict-repos[Allow any repo]' \
+                        '*--source-repo[Allowed source repo URL]:url:' \
+                        '*--namespace[Destination namespace]:namespace:_infra_complete_envs' \
+                        '--no-restrict-namespaces[Allow all destination namespaces]' \
+                        '--cluster-resources[Allow cluster-scoped resources]' \
+                        '--no-cluster-resources[Deny cluster-scoped resources]'
+                    ;;
+                add-ingress)
+                    _arguments \
+                        '--app[Application]:app:_infra_complete_apps' \
+                        '*--env[Environment]:env:_infra_complete_envs' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]' \
+                        '*:app:_infra_complete_apps'
+                    ;;
+                remove-ingress)
+                    _arguments \
+                        '--app[Application]:app:_infra_complete_apps' \
+                        '*--env[Environment]:env:_infra_complete_envs' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]' \
+                        '*:app:_infra_complete_apps'
+                    ;;
+                enable-kargo)
+                    _arguments \
+                        '*--image-repo[<app>=<url> image repo]:app=url:' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
+                remove-app)
+                    _arguments \
+                        '--name[Application name]:name:_infra_complete_apps' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]' \
+                        '*:app:_infra_complete_apps'
+                    ;;
+                remove-env)
+                    _arguments \
+                        '--name[Environment name]:name:_infra_complete_envs' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]' \
+                        '*:env:_infra_complete_envs'
+                    ;;
+                remove-project)
+                    _arguments \
+                        '--name[Project name]:name:_infra_complete_projects' \
+                        '--reassign-to[Reassign apps to this project]:project:_infra_complete_projects' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]' \
+                        '*:project:_infra_complete_projects'
+                    ;;
+                reset)
+                    _arguments '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
             esac
             ;;
     esac
@@ -120,7 +209,6 @@ _cluster_ctl() {
         'argo-init:Bootstrap ArgoCD with the parent-app'
         'argo-sync:Force ArgoCD to sync all applications'
         'argo-status:Show ArgoCD application status and errors'
-        'doctor:Run cross-layer diagnostic checks against repo and cluster'
         'renew-tls:Regenerate mkcert certificates'
         'status:Show cluster status'
         'preflight-check:Validate cluster prerequisites'
@@ -137,18 +225,48 @@ _cluster_ctl() {
     case "$state" in
         args)
             case "${words[1]}" in
+                init-cluster)
+                    _arguments \
+                        '--name[Cluster name]:name:' \
+                        '--agents[Number of agent nodes]:count:' \
+                        '--expose-ports[Expose ports 80/443]' \
+                        '--no-expose-ports[Do not expose ports]' \
+                        '--tls[Enable HTTPS with mkcert]' \
+                        '--no-tls[Skip HTTPS]' \
+                        '--argocd[Install ArgoCD]' \
+                        '--no-argocd[Skip ArgoCD]' \
+                        '--kargo[Install Kargo]' \
+                        '--no-kargo[Skip Kargo]' \
+                        '--kargo-password[Kargo admin password]:password:'
+                    ;;
                 delete-cluster)
                     local -a cluster_names
                     cluster_names=(${(f)"$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name' 2>/dev/null)"})
-                    compadd -a cluster_names
+                    _arguments \
+                        "--name[Cluster name]:name:(${cluster_names})" \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]' \
+                        "*:cluster:(${cluster_names})"
                     ;;
-                doctor)
-                    _arguments -s \
-                        '--scope[Limit checks to repo, cluster, or all]:scope:(repo cluster all)' \
-                        '--app[Limit checks to a single application]:app:_infra_complete_apps' \
-                        '--env[Limit checks to a single environment]:env:_infra_complete_envs' \
-                        '--verbose[Show additional diagnostic detail]' \
-                        '(-h --help)'{-h,--help}'[Show doctor usage]'
+                add-argo-creds)
+                    _arguments \
+                        '--pat[GitHub personal access token]:pat:' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
+                add-registry-creds)
+                    _arguments \
+                        '--registry[Container registry URL]:url:' \
+                        '--username[Registry username]:user:' \
+                        '--token[Registry token/password]:token:' \
+                        '*--env[Environment]:env:_infra_complete_envs' \
+                        '--yes[Skip overwrite confirmation]' '-y[Skip overwrite confirmation]'
+                    ;;
+                add-kargo-creds)
+                    _arguments \
+                        '--app[Application]:app:_infra_complete_apps' \
+                        '--pat[GitHub personal access token]:pat:' \
+                        '--private-registry[App uses a private registry]' \
+                        '--no-private-registry[App uses a public registry]' \
+                        '--yes[Skip overwrite confirmation]' '-y[Skip overwrite confirmation]'
                     ;;
             esac
             ;;
@@ -176,15 +294,35 @@ _secret_ctl() {
     case "$state" in
         args)
             case "${words[1]}" in
-                add|list|remove)
+                init)
+                    _arguments \
+                        '--restore-key[Restore sealed-secrets key from backup]' \
+                        '--no-restore-key[Generate a new key]'
+                    ;;
+                add)
+                    _arguments \
+                        '--app[Application]:app:_infra_complete_apps' \
+                        '--env[Environment]:env:_infra_complete_envs' \
+                        '*--secret-val[KEY=VAL secret value]:key=val:' \
+                        '--overwrite[Overwrite existing sealed secret]' \
+                        '--no-overwrite[Do not overwrite existing]'
+                    ;;
+                remove)
+                    _arguments \
+                        '--app[Application]:app:_infra_complete_apps' \
+                        '--env[Environment]:env:_infra_complete_envs' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
+                verify)
+                    _arguments \
+                        '--env[Environment]:env:_infra_complete_envs' \
+                        '--walk[Walk the whole repo]' \
+                        '--no-walk[Only check the given env]'
+                    ;;
+                list)
                     case "$CURRENT" in
                         2) _infra_complete_apps ;;
                         3) _infra_complete_envs ;;
-                    esac
-                    ;;
-                verify)
-                    case "$CURRENT" in
-                        2) _infra_complete_envs ;;
                     esac
                     ;;
             esac
@@ -213,6 +351,54 @@ _user_ctl() {
         '--debug[Show full command output]' \
         '1:command:(( ${commands} ))' \
         '*:: :->args'
+
+    case "$state" in
+        args)
+            case "${words[1]}" in
+                add-role)
+                    _arguments \
+                        '--name[Role name]:name:' \
+                        '--preset[Permission preset]:preset:(admin-readonly-settings developer viewer custom)' \
+                        '*--argocd-resource[ArgoCD resource]:resource:(applications projects repositories clusters certificates accounts logs exec)' \
+                        '*--action[ArgoCD action]:action:(get create update delete sync override action \*)' \
+                        '--k8s-scope[K8s access scope]:scope:(cluster-wide namespace-scoped)' \
+                        '*--k8s-verb[kubectl verb]:verb:(get list watch create update patch delete \*)' \
+                        '*--namespace[Namespace]:namespace:_infra_complete_envs'
+                    ;;
+                remove-role)
+                    _arguments \
+                        '--name[Role name]:name:' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
+                remove)
+                    _arguments \
+                        '--name[Username]:name:' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
+                remove-sa)
+                    _arguments \
+                        '--name[SA name]:name:' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
+                add)
+                    _arguments \
+                        '--name[Username]:name:' \
+                        '--group[RBAC group (role name)]:group:'
+                    ;;
+                add-sa)
+                    _arguments \
+                        '--name[Service account name]:name:' \
+                        '--group[RBAC group (role name)]:group:' \
+                        '--duration[Token duration (e.g. 2160h)]:duration:'
+                    ;;
+                refresh-sa)
+                    _arguments \
+                        '--name[Service account name]:name:' \
+                        '--duration[Token duration (e.g. 2160h)]:duration:'
+                    ;;
+            esac
+            ;;
+    esac
 }
 
 _config_ctl() {
@@ -234,14 +420,29 @@ _config_ctl() {
     case "$state" in
         args)
             case "${words[1]}" in
-                add|list|remove)
+                add)
+                    _arguments \
+                        '--app[Application]:app:_infra_complete_apps' \
+                        '--env[Environment]:env:_infra_complete_envs' \
+                        '*--config[KEY=VAL configMap entry]:key=val:'
+                    ;;
+                remove)
+                    _arguments \
+                        '--app[Application]:app:_infra_complete_apps' \
+                        '--env[Environment]:env:_infra_complete_envs' \
+                        '*--key[Config key prefix]:key:' \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
+                    ;;
+                verify)
+                    _arguments \
+                        '--env[Environment]:env:_infra_complete_envs' \
+                        '--walk[Walk the whole repo]' \
+                        '--no-walk[Only check the given env]'
+                    ;;
+                list)
                     case "$CURRENT" in
                         2) _infra_complete_apps ;;
                         3) _infra_complete_envs ;;
-                    esac ;;
-                verify)
-                    case "$CURRENT" in
-                        2) _infra_complete_envs ;;
                     esac ;;
             esac ;;
     esac

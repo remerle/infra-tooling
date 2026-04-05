@@ -6,6 +6,13 @@ source "$(dirname "$0")/lib/user-ctl-helpers.sh"
 
 VALUES_FILE="${SCRIPT_DIR}/helm/argocd-values.yaml"
 
+# Allowlists for add-role --custom flags. Kept here (not in lib/common.sh)
+# because they mirror the fixed `gum choose` lists used by the interactive
+# flow in cmd_add_role and nowhere else.
+ARGOCD_RESOURCES=(applications projects repositories clusters certificates accounts logs exec)
+ARGOCD_ACTIONS=(get create update delete sync override action '*')
+K8S_VERBS=(get list watch create update patch delete deletecollection '*')
+
 # --- Commands ---
 
 cmd_add_role() {
@@ -14,12 +21,83 @@ cmd_add_role() {
     require_yq
     require_helm
 
-    if [[ $# -lt 1 ]]; then
-        print_error "Usage: user-ctl.sh add-role <name>"
-        exit 1
-    fi
+    local name_flag="" preset_flag=""
+    local argocd_resource_flags=() action_flags=()
+    local k8s_scope_flag="" k8s_verb_flags=()
+    local ns_flags=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --preset)
+                require_flag_value "--preset" "${2:-}"
+                preset_flag="$2"
+                shift 2
+                ;;
+            --argocd-resource)
+                require_flag_value "--argocd-resource" "${2:-}"
+                validate_in_set "--argocd-resource" "$2" "${ARGOCD_RESOURCES[@]}"
+                argocd_resource_flags+=("$2")
+                shift 2
+                ;;
+            --action)
+                require_flag_value "--action" "${2:-}"
+                validate_in_set "--action" "$2" "${ARGOCD_ACTIONS[@]}"
+                action_flags+=("$2")
+                shift 2
+                ;;
+            --k8s-scope)
+                require_flag_value "--k8s-scope" "${2:-}"
+                k8s_scope_flag="$2"
+                shift 2
+                ;;
+            --k8s-verb)
+                require_flag_value "--k8s-verb" "${2:-}"
+                validate_in_set "--k8s-verb" "$2" "${K8S_VERBS[@]}"
+                k8s_verb_flags+=("$2")
+                shift 2
+                ;;
+            --namespace)
+                require_flag_value "--namespace" "${2:-}"
+                ns_flags+=("$2")
+                shift 2
+                ;;
+            -h | --help)
+                cat <<EOF
+Usage: user-ctl.sh add-role <name> [flags]
 
-    local role_name="$1"
+Flags:
+  --name <string>                 Role name (positional shorthand)
+  --preset <preset>               admin-readonly-settings | developer | viewer | custom
+  --argocd-resource <name>        ArgoCD resource (repeatable; custom preset)
+  --action <name>                 ArgoCD action (repeatable; custom preset)
+  --k8s-scope <scope>             cluster-wide | namespace-scoped (custom preset)
+  --k8s-verb <verb>               kubectl verb (repeatable; custom preset)
+  --namespace <name>              Namespace (repeatable; developer/custom-namespaced)
+EOF
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local role_name="$name_flag"
+    if [[ -z "$role_name" ]]; then
+        role_name=$(prompt_or_die "Role name" "--name")
+    fi
     validate_k8s_name "$role_name" "Role name"
 
     if role_exists "$role_name" "$VALUES_FILE"; then
@@ -29,13 +107,20 @@ cmd_add_role() {
 
     print_header "Add Role: ${role_name}"
 
-    # Choose preset
+    # Choose preset: flag wins, else prompt, else die
     local preset
-    preset="$(gum choose --header "Permission preset:" \
-        "admin-readonly-settings" \
-        "developer" \
-        "viewer" \
-        "custom")"
+    if [[ -n "$preset_flag" ]]; then
+        case "$preset_flag" in
+            admin-readonly-settings | developer | viewer | custom) preset="$preset_flag" ;;
+            *)
+                print_error "--preset must be one of: admin-readonly-settings, developer, viewer, custom"
+                exit 1
+                ;;
+        esac
+    else
+        preset=$(prompt_choose_or_die "Permission preset" "--preset" \
+            "admin-readonly-settings" "developer" "viewer" "custom")
+    fi
 
     local argocd_policy=""
     local created_files=()
@@ -47,17 +132,37 @@ cmd_add_role() {
             ;;
         custom)
             local resources actions
-            resources="$(gum choose --no-limit --header "Select ArgoCD resources:" \
-                "applications" "projects" "repositories" "clusters" \
-                "certificates" "accounts" "logs" "exec" | paste -sd, -)"
+            if [[ ${#argocd_resource_flags[@]} -gt 0 ]]; then
+                resources="$(
+                    IFS=,
+                    echo "${argocd_resource_flags[*]}"
+                )"
+            elif [[ -t 0 ]]; then
+                resources="$(gum choose --no-limit --header "Select ArgoCD resources:" \
+                    "applications" "projects" "repositories" "clusters" \
+                    "certificates" "accounts" "logs" "exec" | paste -sd, -)"
+            else
+                print_error "--argocd-resource is required when not running interactively"
+                exit 1
+            fi
 
             if [[ -z "$resources" ]]; then
                 print_error "At least one resource must be selected."
                 exit 1
             fi
 
-            actions="$(gum choose --no-limit --header "Select actions:" \
-                "get" "create" "update" "delete" "sync" "override" "action" "*" | paste -sd, -)"
+            if [[ ${#action_flags[@]} -gt 0 ]]; then
+                actions="$(
+                    IFS=,
+                    echo "${action_flags[*]}"
+                )"
+            elif [[ -t 0 ]]; then
+                actions="$(gum choose --no-limit --header "Select actions:" \
+                    "get" "create" "update" "delete" "sync" "override" "action" "*" | paste -sd, -)"
+            else
+                print_error "--action is required when not running interactively"
+                exit 1
+            fi
 
             if [[ -z "$actions" ]]; then
                 print_error "At least one action must be selected."
@@ -91,7 +196,14 @@ cmd_add_role() {
             fi
 
             local selected_namespaces
-            selected_namespaces="$(echo "$envs" | gum choose --no-limit --header "Select namespaces for this role:")"
+            if [[ ${#ns_flags[@]} -gt 0 ]]; then
+                selected_namespaces="$(printf '%s\n' "${ns_flags[@]}")"
+            elif [[ -t 0 ]]; then
+                selected_namespaces="$(echo "$envs" | gum choose --no-limit --header "Select namespaces for this role:")"
+            else
+                print_error "--namespace is required when not running interactively (repeat for multiple)"
+                exit 1
+            fi
 
             if [[ -z "$selected_namespaces" ]]; then
                 print_error "At least one namespace must be selected."
@@ -117,17 +229,41 @@ cmd_add_role() {
             created_files+=("$cr_file" "$crb_file")
             ;;
         custom)
-            # For custom, prompt for k8s RBAC scope
+            # K8s scope: flag wins, else prompt, else die
             print_info "Now configure Kubernetes (kubectl) access for this role."
             local k8s_scope
-            k8s_scope="$(gum choose --header "K8s access scope:" \
-                "cluster-wide (ClusterRole)" \
-                "namespace-scoped (Role per namespace)")"
+            if [[ -n "$k8s_scope_flag" ]]; then
+                case "$k8s_scope_flag" in
+                    cluster-wide) k8s_scope="cluster-wide (ClusterRole)" ;;
+                    namespace-scoped) k8s_scope="namespace-scoped (Role per namespace)" ;;
+                    *)
+                        print_error "--k8s-scope must be 'cluster-wide' or 'namespace-scoped'"
+                        exit 1
+                        ;;
+                esac
+            elif [[ -t 0 ]]; then
+                k8s_scope="$(gum choose --header "K8s access scope:" \
+                    "cluster-wide (ClusterRole)" \
+                    "namespace-scoped (Role per namespace)")"
+            else
+                print_error "--k8s-scope is required when not running interactively"
+                exit 1
+            fi
 
             if [[ "$k8s_scope" == "cluster-wide (ClusterRole)" ]]; then
                 local k8s_verbs
-                k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
-                    "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
+                if [[ ${#k8s_verb_flags[@]} -gt 0 ]]; then
+                    k8s_verbs="$(
+                        IFS=,
+                        echo "${k8s_verb_flags[*]}"
+                    )"
+                elif [[ -t 0 ]]; then
+                    k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
+                        "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
+                else
+                    print_error "--k8s-verb is required when not running interactively"
+                    exit 1
+                fi
 
                 local cr_file="${platform_dir}/${role_name}-clusterrole.yaml"
                 local crb_file="${platform_dir}/${role_name}-clusterrolebinding.yaml"
@@ -144,11 +280,28 @@ cmd_add_role() {
                 fi
 
                 local selected_ns
-                selected_ns="$(echo "$envs" | gum choose --no-limit --header "Select namespaces:")"
+                if [[ ${#ns_flags[@]} -gt 0 ]]; then
+                    selected_ns="$(printf '%s\n' "${ns_flags[@]}")"
+                elif [[ -t 0 ]]; then
+                    selected_ns="$(echo "$envs" | gum choose --no-limit --header "Select namespaces:")"
+                else
+                    print_error "--namespace is required when not running interactively"
+                    exit 1
+                fi
 
                 local k8s_verbs
-                k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
-                    "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
+                if [[ ${#k8s_verb_flags[@]} -gt 0 ]]; then
+                    k8s_verbs="$(
+                        IFS=,
+                        echo "${k8s_verb_flags[*]}"
+                    )"
+                elif [[ -t 0 ]]; then
+                    k8s_verbs="$(gum choose --no-limit --header "Select kubectl verbs:" \
+                        "get" "list" "watch" "create" "update" "patch" "delete" "*" | paste -sd',' -)"
+                else
+                    print_error "--k8s-verb is required when not running interactively"
+                    exit 1
+                fi
 
                 local ns
                 while IFS= read -r ns; do
@@ -231,13 +384,48 @@ cmd_remove_role() {
     require_yq
     require_helm
 
-    local role_name="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: user-ctl.sh remove-role [name] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local role_name="$name_flag"
 
     if [[ -z "$role_name" ]]; then
-        local policy
-        policy="$(yq '.configs.rbac."policy.csv" // ""' "$VALUES_FILE")" || true
-        role_name="$(echo "$policy" | grep -oE 'role:[^,[:space:]]+' | sed 's/^role://' | sort -u \
-            | choose_from "Select role to remove:" "No roles to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            local policy
+            policy="$(yq '.configs.rbac."policy.csv" // ""' "$VALUES_FILE")" || true
+            role_name="$(echo "$policy" | grep -oE 'role:[^,[:space:]]+' | sed 's/^role://' | sort -u \
+                | choose_from "Select role to remove:" "No roles to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
 
     if ! role_exists "$role_name" "$VALUES_FILE"; then
@@ -247,7 +435,7 @@ cmd_remove_role() {
 
     print_header "Remove Role: ${role_name}"
 
-    confirm_destructive_or_abort "Remove role '${role_name}'? This removes ArgoCD policy and k8s RBAC."
+    require_yes "$yes" "remove role '${role_name}' (removes ArgoCD policy and k8s RBAC)"
 
     # Remove k8s manifests
     local platform_dir="${TARGET_DIR}/k8s/platform"
@@ -284,13 +472,47 @@ cmd_add() {
     require_yq
     require_helm
 
-    if [[ $# -lt 2 ]]; then
-        print_error "Usage: user-ctl.sh add <username> <group>"
-        exit 1
-    fi
+    local name_flag="" group_flag=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --group)
+                require_flag_value "--group" "${2:-}"
+                group_flag="$2"
+                shift 2
+                ;;
+            -h | --help)
+                echo "Usage: user-ctl.sh add [name] --group <group>"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then
+                    name_flag="$1"
+                else
+                    print_error "Unexpected positional '$1'. Pass the group via --group <name>."
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
 
-    local username="$1"
-    local group="$2"
+    local username="$name_flag"
+    if [[ -z "$username" ]]; then
+        username="$(prompt_or_die "Username" "--name")"
+    fi
+    local group="$group_flag"
+    if [[ -z "$group" ]]; then
+        group="$(prompt_or_die "Group" "--group")"
+    fi
     validate_k8s_name "$username" "Username"
     validate_k8s_name "$group" "Group"
 
@@ -403,13 +625,50 @@ cmd_remove() {
     require_yq
     require_helm
 
-    local username="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: user-ctl.sh remove [username] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local username="$name_flag"
 
     if [[ -z "$username" ]]; then
-        username="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
-            | grep '^accounts\.' | sed 's/^accounts\.//' \
-            | choose_from "Select user to remove:" "No users to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            username="$(yq '.configs.cm | keys | .[]' "$VALUES_FILE" 2>/dev/null \
+                | grep '^accounts\.' | sed 's/^accounts\.//' \
+                | choose_from "Select user to remove:" "No users to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
+
+    validate_k8s_name "$username" "Username"
 
     if ! account_exists "$username" "$VALUES_FILE"; then
         print_error "Account '${username}' not found."
@@ -418,12 +677,12 @@ cmd_remove() {
 
     print_header "Remove User: ${username}"
 
-    confirm_destructive_or_abort "Remove user '${username}'?"
+    require_yes "$yes" "remove user '${username}'"
 
-    # Delete k8s CSR if it exists
-    run_cmd_sh "Removing K8s CSR..." \
+    # Delete k8s CSR if it exists (argv form; username validated above)
+    run_cmd "Removing K8s CSR..." \
         --explain "Cleaning up the CSR resource from the cluster. Note that the issued certificate cannot be revoked -- Kubernetes has no certificate revocation mechanism." \
-        "kubectl delete csr '$username' --ignore-not-found 2>/dev/null || true"
+        kubectl delete csr "$username" --ignore-not-found
     print_success "K8s CSR removed."
 
     # Warn about x509 certificate limitation
@@ -511,22 +770,22 @@ cmd_add_sa() {
     require_yq
     require_helm
 
-    if [[ $# -lt 2 ]]; then
-        print_error "Usage: user-ctl.sh add-sa <name> <group> [--duration <hours>h]"
-        exit 1
-    fi
-
-    local sa_name="$1"
-    local group="$2"
-    shift 2
-    validate_k8s_name "$sa_name" "Service account name"
-    validate_k8s_name "$group" "Group"
-
-    # Parse optional --duration flag
+    local name_flag="" group_flag=""
     local duration="2160h" # 90 days default
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --group)
+                require_flag_value "--group" "${2:-}"
+                group_flag="$2"
+                shift 2
+                ;;
             --duration)
+                require_flag_value "--duration" "${2:-}"
                 duration="$2"
                 if [[ ! "$duration" =~ ^[0-9]+[hms]$ ]]; then
                     print_error "Invalid duration format: '${duration}'. Use <number><unit> where unit is h (hours), m (minutes), or s (seconds). Example: 2160h"
@@ -534,12 +793,36 @@ cmd_add_sa() {
                 fi
                 shift 2
                 ;;
-            *)
-                print_error "Unknown option: $1"
+            -h | --help)
+                echo "Usage: user-ctl.sh add-sa [name] --group <group> [--duration <hours>h]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
                 exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then
+                    name_flag="$1"
+                else
+                    print_error "Unexpected positional '$1'. Pass the group via --group <name>."
+                    exit 1
+                fi
+                shift
                 ;;
         esac
     done
+
+    local sa_name="$name_flag"
+    if [[ -z "$sa_name" ]]; then
+        sa_name="$(prompt_or_die "Service account name" "--name")"
+    fi
+    local group="$group_flag"
+    if [[ -z "$group" ]]; then
+        group="$(prompt_or_die "Group" "--group")"
+    fi
+    validate_k8s_name "$sa_name" "Service account name"
+    validate_k8s_name "$group" "Group"
 
     # Verify role exists
     if ! role_exists "$group" "$VALUES_FILE"; then
@@ -715,18 +998,17 @@ cmd_refresh_sa() {
     require_gum
     require_cmd "kubectl" "brew install kubectl"
 
-    local sa_name=""
+    local name_flag=""
     local duration="2160h"
-
-    # Parse: first non-flag arg is the SA name
-    if [[ $# -gt 0 && "$1" != --* ]]; then
-        sa_name="$1"
-        shift
-    fi
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
             --duration)
+                require_flag_value "--duration" "${2:-}"
                 duration="$2"
                 if [[ ! "$duration" =~ ^[0-9]+[hms]$ ]]; then
                     print_error "Invalid duration format: '${duration}'. Use <number><unit> where unit is h (hours), m (minutes), or s (seconds). Example: 2160h"
@@ -734,18 +1016,38 @@ cmd_refresh_sa() {
                 fi
                 shift 2
                 ;;
-            *)
-                print_error "Unknown option: $1"
+            -h | --help)
+                echo "Usage: user-ctl.sh refresh-sa [name] [--duration <hours>h]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
                 exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then
+                    name_flag="$1"
+                else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
                 ;;
         esac
     done
 
+    local sa_name="$name_flag"
+
     # Interactive selection if name not provided
     if [[ -z "$sa_name" ]]; then
-        require_yq
-        sa_name="$(detect_sa_accounts "$VALUES_FILE" "${TARGET_DIR}/users" \
-            | choose_from "Select service account to refresh:" "No service accounts found.")" || exit 0
+        if [[ -t 0 ]]; then
+            require_yq
+            sa_name="$(detect_sa_accounts "$VALUES_FILE" "${TARGET_DIR}/users" \
+                | choose_from "Select service account to refresh:" "No service accounts found.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
 
     # Verify SA exists
@@ -779,30 +1081,77 @@ cmd_remove_sa() {
     require_yq
     require_helm
 
-    local sa_name="${1:-}"
+    local name_flag="" yes="false"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                require_flag_value "--name" "${2:-}"
+                name_flag="$2"
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: user-ctl.sh remove-sa [name] [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                if [[ -z "$name_flag" ]]; then name_flag="$1"; else
+                    print_error "Unexpected: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    local sa_name="$name_flag"
 
     if [[ -z "$sa_name" ]]; then
-        require_yq
-        sa_name="$(detect_sa_accounts "$VALUES_FILE" "${TARGET_DIR}/users" \
-            | choose_from "Select service account to remove:" "No service accounts to remove.")" || exit 0
+        if [[ -t 0 ]]; then
+            require_yq
+            sa_name="$(detect_sa_accounts "$VALUES_FILE" "${TARGET_DIR}/users" \
+                | choose_from "Select service account to remove:" "No service accounts to remove.")" || exit 0
+        else
+            print_error "--name is required when not running interactively"
+            exit 1
+        fi
     fi
+
+    validate_k8s_name "$sa_name" "Service account name"
 
     print_header "Remove Service Account: ${sa_name}"
 
-    confirm_destructive_or_abort "Remove service account '${sa_name}'?"
+    require_yes "$yes" "remove service account '${sa_name}'"
 
-    # Delete ServiceAccount and RBAC bindings
-    run_cmd_sh "Removing ServiceAccount and RBAC bindings..." \
+    # Delete ServiceAccount and RBAC bindings (argv form; sa_name is validated above)
+    run_cmd "Deleting ServiceAccount..." \
         --explain "Deleting the ServiceAccount invalidates all tokens immediately (tokens are tied to the SA). Unlike x509 cert users, SA removal is an effective instant revocation." \
-        "
-        kubectl delete serviceaccount \"${sa_name}\" -n kube-system --ignore-not-found
-        kubectl delete clusterrolebinding \"${sa_name}\" --ignore-not-found 2>/dev/null || true
-        kubectl delete clusterrolebinding \"${sa_name}-cluster-readonly\" --ignore-not-found 2>/dev/null || true
-        for ns in \$(kubectl get rolebinding -A -l app.kubernetes.io/managed-by=user-ctl \
-            -o jsonpath=\"{range .items[?(@.metadata.name==\\\"${sa_name}\\\")]}{.metadata.namespace}{\\\"\\\\n\\\"}{end}\" 2>/dev/null); do
-            kubectl delete rolebinding \"${sa_name}\" -n \"\$ns\" --ignore-not-found 2>/dev/null || true
-        done
-    "
+        kubectl delete serviceaccount "$sa_name" -n kube-system --ignore-not-found
+    run_cmd "Deleting ClusterRoleBinding (primary)..." \
+        --explain "Removes the ClusterRoleBinding that grants this SA its cluster-scoped role. Ignored if absent." \
+        kubectl delete clusterrolebinding "$sa_name" --ignore-not-found
+    run_cmd "Deleting ClusterRoleBinding (cluster-readonly)..." \
+        --explain "Removes the paired cluster-readonly binding created alongside admin-readonly-settings SAs. Ignored if absent." \
+        kubectl delete clusterrolebinding "${sa_name}-cluster-readonly" --ignore-not-found
+    # Find namespaces that still have a rolebinding for this SA (managed by user-ctl)
+    local ns_list
+    ns_list="$(kubectl get rolebinding -A -l app.kubernetes.io/managed-by=user-ctl \
+        -o jsonpath="{range .items[?(@.metadata.name=='${sa_name}')]}{.metadata.namespace}{'\n'}{end}" 2>/dev/null || true)"
+    if [[ -n "$ns_list" ]]; then
+        while IFS= read -r ns; do
+            [[ -z "$ns" ]] && continue
+            run_cmd "Deleting RoleBinding in ${ns}..." \
+                --explain "Removes the namespaced RoleBinding for this SA. Ignored if absent." \
+                kubectl delete rolebinding "$sa_name" -n "$ns" --ignore-not-found
+        done <<<"$ns_list"
+    fi
     print_success "ServiceAccount and RBAC bindings removed."
 
     # Remove ArgoCD account
@@ -841,11 +1190,11 @@ Commands:
   remove-role [name]            Remove an RBAC role
   list-roles                    List configured roles
 
-  add <username> <group>        Create a human user with x509 cert
+  add <username> --group <grp>  Create a human user with x509 cert
   remove [username]             Remove a human user
   list                          List all users and service accounts
 
-  add-sa <name> <group>         Create a service account with token
+  add-sa <name> --group <grp>   Create a service account with token
   remove-sa [name]              Remove a service account
   refresh-sa [name]             Regenerate a service account token
 

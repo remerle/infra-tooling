@@ -313,6 +313,26 @@ Verifies that `gum` and `gh` are installed. Non-interactive; safe to run in CI.
 infra-ctl.sh preflight-check
 ```
 
+### Flag reference
+
+Every command listed above accepts flags for every value it would otherwise prompt for. Run `<command> --help` to see the full list for that command. Compact summary:
+
+| Command | Flags |
+|---|---|
+| `init` | `--repo-url <url>`, `--yes` |
+| `add-app` | `--name`, `--project`, `--workload-type`, `--preset`, `--set KEY=VAL` (repeatable, validated against preset), `--secret-key NAME` (repeatable), `--config KEY=VAL` (repeatable), `--kargo`/`--no-kargo`, `--image-repo`, `--custom`, `--image`, `--port`, `--secret-name`, `--probe-path`, `--yes` |
+| `add-env` | `--name`, `--yes` |
+| `add-project` | `--name`, `--description`, `--restrict-repos`/`--no-restrict-repos`, `--source-repo URL` (repeatable), `--namespace NAME` (repeatable; implicitly restricts namespaces), `--no-restrict-namespaces`, `--cluster-resources`/`--no-cluster-resources` |
+| `edit-project` | same as `add-project` |
+| `add-ingress` | `--app`, `--env NAME` (repeatable), `--yes` |
+| `remove-ingress` | `--app`, `--env NAME` (repeatable), `--yes` |
+| `enable-kargo` | `--image-repo <app>=<url>` (repeatable), `--yes` |
+| `remove-app`, `remove-env` | `--name`, `--yes` |
+| `remove-project` | `--name`, `--reassign-to`, `--yes` |
+| `reset` | `--yes` |
+
+All `remove-*` and `reset` require `--yes` non-interactively. See the [Scripting and CI](#scripting-and-ci) section for the contract.
+
 ### Global options
 
 All scripts (`infra-ctl.sh`, `cluster-ctl.sh`, `secret-ctl.sh`, `user-ctl.sh`) accept these flags:
@@ -461,30 +481,19 @@ Verifies that all required tools (`gum`, `gh`, `k3d`, `kubectl`, `jq`, `helm`, `
 cluster-ctl.sh preflight-check
 ```
 
-#### `doctor`
+### Flag reference
 
-Runs cross-layer diagnostic checks against the repo and cluster. Read-only; never mutates repo or cluster state. Each finding is reported with *what* is wrong, *why* it matters, and a concrete *fix*. Exits 0 (clean), 1 (warnings/infos only), or 2 (errors).
+| Command | Flags |
+|---|---|
+| `init-cluster` | `--name`, `--agents`, `--expose-ports`/`--no-expose-ports`, `--tls`/`--no-tls`, `--argocd`/`--no-argocd`, `--kargo`/`--no-kargo`, `--kargo-password` |
+| `delete-cluster` | `--name`, `--yes` |
+| `add-argo-creds` | `--pat`, `--yes` |
+| `add-registry-creds` | `--registry`, `--username`, `--token`, `--env NAME` (repeatable), `--yes` |
+| `add-kargo-creds` | `--app`, `--pat`, `--private-registry`/`--no-private-registry`, `--yes` |
 
-```bash
-cluster-ctl.sh doctor                    # run all 9 layers
-cluster-ctl.sh doctor --scope=repo       # skip layers that need a cluster
-cluster-ctl.sh doctor --scope=cluster    # skip layers that read the repo
-cluster-ctl.sh doctor --app=backend      # filter app-scoped findings
-cluster-ctl.sh doctor --env=prod         # filter env-scoped findings
-cluster-ctl.sh doctor --verbose          # include evidence blocks
-```
+Run `cluster-ctl.sh <command> --help` for details.
 
-The nine layers:
-
-1. **Prerequisites** -- required CLI tools, Docker daemon, cluster reachability
-2. **Controllers** -- ArgoCD, sealed-secrets, cert-manager, Kargo deployments Ready
-3. **Repo structure** -- env/app/project manifests, Kargo promotion-order, REPO_URL drift
-4. **Alignment** -- ArgoCD Applications vs Kustomize overlays, namespace consistency
-5. **Credentials** -- argocd repo creds, registry pull secrets, Kargo credentials per namespace
-6. **Runtime** -- pod phases, PVC binding, recent warning events, Application health
-7. **Image reachability** -- `crane digest` against each image tag referenced by pods (skipped if `crane` is not installed)
-8. **Ingress reachability** -- DNS, HTTP/HTTPS probe, TLS cert validity and SAN coverage
-9. **Hygiene and drift** -- orphan Applications, unused overlays, stale sealed-secret certs
+**Warning about inline secrets.** `--kargo-password`, `--pat`, and `--token` accept their values directly on the command line. Anything passed this way is visible to other local users via `ps`, ends up in your shell history, may be captured by terminal multiplexers, and is commonly echoed back in CI logs. Prefer running these commands interactively so they prompt you with hidden input. In a CI context, fetch the secret from a secret manager and feed it in via a well-scoped ephemeral env var, not an argv flag.
 
 ### Helm values (`helm/argocd-values.yaml`)
 
@@ -544,6 +553,16 @@ Scans all workload manifests in the given environment for `configMapKeyRef` refe
 config-ctl.sh verify dev
 ```
 
+### Flag reference
+
+| Command | Flags |
+|---|---|
+| `add` | `--app`, `--env`, `--config KEY=VAL` (repeatable) |
+| `remove` | `--app`, `--env`, `--key NAME` (repeatable, prefix match), `--yes` |
+| `verify` | `--env`, `--walk`/`--no-walk` |
+
+Run `config-ctl.sh <command> --help` for details.
+
 ## secret-ctl.sh
 
 Manages [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) in the GitOps repo. Sealed Secrets let you commit encrypted secret material to Git safely: the Sealed Secrets controller runs in-cluster with a private key, and only it can decrypt. You encrypt locally with the public cert (`.sealed-secrets-cert.pem`, safe to commit).
@@ -601,6 +620,17 @@ Verifies that `gum`, `kubectl`, `kubeseal`, and `jq` are installed.
 secret-ctl.sh preflight-check
 ```
 
+### Flag reference
+
+| Command | Flags |
+|---|---|
+| `init` | `--restore-key`/`--no-restore-key` |
+| `add` | `--app`, `--env`, `--secret-val KEY=VAL` (repeatable; `KEY=@file` or `KEY=-` for stdin), `--overwrite`/`--no-overwrite` |
+| `remove` | `--app`, `--env`, `--yes` |
+| `verify` | `--env`, `--walk`/`--no-walk` |
+
+Run `secret-ctl.sh <command> --help` for details.
+
 ## user-ctl.sh
 
 Manages RBAC: roles (ArgoCD CSV policies + Kubernetes Role/RoleBinding), human users (signed x509 client certs for `kubectl` auth), and service accounts (with renewable tokens). Generates manifests into `k8s/platform/`, which is then deployed by ArgoCD like any other app.
@@ -638,12 +668,12 @@ Lists all configured roles.
 user-ctl.sh list-roles
 ```
 
-#### `add <username> <group>`
+#### `add [username] --group <group>`
 
-Creates a human user. Generates an x509 client certificate signed by the cluster CA, a `kubectl` kubeconfig snippet, and the RoleBinding that ties the user (via its group) to the role of the same name. The group must already exist as a role (run `add-role <group>` first).
+Creates a human user. Generates an x509 client certificate signed by the cluster CA, a `kubectl` kubeconfig snippet, and the RoleBinding that ties the user (via its group) to the role of the same name. The group must already exist as a role (run `add-role <group>` first). The first positional argument is shorthand for `--name`.
 
 ```bash
-user-ctl.sh add alice developer
+user-ctl.sh add alice --group developer
 ```
 
 #### `remove [username]`
@@ -662,12 +692,12 @@ Lists all humans and service accounts with their groups.
 user-ctl.sh list
 ```
 
-#### `add-sa <name> <group> [--duration <hours>h]`
+#### `add-sa [name] --group <group> [--duration <hours>h]`
 
-Creates a Kubernetes ServiceAccount with a time-bounded token and binds it to the role of the same name. Default token duration is 2160h (90 days). The token and matching kubeconfig snippet are printed so you can copy them into CI.
+Creates a Kubernetes ServiceAccount with a time-bounded token and binds it to the role of the same name. Default token duration is 2160h (90 days). The token and matching kubeconfig snippet are printed so you can copy them into CI. The first positional argument is shorthand for `--name`.
 
 ```bash
-user-ctl.sh add-sa ci-bot developer --duration 720h
+user-ctl.sh add-sa ci-bot --group developer --duration 720h
 ```
 
 #### `remove-sa [name]`
@@ -678,9 +708,9 @@ Removes a service account (SA + RoleBinding entry). Prompts if no name is given.
 user-ctl.sh remove-sa ci-bot
 ```
 
-#### `refresh-sa [name]`
+#### `refresh-sa [name] [--duration <hours>h]`
 
-Regenerates the token for an existing service account without changing its role bindings. Use this when a token is about to expire or has leaked.
+Regenerates the token for an existing service account without changing its role bindings. Use this when a token is about to expire or has leaked. The first positional argument is shorthand for `--name`.
 
 ```bash
 user-ctl.sh refresh-sa ci-bot
@@ -693,6 +723,20 @@ Verifies that all required tools are installed.
 ```bash
 user-ctl.sh preflight-check
 ```
+
+### Flag reference
+
+| Command | Flags |
+|---|---|
+| `add-role` | `--name`, `--preset` (admin-readonly-settings/developer/viewer/custom), `--argocd-resource NAME` (repeatable), `--action NAME` (repeatable), `--k8s-scope` (cluster-wide/namespace-scoped), `--k8s-verb VERB` (repeatable), `--namespace NAME` (repeatable) |
+| `remove-role` | `--name`, `--yes` |
+| `remove` | `--name`, `--yes` |
+| `remove-sa` | `--name`, `--yes` |
+| `add` | `--name`, `--group` |
+| `add-sa` | `--name`, `--group`, `--duration` |
+| `refresh-sa` | `--name`, `--duration` |
+
+For `add`, `add-sa`, and `refresh-sa` the first positional argument is shorthand for `--name`. `--group` is flag-only. Run `user-ctl.sh <command> --help` for details.
 
 ## Templates
 
@@ -741,6 +785,53 @@ The `Makefile` wraps the shell linting and formatting tooling used on every scri
 
 Dependencies: `shfmt` (`brew install shfmt`) and `shellcheck` (`brew install shellcheck`).
 
+## Scripting and CI
+
+Every user-provided value that these scripts collect at an interactive prompt also has a long-form CLI flag. This lets you drive the tools from shell scripts, CI jobs, or test harnesses without a TTY.
+
+**The contract:**
+
+- If a required value is passed as a flag, it is used directly (and validated the same as prompted input).
+- If a required value is *not* passed and stdin is a TTY, the command falls back to its `gum` prompt.
+- If a required value is *not* passed and stdin is *not* a TTY, the command fails immediately with a clear error naming the missing flag, for example `ERROR: --name is required when not running interactively`.
+- Destructive commands (`remove-*`, `reset`, `delete-cluster`) never auto-confirm based on TTY detection; they always require an explicit `--yes` / `-y`.
+
+**Reserved flag vocabulary** (same meaning across all scripts):
+
+| Flag | Meaning |
+|---|---|
+| `--set KEY=VAL` | Preset template placeholder (e.g. `--set IMAGE=nginx:latest`). Keys are validated against the selected preset's frontmatter. Only used by `infra-ctl add-app`. |
+| `--config KEY=VAL` | configMap entry mounted as a container env var. Repeatable. |
+| `--secret-key NAME` | Declares a secret key the workload needs (generates a `valueFrom.secretKeyRef`). Repeatable. No value. |
+| `--secret-val KEY=VAL` | Provides the actual secret value to seal (secret-ctl only). Supports `--secret-val KEY=@file` and `--secret-val KEY=-` (stdin). |
+| `--env NAME` | Kubernetes environment name (dev/staging/prod). Repeatable for multi-select. |
+| `--yes` / `-y` | Skip destructive confirmation. |
+
+For the full per-command flag list, run any command with `-h`/`--help`, or read the command sections above.
+
+**End-to-end scripted workflow:**
+
+```bash
+TMP=$(mktemp -d) && cd "$TMP" && git init -q
+
+infra-ctl.sh --target-dir "$TMP" init --repo-url https://github.com/me/gitops --yes
+infra-ctl.sh --target-dir "$TMP" add-project platform \
+    --description "Platform apps" --no-restrict-repos --no-cluster-resources
+infra-ctl.sh --target-dir "$TMP" add-env dev --yes
+infra-ctl.sh --target-dir "$TMP" add-env staging --yes
+infra-ctl.sh --target-dir "$TMP" add-app backend \
+    --project platform --preset web --no-kargo \
+    --set IMAGE=ghcr.io/me/backend:1.0.0 \
+    --set PORT=3000 \
+    --set SECRET_NAME=backend-secrets \
+    --set PROBE_PATH=/api/health \
+    --secret-key DATABASE_URL \
+    --yes
+infra-ctl.sh --target-dir "$TMP" add-ingress backend --env dev --env staging --yes
+```
+
+This runs end-to-end with no prompts. Swap in your own values for a real deployment.
+
 ## Adding RBAC restrictions later
 
 ArgoCD projects support restricting what can be deployed where. When you're ready:
@@ -761,7 +852,14 @@ This walkthrough deploys a two-service e-commerce app (SvelteKit frontend + Fast
 
 The application lives at [github.com/remerle/k8s-practice-app](https://github.com/remerle/k8s-practice-app). CI workflows build and push images to `ghcr.io/remerle/k8s-practice-frontend` and `ghcr.io/remerle/k8s-practice-backend`, tagged as `YY.M.<buildNum>`.
 
+Each step below shows two forms:
+
+- **Interactive** — run the command and answer prompts. This is the recommended way to explore the tool.
+- **Scripted** — pass every value as a flag. No prompts. This is the CI-safe form; if any required value is missing, the command fails with a clear error naming the missing flag.
+
 ### 1. Create the cluster and initialize the repo
+
+Interactive:
 
 ```bash
 # Create a local k3d cluster with ArgoCD and Kargo
@@ -773,19 +871,45 @@ infra-ctl.sh init
 # Enter your repo URL when prompted
 ```
 
-### 2. Add environments
+Scripted:
+
+```bash
+# WARNING: --kargo-password inline leaks via ps/history/CI logs.
+#   Prefer the interactive form, or feed it from a secret manager.
+cluster-ctl.sh init-cluster \
+    --name k8s-practice \
+    --agents 3 \
+    --expose-ports \
+    --argocd \
+    --kargo \
+    --kargo-password "$KARGO_ADMIN_PASSWORD"
+
+infra-ctl.sh init \
+    --repo-url https://github.com/<owner>/<repo> \
+    --yes
+```
+
+### 2. Add the dev environment
+
+Interactive:
 
 ```bash
 infra-ctl.sh add-env dev
-infra-ctl.sh add-env staging
-infra-ctl.sh add-env prod
 ```
 
-This creates namespace manifests and sets up the overlay directories that will hold per-environment configuration.
+Scripted:
+
+```bash
+infra-ctl.sh add-env dev --yes
+```
+
+This creates the `dev` namespace manifest and sets up the overlay directory that will hold per-environment configuration. Additional environments (staging, prod) are added the same way -- see [Adding another environment](#adding-another-environment) at the end of this walkthrough.
 
 ### 3. Add the applications
 
 Each `add-app` command prompts for a workload type, a preset, and preset-specific options (image, port, probes, secrets, config). Presets pre-fill sensible defaults; you can accept or override each one.
+
+Interactive:
 
 ```bash
 # Backend API
@@ -827,16 +951,66 @@ infra-ctl.sh add-app postgres
 # Manage with Kargo? No
 ```
 
+Scripted:
+
+```bash
+# Backend API
+infra-ctl.sh add-app backend \
+    --workload-type deployment \
+    --preset web \
+    --set IMAGE=ghcr.io/remerle/k8s-practice-backend:26.4.11 \
+    --set PORT=3000 \
+    --set SECRET_NAME=backend-secrets \
+    --set PROBE_PATH=/api/health \
+    --secret-key DATABASE_URL \
+    --kargo \
+    --image-repo ghcr.io/remerle/k8s-practice-backend \
+    --yes
+
+# Frontend
+infra-ctl.sh add-app frontend \
+    --workload-type deployment \
+    --preset web \
+    --set IMAGE=ghcr.io/remerle/k8s-practice-frontend:26.4.11 \
+    --set PORT=3000 \
+    --set PROBE_PATH=/api/health \
+    --config API_URL=http://backend:3000 \
+    --kargo \
+    --image-repo ghcr.io/remerle/k8s-practice-frontend \
+    --yes
+
+# PostgreSQL
+infra-ctl.sh add-app postgres \
+    --workload-type statefulset \
+    --preset postgres \
+    --set IMAGE=postgres:16-alpine \
+    --set PORT=5432 \
+    --set SECRET_NAME=postgres-secrets \
+    --set STORAGE_SIZE=1Gi \
+    --set MOUNT_PATH=/var/lib/postgresql/data \
+    --config POSTGRES_DB=store \
+    --no-kargo \
+    --yes
+```
+
 Each command generates a workload manifest (Deployment or StatefulSet), a Kustomize base with Service, per-env overlays, and ArgoCD Application manifests. For backend and frontend, Kargo resources are also generated: a Warehouse (watches the container registry for new tags) and Stages (one per environment in the promotion pipeline). Postgres doesn't get Kargo resources because it uses `postgres:16-alpine` directly rather than a CI-built image.
 
 ### 4. Add ingress for the frontend
 
+Interactive:
+
 ```bash
 infra-ctl.sh add-ingress frontend
-# Select environments (pre-selected: dev, staging, prod)
+# Select environments (dev pre-selected)
 ```
 
-This generates one Ingress per selected environment at `k8s/apps/frontend/overlays/<env>/ingress.yaml` and registers each in its overlay `kustomization.yaml`. The frontend becomes accessible at `https://dev.frontend.localhost`, `https://staging.frontend.localhost`, and `https://prod.frontend.localhost` via k3d's built-in Traefik ingress controller (requires ports 80/443 exposed during `cluster-ctl.sh init-cluster`).
+Scripted:
+
+```bash
+infra-ctl.sh add-ingress frontend --env dev --yes
+```
+
+This generates an Ingress at `k8s/apps/frontend/overlays/dev/ingress.yaml` and registers it in the overlay `kustomization.yaml`. The frontend becomes accessible at `https://dev.frontend.localhost` via k3d's built-in Traefik ingress controller (requires ports 80/443 exposed during `cluster-ctl.sh init-cluster`).
 
 After adding or removing ingresses, run `cluster-ctl.sh renew-tls` so the mkcert TLS cert picks up the new hostnames as SANs.
 
@@ -844,13 +1018,32 @@ After adding or removing ingresses, run `cluster-ctl.sh renew-tls` so the mkcert
 
 The backend and postgres manifests reference Secrets for credentials. `add-app` prints the required `secret-ctl.sh` commands after creating each app. Use Sealed Secrets to create encrypted secrets that are safe to commit:
 
+Interactive:
+
 ```bash
 # Install the Sealed Secrets controller
 secret-ctl.sh init
 
 # Create secrets for each app (commands shown by add-app)
-secret-ctl.sh add postgres dev POSTGRES_USER=store POSTGRES_PASSWORD=store
-secret-ctl.sh add backend dev DATABASE_URL=postgresql://store:store@postgres:5432/store
+secret-ctl.sh add postgres dev
+# Prompts for each secret key with hidden input
+
+secret-ctl.sh add backend dev
+```
+
+Scripted:
+
+```bash
+secret-ctl.sh init --yes
+
+# Pass each secret value as --secret-val KEY=VAL. Prefer reading values
+# from a file or env var rather than hardcoding them in a shell script.
+secret-ctl.sh add postgres dev \
+    --secret-val POSTGRES_USER=store \
+    --secret-val POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+
+secret-ctl.sh add backend dev \
+    --secret-val DATABASE_URL="$DATABASE_URL"
 ```
 
 You can also use `secret-ctl.sh verify dev` to scan all workload manifests and discover any missing secrets automatically.
@@ -866,26 +1059,39 @@ kubectl create secret generic backend-secrets -n dev \
 
 ### 6. Configure credentials (if private repo/registry)
 
-For a private GitOps repo, ArgoCD needs read access:
+For a private GitOps repo, ArgoCD needs read access. For a private container registry (e.g., ghcr.io), kubelet needs pull credentials.
+
+Interactive:
 
 ```bash
 cluster-ctl.sh add-argo-creds
 # Enter a classic GitHub PAT with the "repo" scope
-```
 
-For a private container registry (e.g., ghcr.io), kubelet needs pull credentials. This creates namespaces if they don't exist and configures each one:
-
-```bash
 cluster-ctl.sh add-registry-creds
 # Enter the registry server (default: ghcr.io), username, and a classic PAT with the "read:packages" scope
 # Select which namespaces to configure
+```
+
+Scripted:
+
+```bash
+# WARNING: --pat and --token inline leak via ps/history/CI logs.
+#   Prefer the interactive form, or feed from a secret manager.
+cluster-ctl.sh add-argo-creds --pat "$GITHUB_PAT_REPO" --yes
+
+cluster-ctl.sh add-registry-creds \
+    --registry ghcr.io \
+    --username "$GITHUB_USERNAME" \
+    --token "$GITHUB_PAT_PACKAGES" \
+    --env dev \
+    --yes
 ```
 
 ### 7. Commit, push, and bootstrap ArgoCD
 
 ```bash
 git add -A
-git commit -m "Deploy e-commerce app to dev, staging, and prod"
+git commit -m "Deploy e-commerce app to dev"
 git push
 
 # Bootstrap ArgoCD: apply the parent-app to the cluster (one-time step)
@@ -895,11 +1101,15 @@ cluster-ctl.sh argo-init
 cluster-ctl.sh argo-sync
 ```
 
+These three commands (`argo-init`, `argo-sync`) take no user input and are the same in interactive and scripted contexts.
+
 `argo-init` applies `argocd/parent-app.yaml` to the cluster. This is the one-time bootstrap that tells ArgoCD "watch this Git repo for Application manifests." After this, ArgoCD manages everything via Git. `argo-sync` then triggers an immediate sync of all discovered applications rather than waiting for the default 3-minute poll interval. Wait for the sync to complete before proceeding -- Kargo credentials require the app namespaces to exist, which are created when ArgoCD deploys the Kargo Project resources.
 
 ### 8. Configure Kargo credentials (if private repo/registry)
 
 Kargo needs read+write access to the GitOps repo and optionally read access to the container registry. These credentials are stored in Kubernetes Secrets in each app's namespace, which must exist before running these commands.
+
+Interactive:
 
 ```bash
 cluster-ctl.sh add-kargo-creds backend
@@ -908,6 +1118,21 @@ cluster-ctl.sh add-kargo-creds backend
 
 cluster-ctl.sh add-kargo-creds frontend
 # Same PAT works, same registry answer
+```
+
+Scripted:
+
+```bash
+# WARNING: --pat inline leaks via ps/history/CI logs.
+cluster-ctl.sh add-kargo-creds backend \
+    --pat "$GITHUB_PAT_REPO_PACKAGES" \
+    --private-registry \
+    --yes
+
+cluster-ctl.sh add-kargo-creds frontend \
+    --pat "$GITHUB_PAT_REPO_PACKAGES" \
+    --private-registry \
+    --yes
 ```
 
 Postgres doesn't need Kargo credentials because it has no Kargo resources (no Warehouse or Stages were generated for it). For a public repo and registry, skip this step entirely.
@@ -937,6 +1162,50 @@ open http://kargo.localhost
 ![Cluster View](docs/cluster-view.png)
 
 Every resource in the cluster traces back to a file in the repo. ArgoCD watches Git and keeps the cluster in sync automatically: push a change, and the cluster converges to match.
+
+### Adding another environment
+
+With `dev` running, you can stand up another environment (staging, prod, etc.) without touching the cluster. The steps mirror the initial setup, scoped to the new environment:
+
+```bash
+# 1. Create the environment. If Kargo is enabled, this also appends a new
+#    Stage to each app's promotion pipeline (sorted by conventional order:
+#    dev -> staging -> prod).
+infra-ctl.sh add-env staging --yes
+
+# 2. Create per-env secrets. Each app reads the same secret keys from its
+#    namespace, so you need one add per app that declared secrets.
+secret-ctl.sh add postgres staging \
+    --secret-val POSTGRES_USER=store \
+    --secret-val POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+secret-ctl.sh add backend staging \
+    --secret-val DATABASE_URL="$DATABASE_URL"
+
+# 3. Add ingress hostnames for the new environment, then regenerate the
+#    TLS cert so <env>.frontend.localhost is in the SAN list.
+infra-ctl.sh add-ingress frontend --env staging --yes
+cluster-ctl.sh renew-tls
+
+# 4. If the container registry is private, configure kubelet pull creds
+#    for the new namespace.
+cluster-ctl.sh add-registry-creds \
+    --registry ghcr.io \
+    --username "$GITHUB_USERNAME" \
+    --token "$GITHUB_PAT_PACKAGES" \
+    --env staging \
+    --yes
+
+# 5. Commit and push. ArgoCD discovers the new Application manifests on
+#    its next poll (or argo-sync immediately).
+git add -A
+git commit -m "Add staging environment"
+git push
+cluster-ctl.sh argo-sync
+```
+
+If Kargo is enabled, staging does not subscribe to the Warehouse directly. It promotes images from the previous stage in the pipeline, so a new image reaches staging only after it has been verified in dev. Trigger the promotion manually from the Kargo dashboard at `http://kargo.localhost` (the generated Stages don't set `autoPromotionPolicies`).
+
+Removing an environment is the symmetric operation: `infra-ctl.sh remove-env staging` takes down the namespace manifest, ArgoCD Application manifests, and (if Kargo is enabled) the corresponding Stage, plus rewrites `kargo/promotion-order.txt`.
 
 ## How GitOps Works
 

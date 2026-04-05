@@ -10,18 +10,65 @@ cmd_add() {
     require_yq
     load_conf
 
-    local app_name="${1:-}"
-    local env_name="${2:-}"
+    local app_flag="" env_flag=""
+    local config_flag_entries=()
+    local cli_positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --app)
+                require_flag_value "--app" "${2:-}"
+                app_flag="$2"
+                shift 2
+                ;;
+            --env)
+                require_flag_value "--env" "${2:-}"
+                env_flag="$2"
+                shift 2
+                ;;
+            --config)
+                require_flag_value "--config" "${2:-}"
+                config_flag_entries+=("$2")
+                shift 2
+                ;;
+            -h | --help)
+                echo "Usage: config-ctl.sh add <app> <env|base> [--config KEY=VAL]..."
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                cli_positional+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    local app_name="$app_flag"
+    local env_name="$env_flag"
+    [[ -z "$app_name" ]] && [[ ${#cli_positional[@]} -gt 0 ]] && app_name="${cli_positional[0]}"
+    [[ -z "$env_name" ]] && [[ ${#cli_positional[@]} -gt 1 ]] && env_name="${cli_positional[1]}"
 
     if [[ -z "$app_name" ]]; then
-        app_name="$(detect_apps | choose_from "Select application:" "No applications found. Run 'infra-ctl.sh add-app' first.")" || exit 0
+        if [[ -t 0 ]]; then
+            app_name="$(detect_apps | choose_from "Select application:" "No applications found. Run 'infra-ctl.sh add-app' first.")" || exit 0
+        else
+            print_error "--app is required when not running interactively"
+            exit 1
+        fi
     fi
 
     if [[ -z "$env_name" ]]; then
-        env_name="$( (
-            echo "base"
-            detect_envs
-        ) | choose_from "Select target:" "No environments found. Run 'infra-ctl.sh add-env' first.")" || exit 0
+        if [[ -t 0 ]]; then
+            env_name="$( (
+                echo "base"
+                detect_envs
+            ) | choose_from "Select target:" "No environments found. Run 'infra-ctl.sh add-env' first.")" || exit 0
+        else
+            print_error "--env is required when not running interactively (use 'base' for base overlay)"
+            exit 1
+        fi
     fi
 
     validate_k8s_name "$app_name" "App name"
@@ -49,24 +96,41 @@ cmd_add() {
 
     print_header "Add Config: ${app_name} / ${env_name}"
 
-    # Collect KEY=VALUE pairs
+    # Collect KEY=VALUE pairs: flags win, else prompt, else die
     local entries=()
-    while true; do
-        local entry
-        entry="$(gum input --prompt "KEY=VALUE (empty to finish): " --placeholder "e.g. LOG_LEVEL=info")"
+    if [[ ${#config_flag_entries[@]} -gt 0 ]]; then
+        local e
+        for e in "${config_flag_entries[@]}"; do
+            if [[ "$e" != *=* ]]; then
+                print_error "--config expects KEY=VAL, got: ${e}"
+                exit 1
+            fi
+            validate_configmap_key "${e%%=*}" "--config key"
+            entries+=("$e")
+        done
+    elif [[ -t 0 ]]; then
+        while true; do
+            local entry
+            entry="$(gum input --prompt "KEY=VALUE (empty to finish): " --placeholder "e.g. LOG_LEVEL=info")"
 
-        if [[ -z "$entry" ]]; then
-            break
-        fi
+            if [[ -z "$entry" ]]; then
+                break
+            fi
 
-        if [[ "$entry" != *=* ]]; then
-            print_warning "Invalid format. Use KEY=VALUE (e.g. LOG_LEVEL=info)."
-            continue
-        fi
+            if [[ "$entry" != *=* ]]; then
+                print_warning "Invalid format. Use KEY=VALUE (e.g. LOG_LEVEL=info)."
+                continue
+            fi
 
-        entries+=("$entry")
-        print_success "Added: ${entry}"
-    done
+            # Mirror the --config flag path validator (AGENTS.md validation-parity rule).
+            validate_configmap_key "${entry%%=*}" "config key"
+            entries+=("$entry")
+            print_success "Added: ${entry}"
+        done
+    else
+        print_error "--config KEY=VAL is required when not running interactively (repeat for multiple)"
+        exit 1
+    fi
 
     if [[ ${#entries[@]} -eq 0 ]]; then
         print_warning "No config values entered. Aborted."
@@ -87,10 +151,18 @@ cmd_add() {
         yq eval -i '.configMapGenerator[0].literals = []' "$kust_file"
     fi
 
-    # Append each entry
-    local entry
+    # Upsert each entry: strip any prior literal with the same key, then append.
+    # Writing --config KEY=new overwrites any prior KEY=old instead of producing
+    # a duplicate that breaks `kustomize build` at deploy time.
+    local entry key
     for entry in "${entries[@]}"; do
-        YQ_ENTRY="$entry" yq eval -i '.configMapGenerator[0].literals += [env(YQ_ENTRY)]' "$kust_file"
+        key="${entry%%=*}"
+        YQ_KEY="$key" yq eval -i \
+            '.configMapGenerator[0].literals |= map(select((split("=")[0]) != env(YQ_KEY)))' \
+            "$kust_file"
+        YQ_ENTRY="$entry" yq eval -i \
+            '.configMapGenerator[0].literals += [env(YQ_ENTRY)]' \
+            "$kust_file"
     done
 
     # Clean up null/empty entries from literals
@@ -205,18 +277,70 @@ cmd_remove() {
     require_yq
     load_conf
 
-    local app_name="${1:-}"
-    local env_name="${2:-}"
+    local app_flag="" env_flag="" yes="false"
+    local key_flags=()
+    local cli_positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --app)
+                require_flag_value "--app" "${2:-}"
+                app_flag="$2"
+                shift 2
+                ;;
+            --env)
+                require_flag_value "--env" "${2:-}"
+                env_flag="$2"
+                shift 2
+                ;;
+            --key)
+                require_flag_value "--key" "${2:-}"
+                validate_configmap_key "$2" "--key"
+                key_flags+=("$2")
+                shift 2
+                ;;
+            --yes | -y)
+                yes="true"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: config-ctl.sh remove <app> <env|base> [--key <name>]... [--yes]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                cli_positional+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    local app_name="$app_flag"
+    local env_name="$env_flag"
+    [[ -z "$app_name" ]] && [[ ${#cli_positional[@]} -gt 0 ]] && app_name="${cli_positional[0]}"
+    [[ -z "$env_name" ]] && [[ ${#cli_positional[@]} -gt 1 ]] && env_name="${cli_positional[1]}"
 
     if [[ -z "$app_name" ]]; then
-        app_name="$(detect_apps | choose_from "Select application:" "No applications found.")" || exit 0
+        if [[ -t 0 ]]; then
+            app_name="$(detect_apps | choose_from "Select application:" "No applications found.")" || exit 0
+        else
+            print_error "--app is required when not running interactively"
+            exit 1
+        fi
     fi
 
     if [[ -z "$env_name" ]]; then
-        env_name="$( (
-            echo "base"
-            detect_envs
-        ) | choose_from "Select target:" "No environments found.")" || exit 0
+        if [[ -t 0 ]]; then
+            env_name="$( (
+                echo "base"
+                detect_envs
+            ) | choose_from "Select target:" "No environments found.")" || exit 0
+        else
+            print_error "--env is required when not running interactively (use 'base' for base overlay)"
+            exit 1
+        fi
     fi
 
     validate_k8s_name "$app_name" "App name"
@@ -247,14 +371,59 @@ cmd_remove() {
 
     print_header "Remove Config: ${app_name} / ${env_name}"
 
-    # Let user select which to remove
+    # Which to remove: --key flags (match by KEY prefix), else prompt, else die
     local selected
-    selected="$(echo "$literals" | gum choose --no-limit --header "Select values to remove:")" || exit 0
+    if [[ ${#key_flags[@]} -gt 0 ]]; then
+        # Dedup --key flags so repeated flags don't try to delete the same literal twice.
+        local -A _seen_keys=()
+        local _deduped_keys=()
+        local k
+        for k in "${key_flags[@]}"; do
+            if [[ -z "${_seen_keys[$k]+x}" ]]; then
+                _seen_keys["$k"]=1
+                _deduped_keys+=("$k")
+            fi
+        done
+
+        # For each --key NAME, find matching literals (NAME=... or NAME). Each
+        # key must match at least one literal; if any key is unmatched we fail
+        # with a clear error rather than silently dropping it.
+        local sel_lines=""
+        local missing=()
+        local lit matched
+        for k in "${_deduped_keys[@]}"; do
+            matched=0
+            while IFS= read -r lit; do
+                if [[ "$lit" == "$k" || "$lit" == "${k}="* ]]; then
+                    sel_lines+="${lit}"$'\n'
+                    matched=1
+                fi
+            done <<<"$literals"
+            if [[ "$matched" -eq 0 ]]; then
+                missing+=("$k")
+            fi
+        done
+        if [[ ${#missing[@]} -gt 0 ]]; then
+            print_error "No matching literal for --key: ${missing[*]}"
+            exit 1
+        fi
+        selected="${sel_lines%$'\n'}"
+    elif [[ -t 0 ]]; then
+        selected="$(echo "$literals" | gum choose --no-limit --header "Select values to remove:")" || exit 0
+    else
+        print_error "--key is required when not running interactively (repeat for multiple)"
+        exit 1
+    fi
 
     if [[ -z "$selected" ]]; then
         print_warning "No values selected. Aborted."
         exit 0
     fi
+
+    # Gate the destructive edit behind --yes (or interactive confirm)
+    local selected_preview
+    selected_preview="$(echo "$selected" | tr '\n' ' ')"
+    require_yes "$yes" "remove config entries from ${app_name}/${env_name}: ${selected_preview}"
 
     # Remove selected entries
     while IFS= read -r entry; do
@@ -276,11 +445,49 @@ cmd_verify() {
     require_yq
     load_conf
 
-    local env_name="${1:-}"
+    local env_flag="" walk_flag=""
+    local cli_positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --env)
+                require_flag_value "--env" "${2:-}"
+                env_flag="$2"
+                shift 2
+                ;;
+            --walk)
+                walk_flag="true"
+                shift
+                ;;
+            --no-walk)
+                walk_flag="false"
+                shift
+                ;;
+            -h | --help)
+                echo "Usage: config-ctl.sh verify [env] [--walk | --no-walk]"
+                exit 0
+                ;;
+            -*)
+                print_error "Unknown flag: $1"
+                exit 1
+                ;;
+            *)
+                cli_positional+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    local env_name="$env_flag"
+    [[ -z "$env_name" ]] && [[ ${#cli_positional[@]} -gt 0 ]] && env_name="${cli_positional[0]}"
 
     if [[ -z "$env_name" ]]; then
-        require_gum
-        env_name="$(detect_envs | choose_from "Select environment:" "No environments found.")" || exit 0
+        if [[ -t 0 ]]; then
+            require_gum
+            env_name="$(detect_envs | choose_from "Select environment:" "No environments found.")" || exit 0
+        else
+            print_error "--env is required when not running interactively"
+            exit 1
+        fi
     fi
 
     validate_k8s_name "$env_name" "Environment name"
@@ -371,7 +578,15 @@ cmd_verify() {
     else
         print_warning "${missing_count} missing configmap(s) found."
         if command -v gum &>/dev/null; then
-            if gum confirm "Walk through adding missing config values?"; then
+            local walk="no"
+            if [[ "$walk_flag" == "true" ]]; then
+                walk="yes"
+            elif [[ "$walk_flag" == "false" ]]; then
+                walk="no"
+            elif [[ -t 0 ]]; then
+                gum confirm "Walk through adding missing config values?" && walk="yes"
+            fi
+            if [[ "$walk" == "yes" ]]; then
                 cmd_add
             fi
         fi
