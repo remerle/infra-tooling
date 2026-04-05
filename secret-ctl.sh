@@ -10,6 +10,17 @@ cmd_init() {
     require_cmd "kubectl" "brew install kubectl"
     require_cmd "kubeseal" "brew install kubeseal"
 
+    local restore_flag=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --restore-key)    restore_flag="true"; shift ;;
+            --no-restore-key) restore_flag="false"; shift ;;
+            -h|--help) echo "Usage: secret-ctl.sh init [--restore-key | --no-restore-key]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) print_error "Unexpected: $1"; exit 1 ;;
+        esac
+    done
+
     print_header "Initialize Sealed Secrets"
 
     local key_backup="${TARGET_DIR}/.sealed-secrets-key.json"
@@ -18,7 +29,13 @@ cmd_init() {
     # If a key backup exists, offer to restore it
     if [[ -f "$key_backup" ]]; then
         print_info "Found existing key backup at .sealed-secrets-key.json"
-        if gum confirm "Restore this key into the cluster? (keeps existing SealedSecrets decryptable)"; then
+        local restore="no"
+        if [[ "$restore_flag" == "true" ]]; then restore="yes"
+        elif [[ "$restore_flag" == "false" ]]; then restore="no"
+        elif [[ -t 0 ]]; then
+            gum confirm "Restore this key into the cluster? (keeps existing SealedSecrets decryptable)" && restore="yes"
+        fi
+        if [[ "$restore" == "yes" ]]; then
             run_cmd "Restoring sealed-secrets key..." \
                 --explain "Restoring a previously-backed-up encryption key lets the controller decrypt SealedSecrets that were encrypted with the old key. Without it, you'd need to re-encrypt all secrets." \
                 kubectl apply -f "$key_backup"
@@ -75,19 +92,56 @@ cmd_add() {
     require_cmd "kubeseal" "brew install kubeseal"
     require_cmd "jq" "brew install jq"
 
-    local app_name="${1:-}"
-    local env_name="${2:-}"
-    shift 2 2>/dev/null || true
-    local cli_pairs=("$@")
+    local app_flag="" env_flag="" overwrite_flag=""
+    local secret_val_entries=()
+    local cli_positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --app)  app_flag="$2"; shift 2 ;;
+            --env)  env_flag="$2"; shift 2 ;;
+            --secret-val) secret_val_entries+=("$2"); shift 2 ;;
+            --overwrite)    overwrite_flag="true"; shift ;;
+            --no-overwrite) overwrite_flag="false"; shift ;;
+            -h|--help) echo "Usage: secret-ctl.sh add <app> <env> [--secret-val KEY=VAL]... [--overwrite]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *)  cli_positional+=("$1"); shift ;;
+        esac
+    done
+
+    # Map positional args: first two are app/env, remainder (if any) are
+    # legacy KEY=VAL pairs accepted for backward compatibility.
+    local app_name="$app_flag"
+    local env_name="$env_flag"
+    local cli_pairs=("${secret_val_entries[@]}")
+    if [[ -z "$app_name" ]] && [[ ${#cli_positional[@]} -gt 0 ]]; then
+        app_name="${cli_positional[0]}"
+        cli_positional=("${cli_positional[@]:1}")
+    fi
+    if [[ -z "$env_name" ]] && [[ ${#cli_positional[@]} -gt 0 ]]; then
+        env_name="${cli_positional[0]}"
+        cli_positional=("${cli_positional[@]:1}")
+    fi
+    # Any remaining positional are legacy KEY=VAL pairs
+    cli_pairs+=("${cli_positional[@]}")
 
     if [[ -z "$app_name" ]]; then
         load_conf
-        app_name="$(detect_apps | choose_from "Select application:" "No applications found. Run 'infra-ctl.sh add-app' first.")" || exit 0
+        if [[ -t 0 ]]; then
+            app_name="$(detect_apps | choose_from "Select application:" "No applications found. Run 'infra-ctl.sh add-app' first.")" || exit 0
+        else
+            print_error "--app is required when not running interactively"
+            exit 1
+        fi
     fi
 
     if [[ -z "$env_name" ]]; then
         [[ -z "${REPO_URL:-}" ]] && load_conf
-        env_name="$(detect_envs | choose_from "Select environment:" "No environments found. Run 'infra-ctl.sh add-env' first.")" || exit 0
+        if [[ -t 0 ]]; then
+            env_name="$(detect_envs | choose_from "Select environment:" "No environments found. Run 'infra-ctl.sh add-env' first.")" || exit 0
+        else
+            print_error "--env is required when not running interactively"
+            exit 1
+        fi
     fi
     validate_k8s_name "$app_name" "App name"
     validate_k8s_name "$env_name" "Environment name"
@@ -140,7 +194,7 @@ cmd_add() {
     local values=()
 
     if [[ ${#cli_pairs[@]} -gt 0 ]]; then
-        # Parse KEY=value pairs from CLI arguments
+        # Parse KEY=value pairs (inline, @file, or - stdin)
         local pair
         for pair in "${cli_pairs[@]}"; do
             if [[ "$pair" != *"="* ]]; then
@@ -149,12 +203,39 @@ cmd_add() {
             fi
             local key="${pair%%=*}"
             local value="${pair#*=}"
+            if [[ "$value" == "-" ]]; then
+                value="$(cat)"
+            elif [[ "$value" == @* ]]; then
+                local file="${value#@}"
+                if [[ ! -f "$file" ]]; then
+                    print_error "File not found: ${file}"
+                    exit 1
+                fi
+                value="$(cat "$file")"
+            fi
             validate_secret_key "$key"
+
+            # Overwrite check
+            if [[ -f "$sealed_file" ]] && grep -q "^\s*${key}:" "$sealed_file"; then
+                if [[ "$overwrite_flag" == "true" ]]; then
+                    : # allow
+                elif [[ "$overwrite_flag" == "false" ]]; then
+                    print_info "Skipping existing key '${key}' (--no-overwrite)"
+                    continue
+                elif [[ -t 0 ]]; then
+                    if ! gum confirm "Key '${key}' already exists. Overwrite?"; then
+                        continue
+                    fi
+                else
+                    print_error "Key '${key}' already exists. Pass --overwrite or --no-overwrite"
+                    exit 1
+                fi
+            fi
             keys+=("$key")
             values+=("$value")
             print_info "Secret: ${key}"
         done
-    else
+    elif [[ -t 0 ]]; then
         # Interactive prompt
         while true; do
             local key
@@ -180,6 +261,9 @@ cmd_add() {
             values+=("$value")
             print_success "Added: ${key}"
         done
+    else
+        print_error "--secret-val KEY=VAL is required when not running interactively (repeat for multiple keys)"
+        exit 1
     fi
 
     if [[ ${#keys[@]} -eq 0 ]]; then
@@ -290,15 +374,38 @@ cmd_list() {
 cmd_remove() {
     require_gum
 
-    local app_name="${1:-}"
-    local env_name="${2:-}"
+    local app_flag="" env_flag="" yes="false"
+    local cli_positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --app) app_flag="$2"; shift 2 ;;
+            --env) env_flag="$2"; shift 2 ;;
+            --yes|-y) yes="true"; shift ;;
+            -h|--help) echo "Usage: secret-ctl.sh remove <app> <env> [--yes]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) cli_positional+=("$1"); shift ;;
+        esac
+    done
+
+    local app_name="$app_flag"
+    local env_name="$env_flag"
+    if [[ -z "$app_name" ]] && [[ ${#cli_positional[@]} -gt 0 ]]; then
+        app_name="${cli_positional[0]}"
+    fi
+    if [[ -z "$env_name" ]] && [[ ${#cli_positional[@]} -gt 1 ]]; then
+        env_name="${cli_positional[1]}"
+    fi
 
     load_conf
 
     # Interactive selection if args not provided
     if [[ -z "$app_name" ]]; then
-        load_conf
-        app_name="$(detect_apps | choose_from "Select application:" "No applications found.")" || exit 0
+        if [[ -t 0 ]]; then
+            app_name="$(detect_apps | choose_from "Select application:" "No applications found.")" || exit 0
+        else
+            print_error "--app is required when not running interactively"
+            exit 1
+        fi
     fi
 
     if [[ -z "$env_name" ]]; then
@@ -313,7 +420,12 @@ cmd_remove() {
                 available_envs+=("$(basename "$d")")
             done
         fi
-        env_name="$(printf '%s\n' "${available_envs[@]}" | choose_from "Select environment:" "No sealed secrets found for '${app_name}'.")" || exit 0
+        if [[ -t 0 ]]; then
+            env_name="$(printf '%s\n' "${available_envs[@]}" | choose_from "Select environment:" "No sealed secrets found for '${app_name}'.")" || exit 0
+        else
+            print_error "--env is required when not running interactively"
+            exit 1
+        fi
     fi
 
     validate_k8s_name "$app_name" "App name"
@@ -328,7 +440,7 @@ cmd_remove() {
     print_header "Remove Sealed Secret: ${app_name} / ${env_name}"
     print_info "Delete file: ${sealed_file}"
 
-    confirm_or_abort "Remove sealed secret for '${app_name}' in '${env_name}'?"
+    require_yes "$yes" "remove sealed secret for '${app_name}' in '${env_name}'"
 
     rm -f "$sealed_file"
 
@@ -351,9 +463,29 @@ cmd_verify() {
     require_yq
     load_conf
 
-    local env_name="${1:-}"
+    local env_flag="" walk_flag=""
+    local cli_positional=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --env) env_flag="$2"; shift 2 ;;
+            --walk)    walk_flag="true"; shift ;;
+            --no-walk) walk_flag="false"; shift ;;
+            -h|--help) echo "Usage: secret-ctl.sh verify [env] [--walk | --no-walk]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *) cli_positional+=("$1"); shift ;;
+        esac
+    done
+
+    local env_name="$env_flag"
+    [[ -z "$env_name" ]] && [[ ${#cli_positional[@]} -gt 0 ]] && env_name="${cli_positional[0]}"
+
     if [[ -z "$env_name" ]]; then
-        env_name="$(detect_envs | choose_from "Select environment:" "No environments found.")" || exit 0
+        if [[ -t 0 ]]; then
+            env_name="$(detect_envs | choose_from "Select environment:" "No environments found.")" || exit 0
+        else
+            print_error "--env is required when not running interactively"
+            exit 1
+        fi
     fi
 
     print_header "Verifying secrets for environment: ${env_name}"
@@ -410,7 +542,13 @@ cmd_verify() {
         print_success "All secret references verified for '${env_name}'."
     else
         print_warning "${missing_count} missing secret(s) found."
-        if gum confirm "Walk through creating missing secrets now?"; then
+        local walk="no"
+        if [[ "$walk_flag" == "true" ]]; then walk="yes"
+        elif [[ "$walk_flag" == "false" ]]; then walk="no"
+        elif [[ -t 0 ]]; then
+            gum confirm "Walk through creating missing secrets now?" && walk="yes"
+        fi
+        if [[ "$walk" == "yes" ]]; then
             cmd_add "" "$env_name"
         fi
     fi
