@@ -1962,7 +1962,159 @@ doctor_layer_8_ingress() {
     DOCTOR_CURRENT_LAYER_ERRORS=()
     DOCTOR_CURRENT_LAYER_WARNINGS=()
     DOCTOR_CURRENT_LAYER_INFOS=()
-    render_doctor_layer "Layer 8: Ingress"
+
+    needs_cluster_or_skip "Layer 8: Ingress reachability" || return 0
+
+    # Skip cleanly if the repo has no ingress manifests at all.
+    local has_ingress_manifests=0
+    if find "${TARGET_DIR}/k8s/apps" -type f -name 'ingress.yaml' 2>/dev/null | grep -q .; then
+        has_ingress_manifests=1
+    fi
+    if [[ $has_ingress_manifests -eq 0 ]]; then
+        render_doctor_layer "Layer 8: Ingress reachability"
+        return 0
+    fi
+
+    local ingresses_json
+    ingresses_json="$(kubectl get ingress -A -o json 2>/dev/null)" || ingresses_json=""
+    if [[ -z "$ingresses_json" ]]; then
+        render_doctor_layer "Layer 8: Ingress reachability"
+        return 0
+    fi
+
+    # Flatten each (host, serviceName, portNumber, portName) rule into a tsv row.
+    # Columns: namespace \t ingressName \t host \t serviceName \t portNumber \t portName
+    local rule_rows
+    rule_rows="$(jq -r '
+        .items[]
+        | . as $ing
+        | (.spec.rules // [])[]
+        | . as $rule
+        | ($rule.http.paths // [])[]
+        | [
+            ($ing.metadata.namespace // ""),
+            ($ing.metadata.name // ""),
+            ($rule.host // ""),
+            (.backend.service.name // ""),
+            ((.backend.service.port.number // "") | tostring),
+            (.backend.service.port.name // "")
+          ] | @tsv
+    ' <<<"$ingresses_json")"
+
+    # Track distinct hosts (for HTTP probe + TLS SAN) and distinct
+    # (ns,svc) pairs we've already checked structurally.
+    local -A seen_hosts=()
+    local -A seen_struct=()
+
+    local ns ing_name host svc port_num port_name
+    while IFS=$'\t' read -r ns ing_name host svc port_num port_name; do
+        [[ -z "$ns" || -z "$ing_name" ]] && continue
+        doctor_matches_filter "" "$ns" || continue
+
+        # --- Structural: service + port + endpoints ---
+        local struct_key="${ns}/${svc}/${port_num}/${port_name}"
+        if [[ -z "${seen_struct[$struct_key]:-}" ]]; then
+            seen_struct["$struct_key"]=1
+
+            local svc_json
+            svc_json="$(kubectl -n "$ns" get svc "$svc" -o json 2>/dev/null)" || svc_json=""
+            if [[ -z "$svc_json" ]]; then
+                doctor_error "${ns}/${ing_name}" \
+                    "Ingress backend Service does not exist" \
+                    "rule references service '${svc}' in namespace '${ns}' which is not present" \
+                    "Create the Service or fix the Ingress backend reference"
+            else
+                # Port check: match either number or name depending on which is set.
+                local port_ok=0
+                if [[ -n "$port_num" ]]; then
+                    if jq -e --argjson p "$port_num" '.spec.ports[] | select(.port == $p)' <<<"$svc_json" &>/dev/null; then
+                        port_ok=1
+                    fi
+                fi
+                if [[ $port_ok -eq 0 && -n "$port_name" ]]; then
+                    if jq -e --arg n "$port_name" '.spec.ports[] | select(.name == $n)' <<<"$svc_json" &>/dev/null; then
+                        port_ok=1
+                    fi
+                fi
+                if [[ $port_ok -eq 0 ]]; then
+                    local port_ref="${port_num:-$port_name}"
+                    doctor_error "${ns}/${ing_name}/${host}" \
+                        "Ingress backend port does not exist on Service" \
+                        "Service '${svc}' in '${ns}' does not expose port '${port_ref}' referenced by the Ingress" \
+                        "Align the Ingress backend.service.port with a port declared on Service '${svc}'"
+                else
+                    # Endpoints check
+                    local addrs
+                    addrs="$(kubectl -n "$ns" get endpoints "$svc" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null)"
+                    if [[ -z "$addrs" ]]; then
+                        doctor_error "${ns}/${ing_name}/${host}" \
+                            "Ingress backend Service has no ready endpoints" \
+                            "Service '${svc}' in '${ns}' has 0 endpoints; its selector probably matches no ready pods" \
+                            "Check 'kubectl -n ${ns} get endpoints ${svc}' and verify pod labels"
+                    fi
+                fi
+            fi
+        fi
+
+        # Track host for HTTP/TLS checks (dedup globally across all ingresses).
+        [[ -n "$host" ]] && seen_hosts["$host"]=1
+    done <<<"$rule_rows"
+
+    # --- HTTP probe + TLS SAN for each distinct host ---
+    local has_openssl=1
+    if ! command -v openssl &>/dev/null; then
+        has_openssl=0
+        doctor_info "openssl" "openssl not available; skipping TLS SAN coverage checks"
+    fi
+
+    for host in "${!seen_hosts[@]}"; do
+        local code
+        code="$(curl -skI -o /dev/null -w '%{http_code}' --max-time 5 "https://${host}/" 2>/dev/null)" || code="000"
+        case "$code" in
+            2*|3*|401|403|404)
+                # Reachable
+                ;;
+            000)
+                doctor_error "$host" \
+                    "Ingress host unreachable (connection failed)" \
+                    "curl could not connect to https://${host}/ within 5s" \
+                    "Check traefik is running; verify DNS resolves the host; check firewall"
+                continue
+                ;;
+            5*)
+                doctor_error "$host" \
+                    "Ingress host returned ${code}" \
+                    "curl got HTTP ${code} from https://${host}/" \
+                    "Check backend pod logs for the service behind this ingress"
+                ;;
+            *)
+                doctor_warn "$host" \
+                    "Unexpected HTTP response code: ${code}" \
+                    "curl got HTTP ${code} from https://${host}/; expected 2xx/3xx/401/403/404" \
+                    "Inspect the ingress routing rules and backend service behavior"
+                ;;
+        esac
+
+        # TLS SAN check (only if openssl present and we could connect)
+        if [[ $has_openssl -eq 1 ]]; then
+            local cert_sans
+            cert_sans="$(echo | openssl s_client -servername "$host" -connect "${host}:443" -showcerts 2>/dev/null \
+                | openssl x509 -noout -ext subjectAltName 2>/dev/null \
+                | sed -n 's/.*DNS://p' \
+                | tr ',' '\n' \
+                | tr -d ' ')"
+            if [[ -n "$cert_sans" ]]; then
+                if ! grep -Fxq "$host" <<<"$cert_sans"; then
+                    doctor_warn "$host" \
+                        "TLS cert SANs do not cover hostname" \
+                        "presented cert's subjectAltName does not include '${host}'; connection works because of -k flag" \
+                        "Run 'cluster-ctl.sh renew-tls' to regenerate the mkcert cert with updated SANs"
+                fi
+            fi
+        fi
+    done
+
+    render_doctor_layer "Layer 8: Ingress reachability"
 }
 
 doctor_layer_9_hygiene() {
