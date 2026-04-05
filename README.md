@@ -313,6 +313,26 @@ Verifies that `gum` and `gh` are installed. Non-interactive; safe to run in CI.
 infra-ctl.sh preflight-check
 ```
 
+### Flag reference
+
+Every command listed above accepts flags for every value it would otherwise prompt for. Run `<command> --help` to see the full list for that command. Compact summary:
+
+| Command | Flags |
+|---|---|
+| `init` | `--repo-url <url>`, `--yes` |
+| `add-app` | `--name`, `--project`, `--workload-type`, `--preset`, `--set KEY=VAL` (repeatable, validated against preset), `--secret-key NAME` (repeatable), `--config KEY=VAL` (repeatable), `--kargo`/`--no-kargo`, `--image-repo`, `--custom`, `--image`, `--port`, `--secret-name`, `--probe-path`, `--yes` |
+| `add-env` | `--name`, `--yes` |
+| `add-project` | `--name`, `--description`, `--restrict-repos`/`--no-restrict-repos`, `--source-repos`, `--namespaces`, `--cluster-resources`/`--no-cluster-resources` |
+| `edit-project` | same as `add-project` |
+| `add-ingress` | `--app`, `--env NAME` (repeatable), `--yes` |
+| `remove-ingress` | `--app`, `--env NAME` (repeatable), `--yes` |
+| `enable-kargo` | `--image-repo <app>=<url>` (repeatable), `--yes` |
+| `remove-app`, `remove-env` | `--name`, `--yes` |
+| `remove-project` | `--name`, `--reassign-to`, `--yes` |
+| `reset` | `--yes` |
+
+All `remove-*` and `reset` require `--yes` non-interactively. See the [Scripting and CI](#scripting-and-ci) section for the contract.
+
 ### Global options
 
 All scripts (`infra-ctl.sh`, `cluster-ctl.sh`, `secret-ctl.sh`, `user-ctl.sh`) accept these flags:
@@ -461,6 +481,18 @@ Verifies that all required tools (`gum`, `gh`, `k3d`, `kubectl`, `jq`, `helm`, `
 cluster-ctl.sh preflight-check
 ```
 
+### Flag reference
+
+| Command | Flags |
+|---|---|
+| `init-cluster` | `--name`, `--agents`, `--expose-ports`/`--no-expose-ports`, `--tls`/`--no-tls`, `--argocd`/`--no-argocd`, `--kargo`/`--no-kargo`, `--kargo-password` |
+| `delete-cluster` | `--name`, `--yes` |
+| `add-argo-creds` | `--pat`, `--yes` |
+| `add-registry-creds` | `--registry`, `--username`, `--token`, `--env NAME` (repeatable) |
+| `add-kargo-creds` | `--app`, `--pat`, `--private-registry`/`--no-private-registry` |
+
+Run `cluster-ctl.sh <command> --help` for details.
+
 ### Helm values (`helm/argocd-values.yaml`)
 
 `helm/argocd-values.yaml` ships with this tooling and is the source-of-truth Helm values file for ArgoCD. `init-cluster` applies it when installing ArgoCD, and `upgrade-argocd` re-applies it whenever you want to pick up edits. To customize your ArgoCD install (Ingress hostnames, resource limits, RBAC, plugins, dex config), edit this file in place and re-run `upgrade-argocd`.
@@ -519,6 +551,16 @@ Scans all workload manifests in the given environment for `configMapKeyRef` refe
 config-ctl.sh verify dev
 ```
 
+### Flag reference
+
+| Command | Flags |
+|---|---|
+| `add` | `--app`, `--env`, `--config KEY=VAL` (repeatable) |
+| `remove` | `--app`, `--env`, `--key NAME` (repeatable, prefix match) |
+| `verify` | `--env`, `--walk`/`--no-walk` |
+
+Run `config-ctl.sh <command> --help` for details.
+
 ## secret-ctl.sh
 
 Manages [Sealed Secrets](https://github.com/bitnami-labs/sealed-secrets) in the GitOps repo. Sealed Secrets let you commit encrypted secret material to Git safely: the Sealed Secrets controller runs in-cluster with a private key, and only it can decrypt. You encrypt locally with the public cert (`.sealed-secrets-cert.pem`, safe to commit).
@@ -575,6 +617,17 @@ Verifies that `gum`, `kubectl`, `kubeseal`, and `jq` are installed.
 ```bash
 secret-ctl.sh preflight-check
 ```
+
+### Flag reference
+
+| Command | Flags |
+|---|---|
+| `init` | `--restore-key`/`--no-restore-key` |
+| `add` | `--app`, `--env`, `--secret-val KEY=VAL` (repeatable; `KEY=@file` or `KEY=-` for stdin), `--overwrite`/`--no-overwrite` |
+| `remove` | `--app`, `--env`, `--yes` |
+| `verify` | `--env`, `--walk`/`--no-walk` |
+
+Run `secret-ctl.sh <command> --help` for details.
 
 ## user-ctl.sh
 
@@ -668,6 +721,18 @@ Verifies that all required tools are installed.
 ```bash
 user-ctl.sh preflight-check
 ```
+
+### Flag reference
+
+| Command | Flags |
+|---|---|
+| `add-role` | `--name`, `--preset` (admin-readonly-settings/developer/viewer/custom), `--argocd-resources`, `--actions`, `--k8s-scope` (cluster-wide/namespace-scoped), `--k8s-verbs`, `--namespace NAME` (repeatable) |
+| `remove-role` | `--name`, `--yes` |
+| `remove` | `--name`, `--yes` |
+| `remove-sa` | `--name`, `--yes` |
+| `add-sa`, `refresh-sa` | `--duration` |
+
+`add` and `add-sa` take `<username> <group>` as positional arguments. Run `user-ctl.sh <command> --help` for details.
 
 ## Templates
 
