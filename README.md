@@ -889,25 +889,21 @@ infra-ctl.sh init \
     --yes
 ```
 
-### 2. Add environments
+### 2. Add the dev environment
 
 Interactive:
 
 ```bash
 infra-ctl.sh add-env dev
-infra-ctl.sh add-env staging
-infra-ctl.sh add-env prod
 ```
 
 Scripted:
 
 ```bash
 infra-ctl.sh add-env dev --yes
-infra-ctl.sh add-env staging --yes
-infra-ctl.sh add-env prod --yes
 ```
 
-This creates namespace manifests and sets up the overlay directories that will hold per-environment configuration.
+This creates the `dev` namespace manifest and sets up the overlay directory that will hold per-environment configuration. Additional environments (staging, prod) are added the same way -- see [Adding another environment](#adding-another-environment) at the end of this walkthrough.
 
 ### 3. Add the applications
 
@@ -1005,18 +1001,16 @@ Interactive:
 
 ```bash
 infra-ctl.sh add-ingress frontend
-# Select environments (pre-selected: dev, staging, prod)
+# Select environments (dev pre-selected)
 ```
 
 Scripted:
 
 ```bash
-infra-ctl.sh add-ingress frontend \
-    --env dev --env staging --env prod \
-    --yes
+infra-ctl.sh add-ingress frontend --env dev --yes
 ```
 
-This generates one Ingress per selected environment at `k8s/apps/frontend/overlays/<env>/ingress.yaml` and registers each in its overlay `kustomization.yaml`. The frontend becomes accessible at `https://dev.frontend.localhost`, `https://staging.frontend.localhost`, and `https://prod.frontend.localhost` via k3d's built-in Traefik ingress controller (requires ports 80/443 exposed during `cluster-ctl.sh init-cluster`).
+This generates an Ingress at `k8s/apps/frontend/overlays/dev/ingress.yaml` and registers it in the overlay `kustomization.yaml`. The frontend becomes accessible at `https://dev.frontend.localhost` via k3d's built-in Traefik ingress controller (requires ports 80/443 exposed during `cluster-ctl.sh init-cluster`).
 
 After adding or removing ingresses, run `cluster-ctl.sh renew-tls` so the mkcert TLS cert picks up the new hostnames as SANs.
 
@@ -1089,7 +1083,7 @@ cluster-ctl.sh add-registry-creds \
     --registry ghcr.io \
     --username "$GITHUB_USERNAME" \
     --token "$GITHUB_PAT_PACKAGES" \
-    --env dev --env staging --env prod \
+    --env dev \
     --yes
 ```
 
@@ -1097,7 +1091,7 @@ cluster-ctl.sh add-registry-creds \
 
 ```bash
 git add -A
-git commit -m "Deploy e-commerce app to dev, staging, and prod"
+git commit -m "Deploy e-commerce app to dev"
 git push
 
 # Bootstrap ArgoCD: apply the parent-app to the cluster (one-time step)
@@ -1168,6 +1162,50 @@ open http://kargo.localhost
 ![Cluster View](docs/cluster-view.png)
 
 Every resource in the cluster traces back to a file in the repo. ArgoCD watches Git and keeps the cluster in sync automatically: push a change, and the cluster converges to match.
+
+### Adding another environment
+
+With `dev` running, you can stand up another environment (staging, prod, etc.) without touching the cluster. The steps mirror the initial setup, scoped to the new environment:
+
+```bash
+# 1. Create the environment. If Kargo is enabled, this also appends a new
+#    Stage to each app's promotion pipeline (sorted by conventional order:
+#    dev -> staging -> prod).
+infra-ctl.sh add-env staging --yes
+
+# 2. Create per-env secrets. Each app reads the same secret keys from its
+#    namespace, so you need one add per app that declared secrets.
+secret-ctl.sh add postgres staging \
+    --secret-val POSTGRES_USER=store \
+    --secret-val POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+secret-ctl.sh add backend staging \
+    --secret-val DATABASE_URL="$DATABASE_URL"
+
+# 3. Add ingress hostnames for the new environment, then regenerate the
+#    TLS cert so <env>.frontend.localhost is in the SAN list.
+infra-ctl.sh add-ingress frontend --env staging --yes
+cluster-ctl.sh renew-tls
+
+# 4. If the container registry is private, configure kubelet pull creds
+#    for the new namespace.
+cluster-ctl.sh add-registry-creds \
+    --registry ghcr.io \
+    --username "$GITHUB_USERNAME" \
+    --token "$GITHUB_PAT_PACKAGES" \
+    --env staging \
+    --yes
+
+# 5. Commit and push. ArgoCD discovers the new Application manifests on
+#    its next poll (or argo-sync immediately).
+git add -A
+git commit -m "Add staging environment"
+git push
+cluster-ctl.sh argo-sync
+```
+
+If Kargo is enabled, staging does not subscribe to the Warehouse directly. It promotes images from the previous stage in the pipeline, so a new image reaches staging only after it has been verified in dev. Trigger the promotion manually from the Kargo dashboard at `http://kargo.localhost` (the generated Stages don't set `autoPromotionPolicies`).
+
+Removing an environment is the symmetric operation: `infra-ctl.sh remove-env staging` takes down the namespace manifest, ArgoCD Application manifests, and (if Kargo is enabled) the corresponding Stage, plus rewrites `kargo/promotion-order.txt`.
 
 ## How GitOps Works
 
