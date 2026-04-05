@@ -493,6 +493,8 @@ cluster-ctl.sh preflight-check
 
 Run `cluster-ctl.sh <command> --help` for details.
 
+**Warning about inline secrets.** `--kargo-password`, `--pat`, and `--token` accept their values directly on the command line. Anything passed this way is visible to other local users via `ps`, ends up in your shell history, may be captured by terminal multiplexers, and is commonly echoed back in CI logs. Prefer running these commands interactively so they prompt you with hidden input. In a CI context, fetch the secret from a secret manager and feed it in via a well-scoped ephemeral env var, not an argv flag.
+
 ### Helm values (`helm/argocd-values.yaml`)
 
 `helm/argocd-values.yaml` ships with this tooling and is the source-of-truth Helm values file for ArgoCD. `init-cluster` applies it when installing ArgoCD, and `upgrade-argocd` re-applies it whenever you want to pick up edits. To customize your ArgoCD install (Ingress hostnames, resource limits, RBAC, plugins, dex config), edit this file in place and re-run `upgrade-argocd`.
@@ -850,7 +852,14 @@ This walkthrough deploys a two-service e-commerce app (SvelteKit frontend + Fast
 
 The application lives at [github.com/remerle/k8s-practice-app](https://github.com/remerle/k8s-practice-app). CI workflows build and push images to `ghcr.io/remerle/k8s-practice-frontend` and `ghcr.io/remerle/k8s-practice-backend`, tagged as `YY.M.<buildNum>`.
 
+Each step below shows two forms:
+
+- **Interactive** — run the command and answer prompts. This is the recommended way to explore the tool.
+- **Scripted** — pass every value as a flag. No prompts. This is the CI-safe form; if any required value is missing, the command fails with a clear error naming the missing flag.
+
 ### 1. Create the cluster and initialize the repo
+
+Interactive:
 
 ```bash
 # Create a local k3d cluster with ArgoCD and Kargo
@@ -862,7 +871,27 @@ infra-ctl.sh init
 # Enter your repo URL when prompted
 ```
 
+Scripted:
+
+```bash
+# WARNING: --kargo-password inline leaks via ps/history/CI logs.
+#   Prefer the interactive form, or feed it from a secret manager.
+cluster-ctl.sh init-cluster \
+    --name k8s-practice \
+    --agents 3 \
+    --expose-ports \
+    --argocd \
+    --kargo \
+    --kargo-password "$KARGO_ADMIN_PASSWORD"
+
+infra-ctl.sh init \
+    --repo-url https://github.com/<owner>/<repo> \
+    --yes
+```
+
 ### 2. Add environments
+
+Interactive:
 
 ```bash
 infra-ctl.sh add-env dev
@@ -870,11 +899,21 @@ infra-ctl.sh add-env staging
 infra-ctl.sh add-env prod
 ```
 
+Scripted:
+
+```bash
+infra-ctl.sh add-env dev --yes
+infra-ctl.sh add-env staging --yes
+infra-ctl.sh add-env prod --yes
+```
+
 This creates namespace manifests and sets up the overlay directories that will hold per-environment configuration.
 
 ### 3. Add the applications
 
 Each `add-app` command prompts for a workload type, a preset, and preset-specific options (image, port, probes, secrets, config). Presets pre-fill sensible defaults; you can accept or override each one.
+
+Interactive:
 
 ```bash
 # Backend API
@@ -916,13 +955,65 @@ infra-ctl.sh add-app postgres
 # Manage with Kargo? No
 ```
 
+Scripted:
+
+```bash
+# Backend API
+infra-ctl.sh add-app backend \
+    --workload-type deployment \
+    --preset web \
+    --set IMAGE=ghcr.io/remerle/k8s-practice-backend:26.4.11 \
+    --set PORT=3000 \
+    --set SECRET_NAME=backend-secrets \
+    --set PROBE_PATH=/api/health \
+    --secret-key DATABASE_URL \
+    --kargo \
+    --image-repo ghcr.io/remerle/k8s-practice-backend \
+    --yes
+
+# Frontend
+infra-ctl.sh add-app frontend \
+    --workload-type deployment \
+    --preset web \
+    --set IMAGE=ghcr.io/remerle/k8s-practice-frontend:26.4.11 \
+    --set PORT=3000 \
+    --set PROBE_PATH=/api/health \
+    --config API_URL=http://backend:3000 \
+    --kargo \
+    --image-repo ghcr.io/remerle/k8s-practice-frontend \
+    --yes
+
+# PostgreSQL
+infra-ctl.sh add-app postgres \
+    --workload-type statefulset \
+    --preset postgres \
+    --set IMAGE=postgres:16-alpine \
+    --set PORT=5432 \
+    --set SECRET_NAME=postgres-secrets \
+    --set STORAGE_SIZE=1Gi \
+    --set MOUNT_PATH=/var/lib/postgresql/data \
+    --config POSTGRES_DB=store \
+    --no-kargo \
+    --yes
+```
+
 Each command generates a workload manifest (Deployment or StatefulSet), a Kustomize base with Service, per-env overlays, and ArgoCD Application manifests. For backend and frontend, Kargo resources are also generated: a Warehouse (watches the container registry for new tags) and Stages (one per environment in the promotion pipeline). Postgres doesn't get Kargo resources because it uses `postgres:16-alpine` directly rather than a CI-built image.
 
 ### 4. Add ingress for the frontend
 
+Interactive:
+
 ```bash
 infra-ctl.sh add-ingress frontend
 # Select environments (pre-selected: dev, staging, prod)
+```
+
+Scripted:
+
+```bash
+infra-ctl.sh add-ingress frontend \
+    --env dev --env staging --env prod \
+    --yes
 ```
 
 This generates one Ingress per selected environment at `k8s/apps/frontend/overlays/<env>/ingress.yaml` and registers each in its overlay `kustomization.yaml`. The frontend becomes accessible at `https://dev.frontend.localhost`, `https://staging.frontend.localhost`, and `https://prod.frontend.localhost` via k3d's built-in Traefik ingress controller (requires ports 80/443 exposed during `cluster-ctl.sh init-cluster`).
@@ -933,13 +1024,32 @@ After adding or removing ingresses, run `cluster-ctl.sh renew-tls` so the mkcert
 
 The backend and postgres manifests reference Secrets for credentials. `add-app` prints the required `secret-ctl.sh` commands after creating each app. Use Sealed Secrets to create encrypted secrets that are safe to commit:
 
+Interactive:
+
 ```bash
 # Install the Sealed Secrets controller
 secret-ctl.sh init
 
 # Create secrets for each app (commands shown by add-app)
-secret-ctl.sh add postgres dev POSTGRES_USER=store POSTGRES_PASSWORD=store
-secret-ctl.sh add backend dev DATABASE_URL=postgresql://store:store@postgres:5432/store
+secret-ctl.sh add postgres dev
+# Prompts for each secret key with hidden input
+
+secret-ctl.sh add backend dev
+```
+
+Scripted:
+
+```bash
+secret-ctl.sh init --yes
+
+# Pass each secret value as --secret-val KEY=VAL. Prefer reading values
+# from a file or env var rather than hardcoding them in a shell script.
+secret-ctl.sh add postgres dev \
+    --secret-val POSTGRES_USER=store \
+    --secret-val POSTGRES_PASSWORD="$POSTGRES_PASSWORD"
+
+secret-ctl.sh add backend dev \
+    --secret-val DATABASE_URL="$DATABASE_URL"
 ```
 
 You can also use `secret-ctl.sh verify dev` to scan all workload manifests and discover any missing secrets automatically.
@@ -955,19 +1065,32 @@ kubectl create secret generic backend-secrets -n dev \
 
 ### 6. Configure credentials (if private repo/registry)
 
-For a private GitOps repo, ArgoCD needs read access:
+For a private GitOps repo, ArgoCD needs read access. For a private container registry (e.g., ghcr.io), kubelet needs pull credentials.
+
+Interactive:
 
 ```bash
 cluster-ctl.sh add-argo-creds
 # Enter a classic GitHub PAT with the "repo" scope
-```
 
-For a private container registry (e.g., ghcr.io), kubelet needs pull credentials. This creates namespaces if they don't exist and configures each one:
-
-```bash
 cluster-ctl.sh add-registry-creds
 # Enter the registry server (default: ghcr.io), username, and a classic PAT with the "read:packages" scope
 # Select which namespaces to configure
+```
+
+Scripted:
+
+```bash
+# WARNING: --pat and --token inline leak via ps/history/CI logs.
+#   Prefer the interactive form, or feed from a secret manager.
+cluster-ctl.sh add-argo-creds --pat "$GITHUB_PAT_REPO" --yes
+
+cluster-ctl.sh add-registry-creds \
+    --registry ghcr.io \
+    --username "$GITHUB_USERNAME" \
+    --token "$GITHUB_PAT_PACKAGES" \
+    --env dev --env staging --env prod \
+    --yes
 ```
 
 ### 7. Commit, push, and bootstrap ArgoCD
@@ -984,11 +1107,15 @@ cluster-ctl.sh argo-init
 cluster-ctl.sh argo-sync
 ```
 
+These three commands (`argo-init`, `argo-sync`) take no user input and are the same in interactive and scripted contexts.
+
 `argo-init` applies `argocd/parent-app.yaml` to the cluster. This is the one-time bootstrap that tells ArgoCD "watch this Git repo for Application manifests." After this, ArgoCD manages everything via Git. `argo-sync` then triggers an immediate sync of all discovered applications rather than waiting for the default 3-minute poll interval. Wait for the sync to complete before proceeding -- Kargo credentials require the app namespaces to exist, which are created when ArgoCD deploys the Kargo Project resources.
 
 ### 8. Configure Kargo credentials (if private repo/registry)
 
 Kargo needs read+write access to the GitOps repo and optionally read access to the container registry. These credentials are stored in Kubernetes Secrets in each app's namespace, which must exist before running these commands.
+
+Interactive:
 
 ```bash
 cluster-ctl.sh add-kargo-creds backend
@@ -997,6 +1124,21 @@ cluster-ctl.sh add-kargo-creds backend
 
 cluster-ctl.sh add-kargo-creds frontend
 # Same PAT works, same registry answer
+```
+
+Scripted:
+
+```bash
+# WARNING: --pat inline leaks via ps/history/CI logs.
+cluster-ctl.sh add-kargo-creds backend \
+    --pat "$GITHUB_PAT_REPO_PACKAGES" \
+    --private-registry \
+    --yes
+
+cluster-ctl.sh add-kargo-creds frontend \
+    --pat "$GITHUB_PAT_REPO_PACKAGES" \
+    --private-registry \
+    --yes
 ```
 
 Postgres doesn't need Kargo credentials because it has no Kargo resources (no Warehouse or Stages were generated for it). For a public repo and registry, skip this step entirely.

@@ -27,8 +27,12 @@ lint-contracts:
 		echo "ERROR: inline flag-value check found -- use require_flag_value \"--flag\" \"\$$\{2:-\}\" instead"; \
 		fail=1; \
 	fi; \
-	if grep -nE 'run_cmd_sh[^#]*\$$\{[a-z_][a-z0-9_]*\}' $(SHELL_FILES) | grep -v 'lint-ok'; then \
+	if grep -nE 'run_cmd_sh[^#]*\$$(\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*)' $(SHELL_FILES) | grep -v 'lint-ok'; then \
 		echo "ERROR: run_cmd_sh with interpolated variable found -- convert to argv run_cmd, or validate the value first and audit this check"; \
+		fail=1; \
+	fi; \
+	if grep -nE 'run_cmd_sh[^#]*\$$\(' $(SHELL_FILES) | grep -v 'lint-ok'; then \
+		echo "ERROR: run_cmd_sh with command substitution found -- convert to argv run_cmd, or audit this check with lint-ok"; \
 		fail=1; \
 	fi; \
 	if grep -nE '^\s*if \[\[ "\$$\{?yes\}?" != "true" \]\] && \[\[ -t 0 \]\]' $(SHELL_FILES) | grep -v 'lint-ok'; then \

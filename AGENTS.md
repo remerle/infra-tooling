@@ -300,6 +300,8 @@ All command implementations MUST use the shared helpers in `lib/common.sh`:
 - `parse_set_kv "<KEY=VAL>" <assoc-array-name>` — parses --set input into a caller-provided associative array
 - `require_yes "<yes-flag-value>" "<action-description>"` — gated confirmation for destructive ops
 - `validate_preset_set_keys "<template>" <keys...>` — dies if any --set key is not declared in preset frontmatter
+- `validate_in_set "<flag>" "<value>" <allowed...>` — dies if value is not in the fixed allowlist
+- `warn_inline_secret_flag "<flag>" "<value>"` — warns when a credential flag was passed inline on argv
 
 When adding a NEW command, the checklist below applies. When modifying an existing command to add a new prompt, the new prompt MUST be added as a flag first, with the prompt as fallback.
 
@@ -432,3 +434,5 @@ When adding a NEW command, the checklist below applies. When modifying an existi
 - `require_yes(yes_flag_value, action)` -- gates destructive operations; dies if --yes not passed and no TTY
 - `parse_set_kv(input, arr_name)` -- parses KEY=VAL into caller's associative array
 - `validate_preset_set_keys(template, keys...)` -- dies if any --set key is not declared in the preset frontmatter
+- `validate_in_set(flag, value, allowed...)` -- dies if value is not in the fixed allowlist (for choose-style flags)
+- `warn_inline_secret_flag(flag, value)` -- prints a warning when a credential flag was passed inline on argv

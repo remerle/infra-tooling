@@ -6,6 +6,13 @@ source "$(dirname "$0")/lib/user-ctl-helpers.sh"
 
 VALUES_FILE="${SCRIPT_DIR}/helm/argocd-values.yaml"
 
+# Allowlists for add-role --custom flags. Kept here (not in lib/common.sh)
+# because they mirror the fixed `gum choose` lists used by the interactive
+# flow in cmd_add_role and nowhere else.
+ARGOCD_RESOURCES=(applications projects repositories clusters certificates accounts logs exec)
+ARGOCD_ACTIONS=(get create update delete sync override action '*')
+K8S_VERBS=(get list watch create update patch delete deletecollection '*')
+
 # --- Commands ---
 
 cmd_add_role() {
@@ -32,11 +39,13 @@ cmd_add_role() {
                 ;;
             --argocd-resource)
                 require_flag_value "--argocd-resource" "${2:-}"
+                validate_in_set "--argocd-resource" "$2" "${ARGOCD_RESOURCES[@]}"
                 argocd_resource_flags+=("$2")
                 shift 2
                 ;;
             --action)
                 require_flag_value "--action" "${2:-}"
+                validate_in_set "--action" "$2" "${ARGOCD_ACTIONS[@]}"
                 action_flags+=("$2")
                 shift 2
                 ;;
@@ -47,6 +56,7 @@ cmd_add_role() {
                 ;;
             --k8s-verb)
                 require_flag_value "--k8s-verb" "${2:-}"
+                validate_in_set "--k8s-verb" "$2" "${K8S_VERBS[@]}"
                 k8s_verb_flags+=("$2")
                 shift 2
                 ;;
@@ -487,7 +497,7 @@ cmd_add() {
                 if [[ -z "$name_flag" ]]; then
                     name_flag="$1"
                 else
-                    print_error "Unexpected: $1"
+                    print_error "Unexpected positional '$1'. Pass the group via --group <name>."
                     exit 1
                 fi
                 shift
@@ -795,7 +805,7 @@ cmd_add_sa() {
                 if [[ -z "$name_flag" ]]; then
                     name_flag="$1"
                 else
-                    print_error "Unexpected: $1"
+                    print_error "Unexpected positional '$1'. Pass the group via --group <name>."
                     exit 1
                 fi
                 shift
@@ -1180,11 +1190,11 @@ Commands:
   remove-role [name]            Remove an RBAC role
   list-roles                    List configured roles
 
-  add <username> <group>        Create a human user with x509 cert
+  add <username> --group <grp>  Create a human user with x509 cert
   remove [username]             Remove a human user
   list                          List all users and service accounts
 
-  add-sa <name> <group>         Create a service account with token
+  add-sa <name> --group <grp>   Create a service account with token
   remove-sa [name]              Remove a service account
   refresh-sa [name]             Regenerate a service account token
 

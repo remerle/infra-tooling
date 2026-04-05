@@ -122,6 +122,8 @@ cmd_add() {
                 continue
             fi
 
+            # Mirror the --config flag path validator (AGENTS.md validation-parity rule).
+            validate_configmap_key "${entry%%=*}" "config key"
             entries+=("$entry")
             print_success "Added: ${entry}"
         done
@@ -292,6 +294,7 @@ cmd_remove() {
                 ;;
             --key)
                 require_flag_value "--key" "${2:-}"
+                validate_configmap_key "$2" "--key"
                 key_flags+=("$2")
                 shift 2
                 ;;

@@ -1242,7 +1242,10 @@ prompt_confirm_or_die() {
     fi
 }
 
-# Destructive-action guard. Exits if --yes was not passed.
+# Destructive-action guard.
+# - If --yes was passed ($1 == "true"), returns 0.
+# - Else if stdin is a TTY, runs `gum confirm` and exits 0 on abort.
+# - Else (no TTY, no --yes), prints an error and exits 1.
 # Pass the already-parsed yes_flag value ("true"/"false") as arg 1.
 # Usage: require_yes "$yes" "remove app 'backend'"
 require_yes() {
@@ -1259,6 +1262,38 @@ require_yes() {
             exit 1
         fi
     fi
+}
+
+# Validates that a value is a member of a fixed allowlist, dying otherwise.
+# The allowlist is passed as trailing positional args after the flag name and value.
+# Usage: validate_in_set "--action" "$val" "get" "create" "update" "*"
+validate_in_set() {
+    local flag="$1"
+    local value="$2"
+    shift 2
+    local a
+    for a in "$@"; do
+        [[ "$value" == "$a" ]] && return 0
+    done
+    print_error "${flag}: '${value}' is not one of: $*"
+    exit 1
+}
+
+# Warns the user when a secret-bearing flag value was passed inline on argv.
+# Values starting with '@' (file indirection) or equal to '-' (stdin) are not
+# inline; anything else is treated as an argv leak and produces a warning.
+# No-op if the value is empty. Callers should invoke after flag parsing and
+# before they use the value.
+# Usage: warn_inline_secret_flag "--kargo-password" "$kargo_password_flag"
+warn_inline_secret_flag() {
+    local flag="$1"
+    local value="$2"
+    [[ -z "$value" ]] && return 0
+    case "$value" in
+        - | @*) return 0 ;;
+    esac
+    print_warning "${flag}: passing secrets inline exposes them via 'ps', shell history, and CI logs."
+    print_warning "  Prefer interactive entry, an environment variable, or a secret manager."
 }
 
 # Parses a KEY=VAL string into a caller-provided associative array.

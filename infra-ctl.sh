@@ -681,6 +681,12 @@ EOF
             local cfg_entry
             cfg_entry="$(gum input --placeholder "KEY=value" --prompt "Config entry (empty to finish): ")"
             [[ -z "$cfg_entry" ]] && break
+            if [[ "$cfg_entry" != *"="* ]]; then
+                print_warning "Invalid format. Use KEY=VALUE."
+                continue
+            fi
+            # Mirror the --config flag path validator (AGENTS.md validation-parity rule).
+            validate_configmap_key "${cfg_entry%%=*}" "config key"
             config_entries+=("$cfg_entry")
         done
     fi

@@ -240,12 +240,12 @@ _cluster_ctl() {
                         '--kargo-password[Kargo admin password]:password:'
                     ;;
                 delete-cluster)
-                    _arguments \
-                        '--name[Cluster name]:name:' \
-                        '--yes[Skip confirmation]' '-y[Skip confirmation]'
                     local -a cluster_names
                     cluster_names=(${(f)"$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name' 2>/dev/null)"})
-                    compadd -a cluster_names
+                    _arguments \
+                        "--name[Cluster name]:name:(${cluster_names})" \
+                        '--yes[Skip confirmation]' '-y[Skip confirmation]' \
+                        "*:cluster:(${cluster_names})"
                     ;;
                 add-argo-creds)
                     _arguments \

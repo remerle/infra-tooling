@@ -53,11 +53,14 @@ run_test() {
 make_runner() {
     local runner="$1"
     shift
-    cat >"$runner" <<EOF
+    # Quoted heredoc for the preamble so nothing here expands; body lines
+    # are written verbatim via printf. This keeps test bodies from silently
+    # interpolating the outer shell's variables.
+    cat >"$runner" <<'PREAMBLE'
 #!/usr/bin/env bash
 source lib/common.sh
-$@
-EOF
+PREAMBLE
+    printf '%s\n' "$@" >>"$runner"
     chmod +x "$runner"
 }
 
@@ -191,6 +194,29 @@ run_test "validate_secret_key rejects spaces" 1 "not a valid k8s Secret key" \
 make_runner "$TMP/vsk5.sh" 'validate_secret_key "BAD;KEY"'
 run_test "validate_secret_key rejects shell metacharacters" 1 "not a valid k8s Secret key" \
     -- "$TMP/vsk5.sh"
+
+# --- validate_in_set ---
+make_runner "$TMP/vis1.sh" 'validate_in_set "--action" "get" "get" "create" "update"'
+run_test "validate_in_set accepts allowed value" 0 "" -- "$TMP/vis1.sh"
+
+make_runner "$TMP/vis2.sh" 'validate_in_set "--action" "rmrf" "get" "create" "update"'
+run_test "validate_in_set rejects unknown value" 1 "not one of" -- "$TMP/vis2.sh"
+
+make_runner "$TMP/vis3.sh" 'validate_in_set "--action" $'"'"'get\np, role:admin, *, *'"'"' "get" "create"'
+run_test "validate_in_set rejects injection payload" 1 "not one of" -- "$TMP/vis3.sh"
+
+# --- warn_inline_secret_flag ---
+make_runner "$TMP/wisf1.sh" 'warn_inline_secret_flag "--pat" ""'
+run_test "warn_inline_secret_flag silent on empty" 0 "" -- "$TMP/wisf1.sh"
+
+make_runner "$TMP/wisf2.sh" 'warn_inline_secret_flag "--pat" "@/tmp/tok"'
+run_test "warn_inline_secret_flag silent on @file" 0 "" -- "$TMP/wisf2.sh"
+
+make_runner "$TMP/wisf3.sh" 'warn_inline_secret_flag "--pat" "-"'
+run_test "warn_inline_secret_flag silent on stdin marker" 0 "" -- "$TMP/wisf3.sh"
+
+make_runner "$TMP/wisf4.sh" 'warn_inline_secret_flag "--pat" "ghp_secretvalue"'
+run_test "warn_inline_secret_flag warns on inline value" 0 "passing secrets inline" -- "$TMP/wisf4.sh"
 
 echo ""
 echo "Passed: $PASSED"

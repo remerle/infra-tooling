@@ -131,6 +131,9 @@ Flags:
   --kargo                Install Kargo (requires --kargo-password non-interactively)
   --no-kargo             Skip Kargo (default)
   --kargo-password <pw>  Kargo admin password
+                         WARNING: passing secrets inline exposes them via
+                         'ps', shell history, and CI logs. Prefer interactive
+                         entry, an env var, or a secret manager.
 EOF
                 exit 0
                 ;;
@@ -333,6 +336,7 @@ EOF
 
         local kargo_password
         if [[ -n "$kargo_password_flag" ]]; then
+            warn_inline_secret_flag "--kargo-password" "$kargo_password_flag"
             kargo_password="$kargo_password_flag"
             if [[ -z "$kargo_password" ]]; then
                 print_error "--kargo-password cannot be empty"
@@ -595,7 +599,13 @@ cmd_add_argo_creds() {
                 shift
                 ;;
             -h | --help)
-                echo "Usage: cluster-ctl.sh add-argo-creds [--pat <token>] [--yes]"
+                cat <<EOF
+Usage: cluster-ctl.sh add-argo-creds [--pat <token>] [--yes]
+
+WARNING: passing --pat inline exposes the token via 'ps', shell history, and
+CI logs. Prefer running this command interactively so it can prompt with
+hidden input.
+EOF
                 exit 0
                 ;;
             -*)
@@ -631,6 +641,7 @@ cmd_add_argo_creds() {
     # PAT: flag wins, else prompt, else die
     local pat
     if [[ -n "$pat_flag" ]]; then
+        warn_inline_secret_flag "--pat" "$pat_flag"
         pat="$pat_flag"
         if ! validate_github_pat "$pat" "repo"; then
             print_error "--pat did not validate with required scope 'repo'"
@@ -711,7 +722,13 @@ cmd_add_registry_creds() {
                 shift
                 ;;
             -h | --help)
-                echo "Usage: cluster-ctl.sh add-registry-creds [--registry <host>] [--username <user>] [--token <pat>] [--env <ns>]... [--yes]"
+                cat <<EOF
+Usage: cluster-ctl.sh add-registry-creds [--registry <host>] [--username <user>] [--token <pat>] [--env <ns>]... [--yes]
+
+WARNING: passing --token inline exposes the token via 'ps', shell history, and
+CI logs. Prefer running this command interactively so it can prompt with
+hidden input.
+EOF
                 exit 0
                 ;;
             -*)
@@ -762,6 +779,7 @@ cmd_add_registry_creds() {
     # Token: flag wins, else prompt, else die
     local pat
     if [[ -n "$token_flag" ]]; then
+        warn_inline_secret_flag "--token" "$token_flag"
         pat="$token_flag"
         if [[ "$registry" == "ghcr.io" ]] && ! validate_github_pat "$pat" "read:packages"; then
             print_error "--token did not validate with required scope 'read:packages'"
@@ -921,7 +939,13 @@ cmd_add_kargo_creds() {
                 shift
                 ;;
             -h | --help)
-                echo "Usage: cluster-ctl.sh add-kargo-creds [app] [--pat <token>] [--private-registry] [--yes]"
+                cat <<EOF
+Usage: cluster-ctl.sh add-kargo-creds [app] [--pat <token>] [--private-registry] [--yes]
+
+WARNING: passing --pat inline exposes the token via 'ps', shell history, and
+CI logs. Prefer running this command interactively so it can prompt with
+hidden input.
+EOF
                 exit 0
                 ;;
             -*)
@@ -1002,6 +1026,7 @@ cmd_add_kargo_creds() {
     # PAT: flag wins, else prompt, else die
     local pat
     if [[ -n "$pat_flag" ]]; then
+        warn_inline_secret_flag "--pat" "$pat_flag"
         pat="$pat_flag"
         if ! validate_github_pat "$pat" "repo" "read:packages"; then
             print_error "--pat did not validate with required scopes 'repo' and 'read:packages'"
