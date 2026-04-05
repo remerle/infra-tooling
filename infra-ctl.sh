@@ -1392,12 +1392,36 @@ cmd_add_env() {
 cmd_add_project() {
     require_gum
 
-    if [[ $# -eq 0 ]]; then
-        print_error "Usage: infra-ctl.sh add-project <project-name>"
-        exit 1
-    fi
+    local name_flag="" desc_flag="" repos_flag=""
+    local restrict_repos_flag=""         # "", "true", "false"
+    local restrict_ns_flag=""            # "", "true", "false"
+    local cluster_resources_flag=""      # "", "true", "false"
+    local ns_flags=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)         name_flag="$2"; shift 2 ;;
+            --description)  desc_flag="$2"; shift 2 ;;
+            --restrict-repos)    restrict_repos_flag="true"; shift ;;
+            --no-restrict-repos) restrict_repos_flag="false"; shift ;;
+            --source-repos) repos_flag="$2"; shift 2 ;;
+            --namespaces)
+                IFS=',' read -ra _ns <<<"$2"
+                ns_flags+=("${_ns[@]}")
+                restrict_ns_flag="true"
+                shift 2 ;;
+            --no-restrict-namespaces) restrict_ns_flag="false"; shift ;;
+            --cluster-resources)    cluster_resources_flag="true"; shift ;;
+            --no-cluster-resources) cluster_resources_flag="false"; shift ;;
+            -h|--help) echo "Usage: infra-ctl.sh add-project <name> [flags: --description, --restrict-repos, --source-repos, --namespaces, --cluster-resources]"; exit 0 ;;
+            -*) print_error "Unknown flag: $1"; exit 1 ;;
+            *)  if [[ -z "$name_flag" ]]; then name_flag="$1"; else print_error "Unexpected: $1"; exit 1; fi; shift ;;
+        esac
+    done
 
-    local project_name="$1"
+    local project_name="$name_flag"
+    if [[ -z "$project_name" ]]; then
+        project_name=$(prompt_or_die "Project name" "--name")
+    fi
     validate_k8s_name "$project_name" "Project name"
     load_conf
 
@@ -1411,15 +1435,35 @@ cmd_add_project() {
 
     print_header "Add Project: ${project_name}"
 
-    # Prompt for description
+    # Description
     local description
-    description="$(gum input --placeholder "What does this project scope?" --prompt "Description: ")"
+    if [[ -n "$desc_flag" ]]; then
+        description="$desc_flag"
+    elif [[ -t 0 ]]; then
+        description="$(gum input --placeholder "What does this project scope?" --prompt "Description: ")"
+    else
+        description=""
+    fi
 
-    # Prompt for source repo restrictions
+    # Source repo restrictions
+    local restrict_repos="no"
+    if [[ "$restrict_repos_flag" == "true" ]]; then restrict_repos="yes"
+    elif [[ "$restrict_repos_flag" == "false" ]]; then restrict_repos="no"
+    elif [[ -n "$repos_flag" ]]; then restrict_repos="yes"  # providing --source-repos implies restriction
+    elif [[ -t 0 ]]; then
+        gum confirm "Restrict source repositories?" && restrict_repos="yes"
+    fi
+
     local source_repos_block
-    if gum confirm "Restrict source repositories?"; then
+    if [[ "$restrict_repos" == "yes" ]]; then
         local repos_input
-        repos_input="$(gum input --value "${REPO_URL}" --prompt "Allowed repos (comma-separated): ")"
+        if [[ -n "$repos_flag" ]]; then
+            repos_input="$repos_flag"
+        elif [[ -t 0 ]]; then
+            repos_input="$(gum input --value "${REPO_URL}" --prompt "Allowed repos (comma-separated): ")"
+        else
+            repos_input="${REPO_URL}"
+        fi
         source_repos_block=""
         IFS=',' read -ra repos <<<"$repos_input"
         local repo
@@ -1428,45 +1472,65 @@ cmd_add_project() {
             validate_github_repo "$repo"
             source_repos_block+="    - ${repo}"$'\n'
         done
-        # Remove trailing newline
         source_repos_block="${source_repos_block%$'\n'}"
     else
         source_repos_block="    - '*'"
     fi
 
-    # Prompt for destination namespace restrictions
+    # Destination namespace restrictions
+    local restrict_ns="no"
+    if [[ "$restrict_ns_flag" == "true" ]]; then restrict_ns="yes"
+    elif [[ "$restrict_ns_flag" == "false" ]]; then restrict_ns="no"
+    elif [[ ${#ns_flags[@]} -gt 0 ]]; then restrict_ns="yes"
+    elif [[ -t 0 ]]; then
+        gum confirm "Restrict destination namespaces?" && restrict_ns="yes"
+    fi
+
     local destinations_block
-    if gum confirm "Restrict destination namespaces?"; then
+    if [[ "$restrict_ns" == "yes" ]]; then
         local envs=()
         while IFS= read -r env; do
             envs+=("$env")
         done < <(detect_envs)
 
-        local selected_namespaces
-        if [[ ${#envs[@]} -gt 0 ]]; then
-            selected_namespaces="$(printf "%s\n" "${envs[@]}" | gum choose --no-limit)"
+        local selected_namespaces=()
+        if [[ ${#ns_flags[@]} -gt 0 ]]; then
+            selected_namespaces=("${ns_flags[@]}")
+        elif [[ -t 0 ]] && [[ ${#envs[@]} -gt 0 ]]; then
+            mapfile -t selected_namespaces < <(printf "%s\n" "${envs[@]}" | gum choose --no-limit)
+        elif [[ -t 0 ]]; then
+            local ns_input
+            ns_input="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
+            IFS=',' read -ra selected_namespaces <<<"$ns_input"
         else
-            selected_namespaces="$(gum input --placeholder "dev, staging, prod" --prompt "Allowed namespaces (comma-separated): ")"
-            # Convert comma-separated to newline-separated
-            selected_namespaces="$(echo "$selected_namespaces" | tr ',' '\n' | xargs -I{} echo {})"
+            print_error "--namespaces is required when restricting namespaces non-interactively"
+            exit 1
         fi
 
         destinations_block=""
-        while IFS= read -r ns; do
+        local ns
+        for ns in "${selected_namespaces[@]}"; do
             ns="$(echo "$ns" | xargs)"
             [[ -z "$ns" ]] && continue
             destinations_block+="    - namespace: ${ns}"$'\n'
             destinations_block+="      server: https://kubernetes.default.svc"$'\n'
-        done <<<"$selected_namespaces"
+        done
         destinations_block="${destinations_block%$'\n'}"
     else
         destinations_block="    - namespace: '*'"$'\n'
         destinations_block+="      server: https://kubernetes.default.svc"
     fi
 
-    # Prompt for cluster-scoped resource access
+    # Cluster-scoped resource access
+    local allow_cluster="no"
+    if [[ "$cluster_resources_flag" == "true" ]]; then allow_cluster="yes"
+    elif [[ "$cluster_resources_flag" == "false" ]]; then allow_cluster="no"
+    elif [[ -t 0 ]]; then
+        gum confirm "Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)" && allow_cluster="yes"
+    fi
+
     local cluster_resources_block
-    if gum confirm "Allow full cluster-scoped resource access? (Namespaces, ClusterRoles, CRDs, etc.)"; then
+    if [[ "$allow_cluster" == "yes" ]]; then
         cluster_resources_block="    - group: '*'"$'\n'
         cluster_resources_block+="      kind: '*'"
     else
