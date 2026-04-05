@@ -120,6 +120,7 @@ _cluster_ctl() {
         'argo-init:Bootstrap ArgoCD with the parent-app'
         'argo-sync:Force ArgoCD to sync all applications'
         'argo-status:Show ArgoCD application status and errors'
+        'doctor:Run cross-layer diagnostic checks against repo and cluster'
         'renew-tls:Regenerate mkcert certificates'
         'status:Show cluster status'
         'preflight-check:Validate cluster prerequisites'
@@ -140,6 +141,14 @@ _cluster_ctl() {
                     local -a cluster_names
                     cluster_names=(${(f)"$(k3d cluster list -o json 2>/dev/null | jq -r '.[].name' 2>/dev/null)"})
                     compadd -a cluster_names
+                    ;;
+                doctor)
+                    _arguments -s \
+                        '--scope[Limit checks to repo, cluster, or all]:scope:(repo cluster all)' \
+                        '--app[Limit checks to a single application]:app:_infra_complete_apps' \
+                        '--env[Limit checks to a single environment]:env:_infra_complete_envs' \
+                        '--verbose[Show full command output for doctor checks]' \
+                        '(-h --help)'{-h,--help}'[Show doctor usage]'
                     ;;
             esac
             ;;
